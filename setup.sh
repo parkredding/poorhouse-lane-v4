@@ -21,6 +21,7 @@ error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 # --- Global variables --------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 REPO_URL="https://github.com/parkredding/poorhouse-lane-v4.git"
+REPO_BRANCH="${REPO_BRANCH:-main}"
 IS_PI_ZERO=false
 BOOT_CHANGED=false
 
@@ -81,7 +82,7 @@ clone_if_needed() {
     fi
 
     info "Repository not found locally. Cloning to ${INSTALL_DIR}..."
-    git clone "${REPO_URL}" "${INSTALL_DIR}"
+    git clone -b "${REPO_BRANCH}" "${REPO_URL}" "${INSTALL_DIR}"
     chown -R "${REAL_USER}:${REAL_USER}" "${INSTALL_DIR}"
     info "Re-running setup from cloned repo..."
     exec bash "${INSTALL_DIR}/setup.sh"
