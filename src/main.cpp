@@ -270,10 +270,11 @@ int main(int argc, char *argv[])
         lfo.setWaveform(static_cast<LfoWave>(g_lfo_waveform.load(rlx)));
         osc.setWaveform(static_cast<Waveform>(waveform));
         filter.setResonance(reso);
-        delay.setTime(dly_t);
+        if (!linked)
+            delay.setTime(dly_t);       // linked mode updates per-sample below
         delay.setFeedback(dly_fb);
         delay.setMix(dly_mix);
-        delay.setRepitchRate(linked ? 0.6f : 0.3f);
+        delay.setRepitchRate(linked ? 0.85f : 0.3f);
         reverb.setSize(REVERB_SIZE);
         reverb.setMix(rev_mix);
 
@@ -327,6 +328,13 @@ int main(int argc, char *argv[])
 
             // Effects chain
             s = filter.process(s);
+
+            // Linked mode: delay time tracks pitch envelope per-sample.
+            // The slew can't keep up with fast sweeps → boomerang effect
+            // (signal "slings" out then converges back in the feedback).
+            if (linked)
+                delay.setTime(dly_t / pitch_env_mult);
+
             s = delay.process(s);
             s = reverb.process(s);
 
