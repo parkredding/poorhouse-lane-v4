@@ -151,7 +151,6 @@ int main(int argc, char *argv[])
     // ── Audio callback ──────────────────────────────────────────────
 
     auto audio_cb = [&](float* buf, int frames) {
-        namespace mo = std::memory_order;
         const auto rlx = std::memory_order_relaxed;
 
         // Load all parameters once per frame
