@@ -19,7 +19,7 @@
 //   Waveform (GPIO 5)   Cycle Sine → Square → Saw → Triangle
 //
 // Pitch envelope switch (GPIO 9/10):
-//   Rise / Off / Fall — sweeps pitch while gate is held
+//   Rise / Off / Fall — sweeps pitch on trigger release
 
 #include <cstdio>
 #include <cstring>
@@ -27,6 +27,7 @@
 #include <cmath>
 #include <atomic>
 #include <algorithm>
+#include <chrono>
 
 #include "gpio_hw.h"
 #include "oscillator.h"
@@ -62,13 +63,28 @@ static std::atomic<bool>  g_gate{false};
 static std::atomic<bool>  g_shift{false};
 static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
 
-// ─── Constants ──────────────────────────────────────────────────────
+// ─── Per-parameter step sizes (base, before acceleration) ───────────
+//
+// Multiplicative params: acceleration raises base step to a power
+//   e.g. pow(SEMITONE, accel) → 1–4 semitones per click
+// Additive params:       acceleration multiplies the base step
+//   e.g. 0.04 * accel → 4–16 % per click
 
-static constexpr float SEMITONE     = 1.0594630943592953f;  // 2^(1/12)
-static constexpr float INV_SEMITONE = 1.0f / SEMITONE;
-static constexpr float LOG_STEP     = 1.10f;                // 10 % per click
-static constexpr float INV_LOG_STEP = 1.0f / LOG_STEP;
-static constexpr float PCT_STEP     = 0.02f;                // 2 % per click
+// Bank A — multiplicative
+static constexpr float FREQ_STEP       = 1.0594630943592953f;  // 1 semitone = 2^(1/12)
+static constexpr float LFO_RATE_STEP   = 1.12f;                // 12 % per click
+static constexpr float CUTOFF_STEP     = 1.122462048309373f;   // 2 semitones = 2^(1/6)
+static constexpr float DELAY_TIME_STEP = 1.10f;                // 10 % per click
+
+// Bank A — additive
+static constexpr float DELAY_FB_STEP   = 0.03f;                // 3 % per click
+
+// Bank B — additive
+static constexpr float LFO_DEPTH_STEP  = 0.04f;                // 4 % per click
+static constexpr float REVERB_SIZE_STEP = 0.05f;               // 5 % per click
+static constexpr float FILTER_RESO_STEP = 0.03f;               // 3 % (fine near self-osc)
+static constexpr float DELAY_MIX_STEP  = 0.05f;                // 5 % per click
+static constexpr float REVERB_MIX_STEP = 0.05f;                // 5 % per click
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -86,6 +102,33 @@ static void usage(const char *prog)
         "  --device <hw>   ALSA device string  (default: hw:0,0)\n"
         "  --simulate      Bypass GPIO — use keyboard simulation\n"
         "  -h, --help      Show this help\n", prog);
+}
+
+// ─── Encoder acceleration ───────────────────────────────────────────
+//
+// Returns a multiplier (1.0–4.0) based on how fast the encoder is
+// being turned.  Slow deliberate turns → 1×, fast spins → 4×.
+
+static float encoder_accel(int id)
+{
+    using clock = std::chrono::steady_clock;
+    static clock::time_point prev[gpio::NUM_ENCODERS] = {};
+
+    auto now   = clock::now();
+    auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     now - prev[id]).count();
+    prev[id] = now;
+
+    if (delta > 200) return 1.0f;           // first event or long pause
+
+    constexpr long  SLOW_MS  = 120;         // threshold for 1× (deliberate)
+    constexpr long  FAST_MS  = 25;          // threshold for max (fast spin)
+    constexpr float MAX_MULT = 4.0f;
+
+    float t = static_cast<float>(SLOW_MS - delta)
+            / static_cast<float>(SLOW_MS - FAST_MS);
+    t = std::clamp(t, 0.0f, 1.0f);
+    return 1.0f + t * (MAX_MULT - 1.0f);
 }
 
 // ─── main ───────────────────────────────────────────────────────────
@@ -141,6 +184,7 @@ int main(int argc, char *argv[])
     float release_rate   = 0.0f;
     float pitch_env_mult = 1.0f;
     bool  prev_gate      = false;
+    bool  pe_active      = false;   // true after trigger release
     float rise_factor    = 1.0f;
     float fall_factor    = 1.0f;
 
@@ -179,16 +223,20 @@ int main(int argc, char *argv[])
         reverb.setSize(rev_sz);
         reverb.setMix(rev_mix);
 
-        // Gate edge — reset pitch envelope on new trigger
-        if (gate && !prev_gate)
-            pitch_env_mult = 1.0f;
+        // Gate edge — pitch envelope starts on release, resets on press
+        if (gate && !prev_gate) {
+            pitch_env_mult = 1.0f;      // reset on new trigger press
+            pe_active = false;          // no sweep while held
+        }
+        if (!gate && prev_gate)
+            pe_active = true;           // start sweep on release
         prev_gate = gate;
 
         // Per-sample processing
         for (int i = 0; i < frames; i++) {
 
-            // Pitch envelope (1 octave / sec)
-            if (gate && pe_mode != 0) {
+            // Pitch envelope — sweeps only after trigger release
+            if (pe_active && pe_mode != 0) {
                 pitch_env_mult *= (pe_mode > 0) ? rise_factor
                                                 : fall_factor;
                 pitch_env_mult = std::clamp(pitch_env_mult, 0.25f, 4.0f);
@@ -248,45 +296,51 @@ int main(int argc, char *argv[])
     HwCallbacks cb;
 
     cb.on_encoder = [](int id, int dir) {
-        bool shift = g_shift.load();
+        bool  shift = g_shift.load();
+        float accel = encoder_accel(id);
 
         if (!shift) {
             // ── Bank A ─────────────────────────────────────────────
             switch (id) {
-            case 0: {
+            case 0: {   // Freq — 1 semitone base, pow() for accel
+                float step = std::pow(FREQ_STEP, accel);
                 float f = g_freq.load();
-                f *= (dir > 0) ? SEMITONE : INV_SEMITONE;
+                f *= (dir > 0) ? step : (1.0f / step);
                 f = std::clamp(f, 50.0f, 2000.0f);
                 g_freq.store(f);
                 printf("  [A] FREQ     %.1f Hz\n", f);
                 break;
             }
-            case 1: {
+            case 1: {   // LFO Rate — 12 % base, log accel
+                float step = std::pow(LFO_RATE_STEP, accel);
                 float r = g_lfo_rate.load();
-                r *= (dir > 0) ? LOG_STEP : INV_LOG_STEP;
+                r *= (dir > 0) ? step : (1.0f / step);
                 r = std::clamp(r, 0.1f, 20.0f);
                 g_lfo_rate.store(r);
                 printf("  [A] LFO RATE %.1f Hz\n", r);
                 break;
             }
-            case 2: {
+            case 2: {   // Filter Cutoff — 2 semitones base, fast sweep
+                float step = std::pow(CUTOFF_STEP, accel);
                 float c = g_filter_cutoff.load();
-                c *= (dir > 0) ? SEMITONE : INV_SEMITONE;
+                c *= (dir > 0) ? step : (1.0f / step);
                 c = std::clamp(c, 20.0f, 20000.0f);
                 g_filter_cutoff.store(c);
                 printf("  [A] CUTOFF   %.0f Hz\n", c);
                 break;
             }
-            case 3: {
+            case 3: {   // Delay Time — 10 % base, log accel
+                float step = std::pow(DELAY_TIME_STEP, accel);
                 float t = g_delay_time.load();
-                t *= (dir > 0) ? LOG_STEP : INV_LOG_STEP;
+                t *= (dir > 0) ? step : (1.0f / step);
                 t = std::clamp(t, 0.001f, 2.0f);
                 g_delay_time.store(t);
                 printf("  [A] DLY TIME %.0f ms\n", t * 1000.0f);
                 break;
             }
-            case 4: {
-                float fb = g_delay_feedback.load() + dir * PCT_STEP;
+            case 4: {   // Delay Feedback — 3 % base (careful near runaway)
+                float fb = g_delay_feedback.load()
+                         + dir * DELAY_FB_STEP * accel;
                 fb = std::clamp(fb, 0.0f, 0.95f);
                 g_delay_feedback.store(fb);
                 printf("  [A] DLY FB   %.0f%%\n", fb * 100.0f);
@@ -297,36 +351,41 @@ int main(int argc, char *argv[])
         } else {
             // ── Bank B ─────────────────────────────────────────────
             switch (id) {
-            case 0: {
-                float d = g_lfo_depth.load() + dir * PCT_STEP;
+            case 0: {   // LFO Depth — 4 % base
+                float d = g_lfo_depth.load()
+                        + dir * LFO_DEPTH_STEP * accel;
                 d = std::clamp(d, 0.0f, 1.0f);
                 g_lfo_depth.store(d);
                 printf("  [B] LFO DEP  %.0f%%\n", d * 100.0f);
                 break;
             }
-            case 1: {
-                float s = g_reverb_size.load() + dir * PCT_STEP;
+            case 1: {   // Reverb Size — 5 % base
+                float s = g_reverb_size.load()
+                        + dir * REVERB_SIZE_STEP * accel;
                 s = std::clamp(s, 0.0f, 1.0f);
                 g_reverb_size.store(s);
                 printf("  [B] REV SIZE %.0f%%\n", s * 100.0f);
                 break;
             }
-            case 2: {
-                float r = g_filter_reso.load() + dir * PCT_STEP;
+            case 2: {   // Filter Resonance — 3 % base (fine near self-osc)
+                float r = g_filter_reso.load()
+                        + dir * FILTER_RESO_STEP * accel;
                 r = std::clamp(r, 0.0f, 0.95f);
                 g_filter_reso.store(r);
                 printf("  [B] RESO     %.0f%%\n", r * 100.0f);
                 break;
             }
-            case 3: {
-                float m = g_delay_mix.load() + dir * PCT_STEP;
+            case 3: {   // Delay Mix — 5 % base
+                float m = g_delay_mix.load()
+                        + dir * DELAY_MIX_STEP * accel;
                 m = std::clamp(m, 0.0f, 1.0f);
                 g_delay_mix.store(m);
                 printf("  [B] DLY MIX  %.0f%%\n", m * 100.0f);
                 break;
             }
-            case 4: {
-                float m = g_reverb_mix.load() + dir * PCT_STEP;
+            case 4: {   // Reverb Mix — 5 % base
+                float m = g_reverb_mix.load()
+                        + dir * REVERB_MIX_STEP * accel;
                 m = std::clamp(m, 0.0f, 1.0f);
                 g_reverb_mix.store(m);
                 printf("  [B] REV MIX  %.0f%%\n", m * 100.0f);
