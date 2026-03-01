@@ -2,10 +2,15 @@
 
 #include <vector>
 
-// ─── Schroeder algorithmic reverb ───────────────────────────────────
+// ─── Spring reverb ──────────────────────────────────────────────────
 //
-// 4 parallel feedback comb filters → 2 series allpass filters.
-// NaN/Inf-safe: each comb and allpass resets on detection.
+// Models a dual-spring tank (like an Accutronics Type 4):
+//   Input → dispersion allpass cascade → 2 parallel spring delay
+//   lines with LP-filtered feedback → DC blocker → wet output.
+//
+// The allpass dispersion creates the characteristic metallic chirp.
+// LP filtering in the feedback path simulates natural high-frequency
+// damping of a physical spring.
 
 class Reverb {
 public:
@@ -16,23 +21,35 @@ public:
     void  reset();
 
 private:
-    struct Comb {
-        std::vector<float> buf;
-        int   pos      = 0;
-        float feedback = 0.0f;
-        float process(float input);
-        void  reset();
-    };
-
+    // Dispersion allpass (short delays → spring chirp)
     struct Allpass {
         std::vector<float> buf;
-        int pos = 0;
+        int   pos   = 0;
+        float coeff = 0.5f;
         float process(float input);
         void  reset();
     };
 
-    Comb    combs_[4];
-    Allpass aps_[2];
-    float   size_ = 0.3f;
-    float   mix_  = 0.0f;
+    // Spring delay line with LP-filtered feedback
+    struct SpringLine {
+        std::vector<float> buf;
+        int   pos      = 0;
+        float feedback  = 0.0f;
+        float lpState   = 0.0f;
+        float lpCoeff   = 0.0f;
+        float process(float input);
+        void  reset();
+    };
+
+    static constexpr int NUM_DISPERSION = 6;
+    static constexpr int NUM_SPRINGS    = 2;
+
+    Allpass    dispersion_[NUM_DISPERSION];
+    SpringLine springs_[NUM_SPRINGS];
+    float      size_ = 0.65f;
+    float      mix_  = 0.0f;
+
+    // DC blocker state
+    float dcIn_  = 0.0f;
+    float dcOut_ = 0.0f;
 };

@@ -1,54 +1,63 @@
-// reverb.cpp — Schroeder algorithmic reverb
+// reverb.cpp — Dual-spring tank reverb
 //
-// 4 parallel feedback comb filters summed, then passed through
-// 2 series allpass filters.  Input is pre-scaled to prevent buildup.
+// 6 short allpass filters in series create frequency-dependent
+// dispersion (the metallic "chirp" / "drip" of a spring).
+// Two parallel delay lines with LP-filtered feedback simulate
+// the two springs of a classic dub reverb tank.
 
 #include "reverb.h"
 #include "dsp_utils.h"
 #include <cmath>
 #include <algorithm>
 
-// Comb delay lengths (samples at 48 kHz, scaled in init)
-static constexpr int COMB_LENGTHS[]    = {1687, 1753, 1619, 1553};
-// Allpass delay lengths
-static constexpr int AP_LENGTHS[]      = {241, 557};
+// Dispersion allpass delays (samples at 48 kHz) — short primes
+// create the characteristic metallic chirp of a spring
+static constexpr int DISP_LENGTHS[] = {13, 19, 29, 37, 43, 59};
 
-static constexpr float INPUT_GAIN = 0.015f;   // pre-scale into combs
-static constexpr float AP_GAIN    = 0.5f;     // allpass coefficient
+// Main spring delay lines (samples at 48 kHz)
+// Two springs with different lengths for a fuller sound
+static constexpr int SPRING_LENGTHS[] = {1559, 2111};
 
-// ─── Comb filter ────────────────────────────────────────────────────
+static constexpr float INPUT_GAIN   = 0.35f;    // pre-scale into springs
+static constexpr float SPRING_LP_HZ = 4000.0f;  // feedback damping cutoff
 
-float Reverb::Comb::process(float input)
-{
-    float out = buf[pos];
-
-    buf[pos] = dsp::sanitize(input + out * feedback);
-
-    pos = (pos + 1) % static_cast<int>(buf.size());
-    return out;
-}
-
-void Reverb::Comb::reset()
-{
-    std::fill(buf.begin(), buf.end(), 0.0f);
-}
-
-// ─── Allpass filter ─────────────────────────────────────────────────
+// ─── Dispersion allpass ─────────────────────────────────────────────
 
 float Reverb::Allpass::process(float input)
 {
     float delayed = buf[pos];
-    float w       = input + AP_GAIN * delayed;
+    float w = input - coeff * delayed;
 
     buf[pos] = dsp::sanitize(w);
-
     pos = (pos + 1) % static_cast<int>(buf.size());
-    return delayed - AP_GAIN * w;
+
+    return delayed + coeff * w;
 }
 
 void Reverb::Allpass::reset()
 {
     std::fill(buf.begin(), buf.end(), 0.0f);
+}
+
+// ─── Spring delay line ──────────────────────────────────────────────
+
+float Reverb::SpringLine::process(float input)
+{
+    float out = buf[pos];
+
+    // LP filter in feedback path (spring naturally damps highs)
+    lpState += lpCoeff * (out * feedback - lpState);
+
+    buf[pos] = dsp::sanitize(input + dsp::fast_tanh(lpState));
+    pos = (pos + 1) % static_cast<int>(buf.size());
+
+    return out;
+}
+
+void Reverb::SpringLine::reset()
+{
+    std::fill(buf.begin(), buf.end(), 0.0f);
+    lpState = 0.0f;
 }
 
 // ─── Reverb ─────────────────────────────────────────────────────────
@@ -57,45 +66,73 @@ void Reverb::init(float sampleRate)
 {
     float scale = sampleRate / 48000.0f;
 
-    for (int i = 0; i < 4; i++) {
-        int len = std::max(1, static_cast<int>(COMB_LENGTHS[i] * scale));
-        combs_[i].buf.assign(len, 0.0f);
-        combs_[i].pos = 0;
+    for (int i = 0; i < NUM_DISPERSION; i++) {
+        int len = std::max(1, static_cast<int>(DISP_LENGTHS[i] * scale));
+        dispersion_[i].buf.assign(len, 0.0f);
+        dispersion_[i].pos = 0;
     }
-    for (int i = 0; i < 2; i++) {
-        int len = std::max(1, static_cast<int>(AP_LENGTHS[i] * scale));
-        aps_[i].buf.assign(len, 0.0f);
-        aps_[i].pos = 0;
+
+    float lp = 1.0f - std::exp(-2.0f * 3.14159265f * SPRING_LP_HZ
+                                / sampleRate);
+
+    for (int i = 0; i < NUM_SPRINGS; i++) {
+        int len = std::max(1, static_cast<int>(SPRING_LENGTHS[i] * scale));
+        springs_[i].buf.assign(len, 0.0f);
+        springs_[i].pos     = 0;
+        springs_[i].lpCoeff = lp;
     }
+
+    dcIn_  = 0.0f;
+    dcOut_ = 0.0f;
 
     setSize(size_);
 }
 
 void Reverb::setSize(float size)
 {
-    size_ = size;
-    float fb = 0.7f + size * 0.25f;        // 0.70 – 0.95
-    for (auto& c : combs_) c.feedback = fb;
+    size_ = std::clamp(size, 0.0f, 1.0f);
+
+    // Feedback: 0.3 (tight) to 0.85 (long spring)
+    float fb = 0.3f + size_ * 0.55f;
+    for (auto& s : springs_) s.feedback = fb;
+
+    // Dispersion: more chirp at higher sizes (0.4 – 0.7)
+    float disp = 0.4f + size_ * 0.3f;
+    for (auto& d : dispersion_) d.coeff = disp;
 }
 
-void Reverb::setMix(float mix) { mix_ = mix; }
+void Reverb::setMix(float mix) { mix_ = std::clamp(mix, 0.0f, 1.0f); }
 
 void Reverb::reset()
 {
-    for (auto& c : combs_)  c.reset();
-    for (auto& a : aps_)    a.reset();
+    for (auto& d : dispersion_) d.reset();
+    for (auto& s : springs_)   s.reset();
+    dcIn_ = dcOut_ = 0.0f;
 }
 
 float Reverb::process(float input)
 {
-    float wet    = 0.0f;
-    float scaled = input * INPUT_GAIN;
+    // Dispersion chain — creates the spring chirp
+    float dispersed = input * INPUT_GAIN;
+    for (auto& d : dispersion_)
+        dispersed = d.process(dispersed);
 
-    for (auto& c : combs_)
-        wet += c.process(scaled);
+    // Two parallel spring lines
+    float wet = 0.0f;
+    for (auto& s : springs_)
+        wet += s.process(dispersed);
+    wet *= 0.5f;
 
-    for (auto& a : aps_)
-        wet = a.process(wet);
+    // DC blocker (~10 Hz high-pass)
+    float tmp = wet;
+    dcOut_ = 0.9995f * (dcOut_ + wet - dcIn_);
+    dcIn_  = tmp;
+    wet    = dcOut_;
+
+    if (!std::isfinite(wet)) {
+        reset();
+        return input;
+    }
 
     return input * (1.0f - mix_) + wet * mix_;
 }
