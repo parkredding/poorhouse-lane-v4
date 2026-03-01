@@ -24,8 +24,8 @@ void TapeDelay::init(float sampleRate, float maxTimeSec)
     flutterPhase_ = 0.0f;
     wobbleInc_    = 0.5f  / sr_;           // 0.5 Hz
     flutterInc_   = 3.5f  / sr_;           // 3.5 Hz
-    wobbleDepth_  = 0.0004f * sr_;         // ±0.4 ms in samples
-    flutterDepth_ = 0.0001f * sr_;         // ±0.1 ms in samples
+    wobbleDepth_  = 0.003f * sr_;           // ±3 ms in samples (tape transport drift)
+    flutterDepth_ = 0.001f * sr_;          // ±1 ms in samples (tape tension variation)
 
     // Feedback HP 80 Hz:  y[n] = c * (y[n-1] + x[n] - x[n-1])
     hpCoeff_  = std::exp(-TWO_PI * 80.0f / sr_);
@@ -115,8 +115,11 @@ float TapeDelay::process(float input)
     lpState_ += lpCoeff_ * (fb - lpState_);
     fb = lpState_;
 
-    // Tape saturation
-    fb = dsp::fast_tanh(fb);
+    // Tape saturation — 30% driven blend preserves dynamics while
+    // compressing peaks, lets high feedback sing rather than clip
+    constexpr float TAPE_SAT = 0.3f;
+    float driven = dsp::fast_tanh(fb * (1.0f + TAPE_SAT * 2.0f));
+    fb = fb * (1.0f - TAPE_SAT) + driven * TAPE_SAT;
 
     // NaN/Inf protection
     if (!std::isfinite(fb)) {
@@ -124,8 +127,9 @@ float TapeDelay::process(float input)
         return input;
     }
 
-    // ── Write to buffer ──────────────────────────────────────────────
-    buf_[writePos_] = dsp::sanitize(input + fb);
+    // ── Write to buffer (±10 headroom lets feedback build before clamping)
+    float writeVal = input + fb;
+    buf_[writePos_] = std::clamp(dsp::sanitize(writeVal), -10.0f, 10.0f);
     writePos_ = (writePos_ + 1) % maxSamples_;
 
     return input * (1.0f - mix_) + wet * mix_;

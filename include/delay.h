@@ -8,7 +8,7 @@
 //   - Fractional read head with linear interpolation
 //   - Slew-rate–limited read pointer (repitch on time change)
 //   - Tape wobble (~0.5 Hz) and flutter (~3.5 Hz) modulation
-//   - Feedback path: HP 80 Hz → LP 5 kHz → tanh saturation
+//   - Feedback path: HP 80 Hz → LP 5 kHz → driven tanh blend (30%)
 //   - NaN/Inf-safe: resets on detection in feedback path
 
 class TapeDelay {

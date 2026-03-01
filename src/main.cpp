@@ -52,7 +52,7 @@ static std::atomic<float> g_freq{440.0f};
 static std::atomic<float> g_lfo_rate{0.35f};
 static std::atomic<float> g_filter_cutoff{8000.0f};
 static std::atomic<float> g_delay_time{0.375f};
-static std::atomic<float> g_delay_feedback{0.45f};
+static std::atomic<float> g_delay_feedback{0.55f};
 
 // Bank B
 static std::atomic<float> g_lfo_depth{0.35f};
@@ -89,7 +89,7 @@ static constexpr float CUTOFF_STEP     = 1.122462048309373f;   // 2 semitones = 
 static constexpr float DELAY_TIME_STEP = 1.10f;                // 10 % per click
 
 // Bank A — additive
-static constexpr float DELAY_FB_STEP   = 0.03f;                // 3 % per click
+static constexpr float DELAY_FB_STEP   = 0.04f;                // ~24 steps across 0–95%
 
 // Bank B — additive
 static constexpr float LFO_DEPTH_STEP   = 0.04f;               // 4 % per click
