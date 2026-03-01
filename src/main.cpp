@@ -4,22 +4,25 @@
 //   dubsiren [--device <alsa_hw>] [--simulate]
 //
 // Signal chain:
-//   LFO + Pitch-env → Oscillator → Envelope → Filter → Delay → Reverb → DAC
+//   LFO + Pitch-env → Oscillator → Envelope → Filter(+env) → Delay → Reverb → Limiter → DAC
 //
 // Encoder banks (Shift toggles A / B):
-//   Enc 1:  A = Base Freq (50–2000 Hz)     B = LFO Depth (0–100%)
+//   Enc 1:  A = Base Freq (30–8000 Hz)     B = LFO Depth (0–100%)
 //   Enc 2:  A = LFO Rate (0.1–20 Hz)       B = Release Time (10 ms–2 s)
 //   Enc 3:  A = Filter Cutoff (20–20 kHz)   B = Filter Resonance (0–95%)
 //   Enc 4:  A = Delay Time (1 ms–2.0 s)     B = Delay Mix (0–100%)
 //   Enc 5:  A = Delay Feedback (0–95%)      B = Reverb Mix (0–100%)
 //
 // Buttons:
-//   Trigger  (GPIO 4)   Gate volume envelope
-//   Shift    (GPIO 15)  Hold for Bank B
-//   Waveform (GPIO 5)   Cycle Sine → Square → Saw → Triangle
+//   Trigger  (GPIO 4)   Gate volume envelope; resets LFO phase
+//   Shift    (GPIO 15)  Hold for Bank B; triple-click = pitch-delay link
+//   Waveform (GPIO 5)   Cycle osc waveform; Shift+Waveform = cycle LFO shape
+//
+// LFO shapes (Shift+Waveform):
+//   Sine → Triangle → Square → RampUp → RampDown → S&H
 //
 // Pitch envelope switch (GPIO 9/10):
-//   Rise / Off / Fall — sweeps pitch on trigger release
+//   Rise / Off / Fall — sweeps pitch AND filter on trigger release
 
 #include <cstdio>
 #include <cstring>
@@ -36,6 +39,7 @@
 #include "filter.h"
 #include "delay.h"
 #include "reverb.h"
+#include "dsp_utils.h"
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -62,6 +66,7 @@ static constexpr float REVERB_SIZE = 0.65f;
 
 // Controls
 static std::atomic<int>   g_waveform{0};
+static std::atomic<int>   g_lfo_waveform{0};  // LfoWave index
 static std::atomic<bool>  g_gate{false};
 static std::atomic<bool>  g_shift{false};
 static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
@@ -103,6 +108,14 @@ static const char* waveform_name(int w)
 {
     static const char* names[] = {"Sine", "Square", "Saw", "Triangle"};
     return names[w % static_cast<int>(Waveform::COUNT)];
+}
+
+static const char* lfo_wave_name(int w)
+{
+    static const char* names[] = {
+        "Sine", "Triangle", "Square", "RampUp", "RampDown", "S&H"
+    };
+    return names[w % static_cast<int>(LfoWave::COUNT)];
 }
 
 static void usage(const char *prog)
@@ -212,11 +225,12 @@ int main(int argc, char *argv[])
     float attack_rate    = 0.0f;
     float release_rate   = 0.0f;
     float sr_f           = 48000.0f;    // set after init, read in callback
-    float pitch_env_mult = 1.0f;
-    bool  prev_gate      = false;
-    bool  pe_active      = false;   // true after trigger release
-    float rise_factor    = 1.0f;
-    float fall_factor    = 1.0f;
+    float pitch_env_mult  = 1.0f;
+    float filter_env_mult = 1.0f;
+    bool  prev_gate       = false;
+    bool  pe_active       = false;   // true after trigger release
+    float rise_factor     = 1.0f;
+    float fall_factor     = 1.0f;
 
     constexpr int SAMPLE_RATE = 48000;
 
@@ -253,8 +267,8 @@ int main(int argc, char *argv[])
 
         // Update DSP modules (once per frame)
         lfo.setRate(lfo_r);
+        lfo.setWaveform(static_cast<LfoWave>(g_lfo_waveform.load(rlx)));
         osc.setWaveform(static_cast<Waveform>(waveform));
-        filter.setCutoff(cutoff);
         filter.setResonance(reso);
         delay.setTime(dly_t);
         delay.setFeedback(dly_fb);
@@ -263,10 +277,12 @@ int main(int argc, char *argv[])
         reverb.setSize(REVERB_SIZE);
         reverb.setMix(rev_mix);
 
-        // Gate edge — pitch envelope starts on release, resets on press
+        // Gate edge — envelopes start on release, reset on press
         if (gate && !prev_gate) {
-            pitch_env_mult = 1.0f;      // reset on new trigger press
+            pitch_env_mult  = 1.0f;     // reset on new trigger press
+            filter_env_mult = 1.0f;
             pe_active = false;          // no sweep while held
+            lfo.resetPhase();           // consistent attacks
         }
         if (!gate && prev_gate)
             pe_active = true;           // start sweep on release
@@ -275,11 +291,15 @@ int main(int argc, char *argv[])
         // Per-sample processing
         for (int i = 0; i < frames; i++) {
 
-            // Pitch envelope — sweeps only after trigger release
+            // Pitch + filter envelopes — sweep only after trigger release
             if (pe_active && pe_mode != 0) {
-                pitch_env_mult *= (pe_mode > 0) ? rise_factor
-                                                : fall_factor;
-                pitch_env_mult = std::clamp(pitch_env_mult, 0.125f, 8.0f);
+                pitch_env_mult  *= (pe_mode > 0) ? rise_factor
+                                                 : fall_factor;
+                pitch_env_mult   = std::clamp(pitch_env_mult, 0.125f, 8.0f);
+
+                filter_env_mult *= (pe_mode > 0) ? rise_factor
+                                                 : fall_factor;
+                filter_env_mult  = std::clamp(filter_env_mult, 0.125f, 8.0f);
             }
 
             // LFO → exponential pitch modulation
@@ -288,6 +308,11 @@ int main(int argc, char *argv[])
                        * std::exp2(lfo_out * lfo_d);
             freq = std::clamp(freq, 20.0f, 20000.0f);
             osc.setFrequency(freq);
+
+            // Filter cutoff with envelope (per-sample for smooth sweep)
+            float eff_cutoff = std::clamp(
+                cutoff * filter_env_mult, 20.0f, 20000.0f);
+            filter.setCutoff(eff_cutoff);
 
             // Oscillator
             float s = osc.tick();
@@ -304,6 +329,10 @@ int main(int argc, char *argv[])
             s = filter.process(s);
             s = delay.process(s);
             s = reverb.process(s);
+
+            // Output soft limiter — transparent at normal levels,
+            // warm saturation when pushed (resonance, feedback, etc.)
+            s = dsp::fast_tanh(s * 1.2f) * (1.0f / 1.1f);
 
             buf[i] = s;
         }
@@ -348,7 +377,7 @@ int main(int argc, char *argv[])
                 float step = std::pow(base, pitch_accel);
                 float f = g_freq.load();
                 f *= (dir > 0) ? step : (1.0f / step);
-                f = std::clamp(f, 50.0f, 2000.0f);
+                f = std::clamp(f, 30.0f, 8000.0f);
                 g_freq.store(f);
                 if (lk) {
                     float eff = update_delay_eff();
@@ -507,11 +536,19 @@ int main(int argc, char *argv[])
         }
         case 2:
             // Waveform → cycle shape (on press only)
+            // Shift held: cycle LFO waveform; otherwise: cycle oscillator
             if (pressed) {
-                int w = (g_waveform.load() + 1)
-                      % static_cast<int>(Waveform::COUNT);
-                g_waveform.store(w);
-                printf("  WAVE  %s\n", waveform_name(w));
+                if (g_shift.load()) {
+                    int lw = (g_lfo_waveform.load() + 1)
+                           % static_cast<int>(LfoWave::COUNT);
+                    g_lfo_waveform.store(lw);
+                    printf("  LFO WAVE  %s\n", lfo_wave_name(lw));
+                } else {
+                    int w = (g_waveform.load() + 1)
+                          % static_cast<int>(Waveform::COUNT);
+                    g_waveform.store(w);
+                    printf("  WAVE  %s\n", waveform_name(w));
+                }
             }
             break;
         }
@@ -535,8 +572,9 @@ int main(int argc, char *argv[])
     printf("\nDefaults:\n");
     printf("  Freq: %.0f Hz  Wave: %s\n",
            g_freq.load(), waveform_name(g_waveform.load()));
-    printf("  LFO: %.1f Hz @ %.0f%%  Filter: %.0f Hz / %.0f%%\n",
+    printf("  LFO: %.1f Hz @ %.0f%% [%s]  Filter: %.0f Hz / %.0f%%\n",
            g_lfo_rate.load(), g_lfo_depth.load() * 100.0f,
+           lfo_wave_name(g_lfo_waveform.load()),
            g_filter_cutoff.load(), g_filter_reso.load() * 100.0f);
     printf("  Delay: %.0f ms  FB %.0f%%  Mix %.0f%%\n",
            g_delay_time.load() * 1000.0f,
