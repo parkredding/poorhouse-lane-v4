@@ -20,6 +20,7 @@ error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # --- Global variables --------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+REPO_URL="https://github.com/parkredding/poorhouse-lane-v4.git"
 IS_PI_ZERO=false
 BOOT_CHANGED=false
 
@@ -59,6 +60,31 @@ detect_pi() {
         warn "Not running on a Raspberry Pi."
         warn "Continuing anyway for development purposes."
     fi
+}
+
+# --- ensure_git() ------------------------------------------------------------
+ensure_git() {
+    if command -v git &>/dev/null; then
+        return 0
+    fi
+    info "Git not found. Installing..."
+    apt-get update -qq
+    apt-get install -y git
+    success "Git installed."
+}
+
+# --- clone_if_needed() -------------------------------------------------------
+clone_if_needed() {
+    # If CMakeLists.txt exists alongside this script, we're inside the repo
+    if [[ -f "${SCRIPT_DIR}/CMakeLists.txt" ]]; then
+        return 0
+    fi
+
+    info "Repository not found locally. Cloning to ${INSTALL_DIR}..."
+    git clone "${REPO_URL}" "${INSTALL_DIR}"
+    chown -R "${REAL_USER}:${REAL_USER}" "${INSTALL_DIR}"
+    info "Re-running setup from cloned repo..."
+    exec bash "${INSTALL_DIR}/setup.sh"
 }
 
 # --- setup_swap() ------------------------------------------------------------
@@ -317,6 +343,8 @@ print_summary() {
 # =============================================================================
 check_root
 detect_pi
+ensure_git
+clone_if_needed
 setup_swap
 install_deps
 build_rpi_ws281x
