@@ -63,6 +63,10 @@ static std::atomic<bool>  g_gate{false};
 static std::atomic<bool>  g_shift{false};
 static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
 
+// Pitch-delay link (secret mode: triple-click Shift to toggle)
+static std::atomic<bool>  g_delay_link{false};
+static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay (may be freq-scaled)
+
 // ─── Per-parameter step sizes (base, before acceleration) ───────────
 //
 // Multiplicative params: acceleration raises base step to a power
@@ -85,6 +89,10 @@ static constexpr float REVERB_SIZE_STEP = 0.05f;               // 5 % per click
 static constexpr float FILTER_RESO_STEP = 0.03f;               // 3 % (fine near self-osc)
 static constexpr float DELAY_MIX_STEP  = 0.05f;                // 5 % per click
 static constexpr float REVERB_MIX_STEP = 0.05f;                // 5 % per click
+
+// Pitch-delay link mode
+static constexpr float FREQ_STEP_LINKED = 1.165f;              // ~minor-third jumps
+static constexpr float REF_FREQ         = 440.0f;              // neutral scaling point
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -129,6 +137,24 @@ static float encoder_accel(int id)
             / static_cast<float>(SLOW_MS - FAST_MS);
     t = std::clamp(t, 0.0f, 1.0f);
     return 1.0f + t * (MAX_MULT - 1.0f);
+}
+
+// ─── Pitch-delay link helper ─────────────────────────────────────────
+//
+// Recomputes the effective delay time from the base delay time and
+// current frequency.  Called from the control layer whenever either
+// value changes or linked mode is toggled.
+
+static float update_delay_eff()
+{
+    float t = g_delay_time.load();
+    if (g_delay_link.load()) {
+        float freq = g_freq.load();
+        t = t * (REF_FREQ / freq);
+        t = std::clamp(t, 0.01f, 2.0f);
+    }
+    g_delay_time_eff.store(t);
+    return t;
 }
 
 // ─── main ───────────────────────────────────────────────────────────
@@ -205,12 +231,13 @@ int main(int argc, char *argv[])
         float lfo_d     = g_lfo_depth.load(rlx);
         float cutoff    = g_filter_cutoff.load(rlx);
         float reso      = g_filter_reso.load(rlx);
-        float dly_t     = g_delay_time.load(rlx);
+        float dly_t     = g_delay_time_eff.load(rlx);
         float dly_fb    = g_delay_feedback.load(rlx);
         float dly_mix   = g_delay_mix.load(rlx);
         float rev_sz    = g_reverb_size.load(rlx);
         float rev_mix   = g_reverb_mix.load(rlx);
         int   pe_mode   = g_pitch_env.load(rlx);
+        bool  linked    = g_delay_link.load(rlx);
 
         // Update DSP modules (once per frame)
         lfo.setRate(lfo_r);
@@ -220,6 +247,7 @@ int main(int argc, char *argv[])
         delay.setTime(dly_t);
         delay.setFeedback(dly_fb);
         delay.setMix(dly_mix);
+        delay.setRepitchRate(linked ? 0.6f : 0.3f);
         reverb.setSize(rev_sz);
         reverb.setMix(rev_mix);
 
@@ -279,6 +307,7 @@ int main(int argc, char *argv[])
         lfo.setSampleRate(sr);
         filter.setSampleRate(sr);
         delay.init(sr, 2.5f);
+        delay.setRepitchRate(0.3f);
         reverb.init(sr);
 
         attack_rate  = 1.0f / (0.005f * sr);           // ~5 ms
@@ -302,13 +331,21 @@ int main(int argc, char *argv[])
         if (!shift) {
             // ── Bank A ─────────────────────────────────────────────
             switch (id) {
-            case 0: {   // Freq — 1 semitone base, pow() for accel
-                float step = std::pow(FREQ_STEP, accel);
+            case 0: {   // Freq — semitone base (or linked step)
+                bool lk = g_delay_link.load();
+                float base = lk ? FREQ_STEP_LINKED : FREQ_STEP;
+                float step = std::pow(base, accel);
                 float f = g_freq.load();
                 f *= (dir > 0) ? step : (1.0f / step);
                 f = std::clamp(f, 50.0f, 2000.0f);
                 g_freq.store(f);
-                printf("  [A] FREQ     %.1f Hz\n", f);
+                if (lk) {
+                    float eff = update_delay_eff();
+                    printf("  [A] FREQ     %.1f Hz  (dly %.0f ms)\n",
+                           f, eff * 1000.0f);
+                } else {
+                    printf("  [A] FREQ     %.1f Hz\n", f);
+                }
                 break;
             }
             case 1: {   // LFO Rate — 12 % base, log accel
@@ -335,7 +372,13 @@ int main(int argc, char *argv[])
                 t *= (dir > 0) ? step : (1.0f / step);
                 t = std::clamp(t, 0.001f, 2.0f);
                 g_delay_time.store(t);
-                printf("  [A] DLY TIME %.0f ms\n", t * 1000.0f);
+                float eff = update_delay_eff();
+                if (g_delay_link.load()) {
+                    printf("  [A] DLY TIME %.0f ms  (eff %.0f ms)\n",
+                           t * 1000.0f, eff * 1000.0f);
+                } else {
+                    printf("  [A] DLY TIME %.0f ms\n", t * 1000.0f);
+                }
                 break;
             }
             case 4: {   // Delay Feedback — 3 % base (careful near runaway)
@@ -405,11 +448,51 @@ int main(int argc, char *argv[])
             printf("  %-9s %s\n", btn_name[0],
                    pressed ? "GATE ON" : "GATE OFF");
             break;
-        case 1:
-            // Shift → bank select
+        case 1: {
+            // Shift → bank select (+ triple-click → linked delay)
             g_shift.store(pressed);
+
+            if (pressed) {
+                using clock = std::chrono::steady_clock;
+                static clock::time_point clicks[3] = {};
+                static int click_n = 0;
+
+                auto now = clock::now();
+
+                // Reset count if too long since first click
+                if (click_n > 0) {
+                    auto since = std::chrono::duration_cast<
+                                     std::chrono::milliseconds>(
+                                     now - clicks[0]).count();
+                    if (since > 600) click_n = 0;
+                }
+
+                clicks[click_n++] = now;
+
+                if (click_n >= 3) {
+                    auto span = std::chrono::duration_cast<
+                                    std::chrono::milliseconds>(
+                                    clicks[2] - clicks[0]).count();
+                    click_n = 0;
+
+                    if (span < 500) {
+                        bool lk = !g_delay_link.load();
+                        g_delay_link.store(lk);
+                        if (lk) {
+                            float eff = update_delay_eff();
+                            printf("  >>> PITCH-DELAY LINK ON"
+                                   "  (dly %.0f ms)\n", eff * 1000.0f);
+                        } else {
+                            update_delay_eff();
+                            printf("  >>> PITCH-DELAY LINK OFF\n");
+                        }
+                    }
+                }
+            }
+
             printf("  BANK %s\n", pressed ? "B" : "A");
             break;
+        }
         case 2:
             // Waveform → cycle shape (on press only)
             if (pressed) {

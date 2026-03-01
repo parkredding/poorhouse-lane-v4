@@ -1,23 +1,47 @@
-// delay.cpp — Tape delay with feedback and NaN/Inf protection
+// delay.cpp — Analog tape delay with slew, modulation, and feedback filtering
 
 #include "delay.h"
+#include "dsp_utils.h"
 #include <algorithm>
 #include <cmath>
+
+static constexpr float TWO_PI = 6.28318530718f;
 
 void TapeDelay::init(float sampleRate, float maxTimeSec)
 {
     sr_ = sampleRate;
-    int maxSamples = static_cast<int>(sampleRate * maxTimeSec) + 1;
-    buf_.assign(maxSamples, 0.0f);
-    writePos_     = 0;
-    delaySamples_ = 1;
+    maxSamples_ = static_cast<int>(sampleRate * maxTimeSec) + 1;
+    buf_.assign(maxSamples_, 0.0f);
+    writePos_    = 0;
+    readPos_     = 1.0f;
+    targetDelay_ = 1.0f;
+
+    // Default slew (overridden by setRepitchRate)
+    slewRate_ = 4.0f;
+
+    // Tape modulation
+    wobblePhase_  = 0.0f;
+    flutterPhase_ = 0.0f;
+    wobbleInc_    = 0.5f  / sr_;           // 0.5 Hz
+    flutterInc_   = 3.5f  / sr_;           // 3.5 Hz
+    wobbleDepth_  = 0.0004f * sr_;         // ±0.4 ms in samples
+    flutterDepth_ = 0.0001f * sr_;         // ±0.1 ms in samples
+
+    // Feedback HP 80 Hz:  y[n] = c * (y[n-1] + x[n] - x[n-1])
+    hpCoeff_  = std::exp(-TWO_PI * 80.0f / sr_);
+    hpState_  = 0.0f;
+    hpPrevIn_ = 0.0f;
+
+    // Feedback LP 5 kHz:  y[n] = y[n-1] + c * (x[n] - y[n-1])
+    lpCoeff_  = 1.0f - std::exp(-TWO_PI * 5000.0f / sr_);
+    lpState_  = 0.0f;
 }
 
 void TapeDelay::setTime(float sec)
 {
-    int samples = static_cast<int>(sec * sr_);
-    delaySamples_ = std::clamp(samples, 1,
-                               static_cast<int>(buf_.size()) - 1);
+    float samples = sec * sr_;
+    targetDelay_ = std::clamp(samples, 1.0f,
+                              static_cast<float>(maxSamples_ - 1));
 }
 
 void TapeDelay::setFeedback(float fb)
@@ -30,28 +54,79 @@ void TapeDelay::setMix(float mix)
     mix_ = std::clamp(mix, 0.0f, 1.0f);
 }
 
+void TapeDelay::setRepitchRate(float rate)
+{
+    rate = std::clamp(rate, 0.001f, 1.0f);
+    slewRate_ = static_cast<float>(maxSamples_)
+              / (2.0f * rate * sr_);
+}
+
 void TapeDelay::reset()
 {
     std::fill(buf_.begin(), buf_.end(), 0.0f);
-    writePos_ = 0;
+    writePos_  = 0;
+    readPos_   = targetDelay_;
+    hpState_   = 0.0f;
+    hpPrevIn_  = 0.0f;
+    lpState_   = 0.0f;
 }
 
 float TapeDelay::process(float input)
 {
-    int readPos = writePos_ - delaySamples_;
-    if (readPos < 0) readPos += static_cast<int>(buf_.size());
+    // ── Tape modulation ──────────────────────────────────────────────
+    float wobble  = std::sin(wobblePhase_  * TWO_PI) * wobbleDepth_;
+    float flutter = std::sin(flutterPhase_ * TWO_PI) * flutterDepth_;
+    wobblePhase_  += wobbleInc_;
+    flutterPhase_ += flutterInc_;
+    if (wobblePhase_  >= 1.0f) wobblePhase_  -= 1.0f;
+    if (flutterPhase_ >= 1.0f) flutterPhase_ -= 1.0f;
 
-    float wet      = buf_[readPos];
-    float writeVal = input + wet * feedback_;
+    float modulatedTarget = targetDelay_ + wobble + flutter;
+    modulatedTarget = std::clamp(modulatedTarget, 1.0f,
+                                 static_cast<float>(maxSamples_ - 1));
 
-    // NaN/Inf protection — reset the entire buffer
-    if (!std::isfinite(writeVal)) {
+    // ── Slew read position toward modulated target ───────────────────
+    float diff = modulatedTarget - readPos_;
+    if (std::abs(diff) <= slewRate_) {
+        readPos_ = modulatedTarget;
+    } else {
+        readPos_ += (diff > 0.0f) ? slewRate_ : -slewRate_;
+    }
+
+    // ── Read with linear interpolation ───────────────────────────────
+    float readIdx = static_cast<float>(writePos_) - readPos_;
+    if (readIdx < 0.0f) readIdx += static_cast<float>(maxSamples_);
+
+    int   idx0 = static_cast<int>(readIdx);
+    float frac = readIdx - static_cast<float>(idx0);
+    int   idx1 = (idx0 + 1) % maxSamples_;
+
+    float wet = buf_[idx0] * (1.0f - frac) + buf_[idx1] * frac;
+
+    // ── Feedback path: HP → LP → saturation ─────────────────────────
+    float fb = wet * feedback_;
+
+    // High-pass 80 Hz (prevent mud buildup)
+    hpState_ = hpCoeff_ * (hpState_ + fb - hpPrevIn_);
+    hpPrevIn_ = fb;
+    fb = hpState_;
+
+    // Low-pass 5 kHz (tape damping)
+    lpState_ += lpCoeff_ * (fb - lpState_);
+    fb = lpState_;
+
+    // Tape saturation
+    fb = dsp::fast_tanh(fb);
+
+    // NaN/Inf protection
+    if (!std::isfinite(fb)) {
         reset();
         return input;
     }
 
-    buf_[writePos_] = writeVal;
-    writePos_ = (writePos_ + 1) % static_cast<int>(buf_.size());
+    // ── Write to buffer ──────────────────────────────────────────────
+    buf_[writePos_] = dsp::sanitize(input + fb);
+    writePos_ = (writePos_ + 1) % maxSamples_;
 
     return input * (1.0f - mix_) + wet * mix_;
 }

@@ -4,23 +4,49 @@
 
 // ─── Tape delay ─────────────────────────────────────────────────────
 //
-// Circular-buffer delay with feedback and dry/wet mix.
-// NaN/Inf-safe: resets buffer on detection in the feedback path.
+// Analog-style tape delay with:
+//   - Fractional read head with linear interpolation
+//   - Slew-rate–limited read pointer (repitch on time change)
+//   - Tape wobble (~0.5 Hz) and flutter (~3.5 Hz) modulation
+//   - Feedback path: HP 80 Hz → LP 5 kHz → tanh saturation
+//   - NaN/Inf-safe: resets on detection in feedback path
 
 class TapeDelay {
 public:
     void  init(float sampleRate, float maxTimeSec);
     void  setTime(float sec);
-    void  setFeedback(float fb);    // 0 – 0.95
-    void  setMix(float mix);        // 0 – 1.0
+    void  setFeedback(float fb);         // 0 – 0.95
+    void  setMix(float mix);             // 0 – 1.0
+    void  setRepitchRate(float rate);     // 0 – 1.0 (higher = more pitch artifact)
     float process(float input);
     void  reset();
 
 private:
     std::vector<float> buf_;
     int   writePos_     = 0;
-    int   delaySamples_ = 1;
+    int   maxSamples_   = 1;
+    float sr_           = 48000.0f;
+
+    // Fractional read position (samples behind write head)
+    float readPos_      = 1.0f;
+    float targetDelay_  = 1.0f;
+    float slewRate_     = 4.0f;          // max Δ readPos per sample
+
     float feedback_     = 0.0f;
     float mix_          = 0.0f;
-    float sr_           = 48000.0f;
+
+    // Tape modulation oscillators
+    float wobblePhase_  = 0.0f;          // ~0.5 Hz drift
+    float flutterPhase_ = 0.0f;          // ~3.5 Hz variation
+    float wobbleInc_    = 0.0f;
+    float flutterInc_   = 0.0f;
+    float wobbleDepth_  = 0.0f;          // amplitude in samples
+    float flutterDepth_ = 0.0f;
+
+    // Feedback path 1-pole filters
+    float hpState_      = 0.0f;          // HP at 80 Hz
+    float hpPrevIn_     = 0.0f;
+    float hpCoeff_      = 0.0f;
+    float lpState_      = 0.0f;          // LP at 5 kHz
+    float lpCoeff_      = 0.0f;
 };
