@@ -8,7 +8,7 @@
 //
 // Encoder banks (Shift toggles A / B):
 //   Enc 1:  A = Base Freq (50–2000 Hz)     B = LFO Depth (0–100%)
-//   Enc 2:  A = LFO Rate (0.1–20 Hz)       B = Reverb Size (0–100%)
+//   Enc 2:  A = LFO Rate (0.1–20 Hz)       B = Release Time (10 ms–2 s)
 //   Enc 3:  A = Filter Cutoff (20–20 kHz)   B = Filter Resonance (0–95%)
 //   Enc 4:  A = Delay Time (1 ms–2.0 s)     B = Delay Mix (0–100%)
 //   Enc 5:  A = Delay Feedback (0–95%)      B = Reverb Mix (0–100%)
@@ -52,10 +52,13 @@ static std::atomic<float> g_delay_feedback{0.45f};
 
 // Bank B
 static std::atomic<float> g_lfo_depth{0.35f};
-static std::atomic<float> g_reverb_size{0.65f};
+static std::atomic<float> g_release_time{0.050f};  // 50 ms default
 static std::atomic<float> g_filter_reso{0.0f};
 static std::atomic<float> g_delay_mix{0.30f};
 static std::atomic<float> g_reverb_mix{0.35f};
+
+// Fixed (no encoder control)
+static constexpr float REVERB_SIZE = 0.65f;
 
 // Controls
 static std::atomic<int>   g_waveform{0};
@@ -84,8 +87,8 @@ static constexpr float DELAY_TIME_STEP = 1.10f;                // 10 % per click
 static constexpr float DELAY_FB_STEP   = 0.03f;                // 3 % per click
 
 // Bank B — additive
-static constexpr float LFO_DEPTH_STEP  = 0.04f;                // 4 % per click
-static constexpr float REVERB_SIZE_STEP = 0.05f;               // 5 % per click
+static constexpr float LFO_DEPTH_STEP   = 0.04f;               // 4 % per click
+static constexpr float RELEASE_TIME_STEP = 1.15f;              // 15 % per click (log)
 static constexpr float FILTER_RESO_STEP = 0.03f;               // 3 % (fine near self-osc)
 static constexpr float DELAY_MIX_STEP  = 0.05f;                // 5 % per click
 static constexpr float REVERB_MIX_STEP = 0.05f;                // 5 % per click
@@ -208,6 +211,7 @@ int main(int argc, char *argv[])
     float env_level      = 0.0f;
     float attack_rate    = 0.0f;
     float release_rate   = 0.0f;
+    float sr_f           = 48000.0f;    // set after init, read in callback
     float pitch_env_mult = 1.0f;
     bool  prev_gate      = false;
     bool  pe_active      = false;   // true after trigger release
@@ -234,10 +238,13 @@ int main(int argc, char *argv[])
         float dly_t     = g_delay_time_eff.load(rlx);
         float dly_fb    = g_delay_feedback.load(rlx);
         float dly_mix   = g_delay_mix.load(rlx);
-        float rev_sz    = g_reverb_size.load(rlx);
         float rev_mix   = g_reverb_mix.load(rlx);
+        float rel_t     = g_release_time.load(rlx);
         int   pe_mode   = g_pitch_env.load(rlx);
         bool  linked    = g_delay_link.load(rlx);
+
+        // Recompute release rate from user-controlled release time
+        release_rate = 1.0f / (rel_t * sr_f);
 
         // Update DSP modules (once per frame)
         lfo.setRate(lfo_r);
@@ -248,7 +255,7 @@ int main(int argc, char *argv[])
         delay.setFeedback(dly_fb);
         delay.setMix(dly_mix);
         delay.setRepitchRate(linked ? 0.6f : 0.3f);
-        reverb.setSize(rev_sz);
+        reverb.setSize(REVERB_SIZE);
         reverb.setMix(rev_mix);
 
         // Gate edge — pitch envelope starts on release, resets on press
@@ -301,6 +308,7 @@ int main(int argc, char *argv[])
 
     if (audio.init(device, SAMPLE_RATE, audio_cb)) {
         float sr = static_cast<float>(audio.sampleRate());
+        sr_f = sr;
         osc.setSampleRate(sr);
         lfo.setSampleRate(sr);
         filter.setSampleRate(sr);
@@ -332,7 +340,9 @@ int main(int argc, char *argv[])
             case 0: {   // Freq — semitone base (or linked step)
                 bool lk = g_delay_link.load();
                 float base = lk ? FREQ_STEP_LINKED : FREQ_STEP;
-                float step = std::pow(base, accel);
+                // Halve acceleration for cleaner pitch sweeps (1×–2.5×)
+                float pitch_accel = 1.0f + (accel - 1.0f) * 0.5f;
+                float step = std::pow(base, pitch_accel);
                 float f = g_freq.load();
                 f *= (dir > 0) ? step : (1.0f / step);
                 f = std::clamp(f, 50.0f, 2000.0f);
@@ -400,12 +410,13 @@ int main(int argc, char *argv[])
                 printf("  [B] LFO DEP  %.0f%%\n", d * 100.0f);
                 break;
             }
-            case 1: {   // Reverb Size — 5 % base
-                float s = g_reverb_size.load()
-                        + dir * REVERB_SIZE_STEP * accel;
-                s = std::clamp(s, 0.0f, 1.0f);
-                g_reverb_size.store(s);
-                printf("  [B] REV SIZE %.0f%%\n", s * 100.0f);
+            case 1: {   // Release Time — 15 % per click, log
+                float step = std::pow(RELEASE_TIME_STEP, accel);
+                float rt = g_release_time.load();
+                rt *= (dir > 0) ? step : (1.0f / step);
+                rt = std::clamp(rt, 0.010f, 2.0f);
+                g_release_time.store(rt);
+                printf("  [B] RELEASE  %.0f ms\n", rt * 1000.0f);
                 break;
             }
             case 2: {   // Filter Resonance — 3 % base (fine near self-osc)
@@ -528,8 +539,8 @@ int main(int argc, char *argv[])
            g_delay_time.load() * 1000.0f,
            g_delay_feedback.load() * 100.0f,
            g_delay_mix.load() * 100.0f);
-    printf("  Reverb: Size %.0f%%  Mix %.0f%%\n",
-           g_reverb_size.load() * 100.0f,
+    printf("  Release: %.0f ms  Reverb: Mix %.0f%%\n",
+           g_release_time.load() * 1000.0f,
            g_reverb_mix.load() * 100.0f);
     printf("\nListening for events (Ctrl-C to quit) ...\n\n");
 
