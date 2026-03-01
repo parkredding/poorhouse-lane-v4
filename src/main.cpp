@@ -45,17 +45,17 @@ static void on_signal(int) { g_running = 0; }
 
 // Bank A
 static std::atomic<float> g_freq{440.0f};
-static std::atomic<float> g_lfo_rate{1.0f};
-static std::atomic<float> g_filter_cutoff{20000.0f};
-static std::atomic<float> g_delay_time{0.3f};
-static std::atomic<float> g_delay_feedback{0.0f};
+static std::atomic<float> g_lfo_rate{0.35f};
+static std::atomic<float> g_filter_cutoff{8000.0f};
+static std::atomic<float> g_delay_time{0.375f};
+static std::atomic<float> g_delay_feedback{0.45f};
 
 // Bank B
-static std::atomic<float> g_lfo_depth{0.0f};
-static std::atomic<float> g_reverb_size{0.3f};
+static std::atomic<float> g_lfo_depth{0.35f};
+static std::atomic<float> g_reverb_size{0.65f};
 static std::atomic<float> g_filter_reso{0.0f};
-static std::atomic<float> g_delay_mix{0.0f};
-static std::atomic<float> g_reverb_mix{0.0f};
+static std::atomic<float> g_delay_mix{0.30f};
+static std::atomic<float> g_reverb_mix{0.35f};
 
 // Controls
 static std::atomic<int>   g_waveform{0};
