@@ -243,8 +243,13 @@ int main(int argc, char *argv[])
         int   pe_mode   = g_pitch_env.load(rlx);
         bool  linked    = g_delay_link.load(rlx);
 
-        // Recompute release rate from user-controlled release time
-        release_rate = 1.0f / (rel_t * sr_f);
+        // Recompute release rate and pitch-envelope factors from release time.
+        // Pitch sweeps exactly 3 octaves over the release duration so the
+        // pitch slide and volume fade finish together.
+        float rel_samples = rel_t * sr_f;
+        release_rate = 1.0f / rel_samples;
+        rise_factor  = std::pow(2.0f,  3.0f / rel_samples);  // 3 oct up
+        fall_factor  = std::pow(2.0f, -3.0f / rel_samples);  // 3 oct down
 
         // Update DSP modules (once per frame)
         lfo.setRate(lfo_r);
@@ -274,7 +279,7 @@ int main(int argc, char *argv[])
             if (pe_active && pe_mode != 0) {
                 pitch_env_mult *= (pe_mode > 0) ? rise_factor
                                                 : fall_factor;
-                pitch_env_mult = std::clamp(pitch_env_mult, 0.25f, 4.0f);
+                pitch_env_mult = std::clamp(pitch_env_mult, 0.125f, 8.0f);
             }
 
             // LFO → exponential pitch modulation
@@ -318,8 +323,6 @@ int main(int argc, char *argv[])
 
         attack_rate  = 1.0f / (0.005f * sr);           // ~5 ms
         release_rate = 1.0f / (0.050f * sr);            // ~50 ms
-        rise_factor  = std::pow(2.0f, 1.0f / sr);      // 1 oct/sec up
-        fall_factor  = std::pow(0.5f, 1.0f / sr);      // 1 oct/sec down
 
         audio.start();
     } else {
