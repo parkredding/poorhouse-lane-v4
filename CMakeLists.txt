@@ -15,7 +15,16 @@ pkg_check_modules(ALSA alsa)
 # libgpiod v2 — optional (not present on desktop)
 pkg_check_modules(GPIOD libgpiod>=2.0)
 
-file(GLOB_RECURSE SOURCES "src/*.cpp")
+set(SOURCES
+    src/audio_engine.cpp
+    src/delay.cpp
+    src/filter.cpp
+    src/gpio_hw.cpp
+    src/lfo.cpp
+    src/main.cpp
+    src/oscillator.cpp
+    src/reverb.cpp
+)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 

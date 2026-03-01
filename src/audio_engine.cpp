@@ -10,6 +10,7 @@
 #include "audio_engine.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <atomic>
 #include <thread>
 #include <vector>
@@ -137,9 +138,7 @@ void AudioEngine::start()
 
             // 2. Convert mono float → interleaved stereo S16
             for (int i = 0; i < PERIOD_SIZE; i++) {
-                float s = d->floatBuf[i];
-                if (s >  1.0f) s =  1.0f;
-                if (s < -1.0f) s = -1.0f;
+                float s = std::clamp(d->floatBuf[i], -1.0f, 1.0f);
                 auto pcm = static_cast<int16_t>(s * 32767.0f);
                 d->pcmBuf[i * 2]     = pcm;   // L
                 d->pcmBuf[i * 2 + 1] = pcm;   // R

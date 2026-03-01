@@ -281,13 +281,11 @@ int main(int argc, char *argv[])
             float s = osc.tick();
 
             // Volume envelope (linear attack / release)
-            if (gate) {
+            if (gate)
                 env_level += attack_rate;
-                if (env_level > 1.0f) env_level = 1.0f;
-            } else {
+            else
                 env_level -= release_rate;
-                if (env_level < 0.0f) env_level = 0.0f;
-            }
+            env_level = std::clamp(env_level, 0.0f, 1.0f);
             s *= env_level;
 
             // Effects chain

@@ -272,8 +272,8 @@ After=sound.target
 
 [Service]
 Type=simple
-ExecStart=${INSTALL_DIR}/build/dubsiren
-WorkingDirectory=${INSTALL_DIR}
+ExecStart="${INSTALL_DIR}/build/dubsiren"
+WorkingDirectory="${INSTALL_DIR}"
 Restart=on-failure
 RestartSec=3
 CPUSchedulingPolicy=fifo
@@ -281,7 +281,7 @@ CPUSchedulingPriority=80
 Nice=-20
 LimitRTPRIO=99
 LimitMEMLOCK=infinity
-User=root
+User=${REAL_USER}
 
 [Install]
 WantedBy=multi-user.target
