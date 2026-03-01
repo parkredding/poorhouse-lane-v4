@@ -302,7 +302,8 @@ void GpioHw::poll()
             int8_t dir = ENC_DIR[(d->enc_prev[e] << 2) | cur];
             d->enc_prev[e] = cur;
 
-            if (dir != 0 && cb.on_encoder)
+            // Fire only on falling edge — one trigger per detent
+            if (dir != 0 && !rising && cb.on_encoder)
                 cb.on_encoder(e, dir);
 
             handled = true;
