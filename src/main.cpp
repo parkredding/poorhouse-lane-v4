@@ -19,7 +19,7 @@
 //   Preset   (GPIO 5)   Cycle dub siren preset; Shift+Preset = cycle LFO shape
 //
 // Presets (GPIO 5, Bank A):
-//   1. Lickshot  2. Machine Gun  3. Airhorn  4. Laser Sweep  5. Dub Siren
+//   1. Lickshot  2. Machine Gun  3. Raygun  4. Laser Sweep  5. Dub Siren
 //
 // LFO shapes (Shift+GPIO 5):
 //   Sine → Triangle → Square → RampUp → RampDown → S&H
@@ -172,24 +172,24 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.30f,          // reverb_mix  (room around the bursts)
         0.120f,         // release_time  (snappy cutoff)
     },
-    //  ── 3. Airhorn ────────────────────────────────────────────────
-    //  Sustained blast at a single pitch.  Square wave for that raw,
-    //  nasal horn character.  Dub delay and reverb give it weight
-    //  and presence on the sound system.
+    //  ── 3. Raygun ──────────────────────────────────────────────────
+    //  Alien zap gun.  Square wave with sample-and-hold LFO for
+    //  random pitch steps — unpredictable sci-fi blasts.  Resonant
+    //  filter adds squelch, delay and reverb scatter it into space.
     {
-        "Airhorn",
+        "Raygun",
         1,              // Square
-        0,              // LFO: Sine
-        500.0f,         // freq  (low tone — deep horn)
-        0.5f,           // lfo_rate  (very slow drift)
-        0.08f,          // lfo_depth  (barely there — near-static pitch)
-        5000.0f,        // filter_cutoff  (warm but present)
-        0.35f,          // filter_reso  (nasal horn resonance)
-        0.400f,         // delay_time  (dub tempo echo)
-        0.55f,          // delay_feedback  (long trail)
-        0.40f,          // delay_mix  (prominent)
-        0.40f,          // reverb_mix  (full spring wash)
-        0.350f,         // release_time  (sustain into reverb)
+        5,              // LFO: S&H
+        900.0f,         // freq  (mid-high, bright zaps)
+        5.0f,           // lfo_rate  (fast random steps)
+        0.80f,          // lfo_depth  (wide random jumps)
+        5000.0f,        // filter_cutoff  (warm enough to squelch)
+        0.50f,          // filter_reso  (heavy squelch on each step)
+        0.350f,         // delay_time  (spacey echo)
+        0.60f,          // delay_feedback  (long scattered trails)
+        0.45f,          // delay_mix  (prominent)
+        0.45f,          // reverb_mix  (deep space)
+        0.300f,         // release_time  (medium — let FX breathe)
     },
     //  ── 4. Laser Sweep ────────────────────────────────────────────
     //  Rising laser blast.  Square wave with ramp-up LFO for that
