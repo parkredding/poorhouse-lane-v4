@@ -10,7 +10,7 @@
 //   Enc 1:  A = Base Freq (30–8000 Hz)     B = LFO Depth (0–100%)
 //   Enc 2:  A = LFO Rate (0.1–20 Hz)       B = Release Time (10 ms–3 s)
 //   Enc 3:  A = Filter Cutoff (20–20 kHz)   B = Filter Resonance (0–95%)
-//   Enc 4:  A = Delay Time (1 ms–2.0 s)     B = Delay Mix (0–100%)
+//   Enc 4:  A = Delay Time (1 ms–1.0 s)     B = Delay Mix (0–100%)
 //   Enc 5:  A = Delay Feedback (0–95%)      B = Reverb Mix (0–100%)
 //
 // Buttons:
@@ -320,7 +320,7 @@ static float update_delay_eff()
     if (g_delay_link.load()) {
         float freq = g_freq.load();
         t = t * (REF_FREQ / freq);
-        t = std::clamp(t, 0.01f, 2.0f);
+        t = std::clamp(t, 0.01f, 1.0f);
     }
     g_delay_time_eff.store(t);
     return t;
@@ -502,7 +502,7 @@ int main(int argc, char *argv[])
         osc.setSampleRate(sr);
         lfo.setSampleRate(sr);
         filter.setSampleRate(sr);
-        delay.init(sr, 2.5f);
+        delay.init(sr, 1.5f);
         delay.setRepitchRate(0.3f);
         reverb.init(sr);
 
@@ -566,7 +566,7 @@ int main(int argc, char *argv[])
                 float step = std::pow(DELAY_TIME_STEP, accel);
                 float t = g_delay_time.load();
                 t *= (dir > 0) ? step : (1.0f / step);
-                t = std::clamp(t, 0.001f, 2.0f);
+                t = std::clamp(t, 0.001f, 1.0f);
                 g_delay_time.store(t);
                 float eff = update_delay_eff();
                 if (g_delay_link.load()) {
