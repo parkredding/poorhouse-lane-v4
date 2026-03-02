@@ -19,7 +19,7 @@
 //   Preset   (GPIO 5)   Cycle dub siren preset; Shift+Preset = cycle LFO shape
 //
 // Presets (GPIO 5, Bank A):
-//   1. Classic Siren  2. Space Echo  3. Alarm  4. UFO  5. Foghorn
+//   1. Lickshot  2. Machine Gun  3. Airhorn  4. Laser Sweep  5. Dub Siren
 //
 // LFO shapes (Shift+GPIO 5):
 //   Sine → Triangle → Square → RampUp → RampDown → S&H
@@ -109,10 +109,11 @@ static float update_delay_eff();   // forward declaration
 
 // ─── Dub Siren Presets ──────────────────────────────────────────────
 //
-// GPIO 5 (Bank A) cycles through these presets.  Each one configures
-// waveform, LFO, filter, delay, and reverb for a classic dub siren
-// sound.  All knobs remain live after selecting a preset so the
-// performer can tweak from any starting point.
+// GPIO 5 (Bank A) cycles through these presets.  Inspired by the
+// Benidub Lickshot — square-wave oscillator, aggressive LFO-driven
+// laser/machine-gun sounds, punchy and immediate.  All knobs remain
+// live after selecting a preset so the performer can tweak from any
+// starting point.
 
 struct DubPreset {
     const char* name;
@@ -133,95 +134,100 @@ struct DubPreset {
 static constexpr int NUM_PRESETS = 5;
 
 static const DubPreset PRESETS[NUM_PRESETS] = {
-    //  ── 1. Classic Siren ──────────────────────────────────────────
-    //  The quintessential dub siren: smooth sine, medium-fast vibrato,
-    //  warm echo and spring reverb.  Hold the trigger and sweep.
+    //  ── 1. Lickshot ───────────────────────────────────────────────
+    //  The classic laser-gun sound.  Square wave with fast triangle
+    //  LFO sweeping the pitch hard.  Dry and punchy — the signature
+    //  Lickshot tone.  Use the pitch-env switch for extra drama.
     {
-        "Classic Siren",
-        0,              // Sine
-        0,              // LFO: Sine
-        800.0f,         // freq
-        3.0f,           // lfo_rate
-        0.60f,          // lfo_depth
-        6000.0f,        // filter_cutoff
-        0.10f,          // filter_reso
-        0.300f,         // delay_time
-        0.55f,          // delay_feedback
-        0.40f,          // delay_mix
-        0.40f,          // reverb_mix
-        0.400f,         // release_time
-    },
-    //  ── 2. Space Echo ─────────────────────────────────────────────
-    //  Deep, spacey dub.  Saw wave for harmonic richness, slow sweeping
-    //  LFO, long delay with high feedback, heavy reverb.
-    {
-        "Space Echo",
-        2,              // Saw
+        "Lickshot",
+        1,              // Square
         1,              // LFO: Triangle
-        600.0f,         // freq
-        0.8f,           // lfo_rate
-        0.50f,          // lfo_depth
-        3000.0f,        // filter_cutoff
-        0.30f,          // filter_reso
-        0.500f,         // delay_time
-        0.70f,          // delay_feedback
-        0.50f,          // delay_mix
-        0.55f,          // reverb_mix
-        0.800f,         // release_time
+        800.0f,         // freq  (mid tone)
+        8.0f,           // lfo_rate  (fast sweep)
+        0.75f,          // lfo_depth  (deep for laser character)
+        8000.0f,        // filter_cutoff  (bright, let harmonics through)
+        0.25f,          // filter_reso  (slight bite)
+        0.250f,         // delay_time  (tight slapback)
+        0.45f,          // delay_feedback
+        0.25f,          // delay_mix  (mostly dry)
+        0.15f,          // reverb_mix  (just a touch)
+        0.150f,         // release_time  (punchy, immediate)
     },
-    //  ── 3. Alarm ──────────────────────────────────────────────────
-    //  Urgent, punchy siren.  Square wave with fast square LFO for
-    //  hard on/off warble, tight delay, crisp reverb.
+    //  ── 2. Machine Gun ────────────────────────────────────────────
+    //  Rapid-fire stutter.  Square osc with very fast square LFO for
+    //  hard on/off bursts — the Lickshot's machine-gun mode.  Tight
+    //  delay adds rhythmic stutter to the bursts.
     {
-        "Alarm",
+        "Machine Gun",
         1,              // Square
         2,              // LFO: Square
-        1200.0f,        // freq
-        6.0f,           // lfo_rate
-        0.40f,          // lfo_depth
-        10000.0f,       // filter_cutoff
-        0.00f,          // filter_reso
-        0.180f,         // delay_time
-        0.45f,          // delay_feedback
-        0.35f,          // delay_mix
-        0.25f,          // reverb_mix
-        0.200f,         // release_time
+        1000.0f,        // freq  (punchy mid-high)
+        14.0f,          // lfo_rate  (rapid fire)
+        0.85f,          // lfo_depth  (extreme for hard cuts)
+        10000.0f,       // filter_cutoff  (wide open, raw)
+        0.10f,          // filter_reso
+        0.120f,         // delay_time  (very tight, stutter echo)
+        0.50f,          // delay_feedback  (rhythmic repeats)
+        0.30f,          // delay_mix
+        0.10f,          // reverb_mix  (dry)
+        0.080f,         // release_time  (snappy cutoff)
     },
-    //  ── 4. UFO ────────────────────────────────────────────────────
-    //  Random alien warble.  Triangle wave with sample-and-hold LFO
-    //  creating unpredictable pitch steps, soaked in delay and reverb.
+    //  ── 3. Airhorn ────────────────────────────────────────────────
+    //  The Lickshot with LFO off — a sustained blast at a single
+    //  pitch.  Square wave for that raw, nasal horn character.
+    //  Slow sine LFO adds just a hint of wobble.
     {
-        "UFO",
-        3,              // Triangle
-        5,              // LFO: S&H
-        500.0f,         // freq
-        4.0f,           // lfo_rate
-        0.80f,          // lfo_depth
-        4000.0f,        // filter_cutoff
-        0.50f,          // filter_reso
-        0.400f,         // delay_time
-        0.65f,          // delay_feedback
-        0.45f,          // delay_mix
-        0.60f,          // reverb_mix
-        0.600f,         // release_time
+        "Airhorn",
+        1,              // Square
+        0,              // LFO: Sine
+        500.0f,         // freq  (low tone — deep horn)
+        0.5f,           // lfo_rate  (very slow drift)
+        0.08f,          // lfo_depth  (barely there — near-static pitch)
+        5000.0f,        // filter_cutoff  (warm but present)
+        0.35f,          // filter_reso  (nasal horn resonance)
+        0.350f,         // delay_time  (dub echo)
+        0.50f,          // delay_feedback
+        0.30f,          // delay_mix
+        0.20f,          // reverb_mix  (some space)
+        0.300f,         // release_time  (medium sustain)
     },
-    //  ── 5. Foghorn ────────────────────────────────────────────────
-    //  Deep bass siren.  Low saw with slow ramp-down LFO, long delay
-    //  tail, big reverb.  Heavyweight dub pressure.
+    //  ── 4. Laser Sweep ────────────────────────────────────────────
+    //  Rising laser blast.  Square wave with ramp-up LFO for that
+    //  ascending zap.  Filter resonance adds a squelchy edge.
+    //  Delay trails make it sci-fi.
     {
-        "Foghorn",
-        2,              // Saw
-        4,              // LFO: RampDown
-        120.0f,         // freq
-        0.3f,           // lfo_rate
-        0.45f,          // lfo_depth
-        1500.0f,        // filter_cutoff
-        0.40f,          // filter_reso
-        0.700f,         // delay_time
-        0.60f,          // delay_feedback
-        0.35f,          // delay_mix
-        0.50f,          // reverb_mix
-        1.200f,         // release_time
+        "Laser Sweep",
+        1,              // Square
+        3,              // LFO: RampUp
+        1200.0f,        // freq  (high tone)
+        6.0f,           // lfo_rate  (medium-fast sweep)
+        0.70f,          // lfo_depth  (wide pitch range)
+        6000.0f,        // filter_cutoff
+        0.45f,          // filter_reso  (squelchy)
+        0.200f,         // delay_time  (tight echo)
+        0.55f,          // delay_feedback
+        0.30f,          // delay_mix
+        0.15f,          // reverb_mix  (mostly dry)
+        0.200f,         // release_time  (sharp)
+    },
+    //  ── 5. Dub Siren ──────────────────────────────────────────────
+    //  The Lickshot through a dub effects chain.  Square wave keeps
+    //  the raw character but heavier delay and reverb give it that
+    //  classic sound-system wash.  Slower LFO for a wider sweep.
+    {
+        "Dub Siren",
+        1,              // Square
+        0,              // LFO: Sine
+        700.0f,         // freq  (warm mid)
+        3.5f,           // lfo_rate  (classic siren speed)
+        0.60f,          // lfo_depth  (full sweep)
+        4500.0f,        // filter_cutoff  (warmer, darker)
+        0.30f,          // filter_reso  (some character)
+        0.375f,         // delay_time  (dub tempo echo)
+        0.65f,          // delay_feedback  (long repeats)
+        0.40f,          // delay_mix  (prominent echo)
+        0.35f,          // reverb_mix  (spring tank wash)
+        0.400f,         // release_time  (medium tail)
     },
 };
 
