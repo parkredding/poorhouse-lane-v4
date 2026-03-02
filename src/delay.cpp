@@ -1,4 +1,9 @@
-// delay.cpp — Analog tape delay with slew, modulation, and feedback filtering
+// delay.cpp — Analog tape delay with spring-damped read head
+//
+// The read position uses a spring-damper instead of a linear slew.
+// When the delay time changes, the read head overshoots the target
+// and oscillates back — creating a "boomerang" pitch artifact in the
+// feedback loop.  Higher repitchRate = less damping = more overshoot.
 
 #include "delay.h"
 #include "dsp_utils.h"
@@ -7,6 +12,14 @@
 
 static constexpr float TWO_PI = 6.28318530718f;
 
+// Spring natural frequency (Hz) — controls how fast the boomerang
+// oscillates.  3 Hz sits in the dub tempo range (~180 BPM triplet).
+static constexpr float SPRING_FREQ = 3.0f;
+
+// Maximum read-head velocity (samples/sample).  Caps the pitch shift
+// to prevent extreme artifacts on very large delay time jumps.
+static constexpr float MAX_SLEW_VEL = 6.0f;
+
 void TapeDelay::init(float sampleRate, float maxTimeSec)
 {
     sr_ = sampleRate;
@@ -14,10 +27,11 @@ void TapeDelay::init(float sampleRate, float maxTimeSec)
     buf_.assign(maxSamples_, 0.0f);
     writePos_    = 0;
     readPos_     = 1.0f;
+    readVel_     = 0.0f;
     targetDelay_ = 1.0f;
 
-    // Default slew (overridden by setRepitchRate)
-    slewRate_ = 4.0f;
+    // Compute default spring/damp (overridden by setRepitchRate)
+    setRepitchRate(0.3f);
 
     // Tape modulation
     wobblePhase_  = 0.0f;
@@ -57,8 +71,13 @@ void TapeDelay::setMix(float mix)
 void TapeDelay::setRepitchRate(float rate)
 {
     rate = std::clamp(rate, 0.001f, 1.0f);
-    slewRate_ = static_cast<float>(maxSamples_)
-              / (2.0f * rate * sr_);
+
+    // Higher rate → less damping → more overshoot (boomerang)
+    float omega = TWO_PI * SPRING_FREQ / sr_;
+    float zeta  = std::pow(1.0f - rate, 1.2f);
+
+    spring_ = omega * omega;
+    damp_   = 2.0f * zeta * omega;
 }
 
 void TapeDelay::reset()
@@ -66,6 +85,7 @@ void TapeDelay::reset()
     std::fill(buf_.begin(), buf_.end(), 0.0f);
     writePos_  = 0;
     readPos_   = targetDelay_;
+    readVel_   = 0.0f;
     hpState_   = 0.0f;
     hpPrevIn_  = 0.0f;
     lpState_   = 0.0f;
@@ -81,20 +101,27 @@ float TapeDelay::process(float input)
     if (wobblePhase_  >= 1.0f) wobblePhase_  -= 1.0f;
     if (flutterPhase_ >= 1.0f) flutterPhase_ -= 1.0f;
 
-    float modulatedTarget = targetDelay_ + wobble + flutter;
-    modulatedTarget = std::clamp(modulatedTarget, 1.0f,
-                                 static_cast<float>(maxSamples_ - 1));
+    // ── Spring-damped approach to base target ──────────────────────
+    //
+    // The read head has inertia: it accelerates toward the target,
+    // overshoots, and oscillates back.  The overshoot in the feedback
+    // loop is the "boomerang" — pitch slings out then converges.
+    float error = targetDelay_ - readPos_;
+    readVel_ += error * spring_ - readVel_ * damp_;
+    readVel_  = std::clamp(readVel_, -MAX_SLEW_VEL, MAX_SLEW_VEL);
+    readPos_ += readVel_;
 
-    // ── Slew read position toward modulated target ───────────────────
-    float diff = modulatedTarget - readPos_;
-    if (std::abs(diff) <= slewRate_) {
-        readPos_ = modulatedTarget;
-    } else {
-        readPos_ += (diff > 0.0f) ? slewRate_ : -slewRate_;
-    }
+    // Boundary handling — kill velocity if we hit the buffer edge
+    float limit = static_cast<float>(maxSamples_ - 2);
+    if (readPos_ < 1.0f)  { readPos_ = 1.0f;  readVel_ = 0.0f; }
+    if (readPos_ > limit)  { readPos_ = limit;  readVel_ = 0.0f; }
+
+    // Apply tape modulation on top of spring position
+    float finalPos = std::clamp(readPos_ + wobble + flutter,
+                                1.0f, static_cast<float>(maxSamples_ - 1));
 
     // ── Read with linear interpolation ───────────────────────────────
-    float readIdx = static_cast<float>(writePos_) - readPos_;
+    float readIdx = static_cast<float>(writePos_) - finalPos;
     if (readIdx < 0.0f) readIdx += static_cast<float>(maxSamples_);
 
     int   idx0 = static_cast<int>(readIdx);

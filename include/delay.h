@@ -6,7 +6,7 @@
 //
 // Analog-style tape delay with:
 //   - Fractional read head with linear interpolation
-//   - Slew-rate–limited read pointer (repitch on time change)
+//   - Spring-damped read head (overshoots on time change → boomerang)
 //   - Tape wobble (~0.5 Hz) and flutter (~3.5 Hz) modulation
 //   - Feedback path: HP 80 Hz → LP 5 kHz → driven tanh blend (30%)
 //   - NaN/Inf-safe: resets on detection in feedback path
@@ -17,7 +17,7 @@ public:
     void  setTime(float sec);
     void  setFeedback(float fb);         // 0 – 0.95
     void  setMix(float mix);             // 0 – 1.0
-    void  setRepitchRate(float rate);     // 0 – 1.0 (higher = more pitch artifact)
+    void  setRepitchRate(float rate);     // 0 – 1.0 (higher = more overshoot)
     float process(float input);
     void  reset();
 
@@ -27,10 +27,12 @@ private:
     int   maxSamples_   = 1;
     float sr_           = 48000.0f;
 
-    // Fractional read position (samples behind write head)
+    // Spring-damped read position (samples behind write head)
     float readPos_      = 1.0f;
+    float readVel_      = 0.0f;          // read head velocity (samples/sample)
     float targetDelay_  = 1.0f;
-    float slewRate_     = 4.0f;          // max Δ readPos per sample
+    float spring_       = 0.0f;          // stiffness (ω₀²)
+    float damp_         = 0.0f;          // friction  (2ζω₀)
 
     float feedback_     = 0.0f;
     float mix_          = 0.0f;
