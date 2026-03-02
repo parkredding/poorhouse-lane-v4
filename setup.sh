@@ -24,6 +24,9 @@ REPO_URL="https://github.com/parkredding/poorhouse-lane-v4.git"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 IS_PI_ZERO=false
 BOOT_CHANGED=false
+# Inherit from env if set (survives clone_if_needed re-exec)
+ENABLE_AUTOSTART="${ENABLE_AUTOSTART:-}"
+ENABLE_KIOSK="${ENABLE_KIOSK:-}"
 
 # --- check_root() ------------------------------------------------------------
 check_root() {
@@ -46,6 +49,54 @@ check_root() {
     info "Installing for user: ${REAL_USER}"
     info "Install directory:   ${INSTALL_DIR}"
     echo ""
+}
+
+# --- ask_options() -----------------------------------------------------------
+ask_options() {
+    # Skip prompts if already configured (re-exec from clone_if_needed)
+    if [[ -n "$ENABLE_AUTOSTART" && -n "$ENABLE_KIOSK" ]]; then
+        info "Autostart: ${ENABLE_AUTOSTART}"
+        info "Kiosk mode: ${ENABLE_KIOSK}"
+        return 0
+    fi
+
+    echo -e "${BLUE}Configuration Options${NC}"
+    echo ""
+
+    # Read from /dev/tty so prompts work even when piped (curl | bash)
+    # Autostart prompt — default Y
+    read -rp "  Start dubsiren automatically on boot? [Y/n]: " autostart_choice < /dev/tty
+    if [[ "$autostart_choice" =~ ^[Nn]$ ]]; then
+        ENABLE_AUTOSTART=false
+        info "Autostart: disabled"
+    else
+        ENABLE_AUTOSTART=true
+        info "Autostart: enabled"
+    fi
+
+    echo ""
+
+    # Kiosk mode prompt — default N
+    echo -e "  Kiosk mode turns this Pi into a dedicated dub siren appliance:"
+    echo -e "    ${YELLOW}•${NC} Console auto-login (no password prompt)"
+    echo -e "    ${YELLOW}•${NC} CLI-only boot (disables desktop if installed)"
+    echo -e "    ${YELLOW}•${NC} HDMI output disabled to save power"
+    echo -e "    ${YELLOW}•${NC} Screen blanking disabled"
+    echo -e "    ${YELLOW}•${NC} Read-only filesystem (protects SD card from corruption)"
+    echo ""
+    read -rp "  Enable kiosk mode? [y/N]: " kiosk_choice < /dev/tty
+    if [[ "$kiosk_choice" =~ ^[Yy]$ ]]; then
+        ENABLE_KIOSK=true
+        info "Kiosk mode: enabled"
+    else
+        ENABLE_KIOSK=false
+        info "Kiosk mode: disabled"
+    fi
+
+    echo ""
+
+    # Export so clone_if_needed re-exec preserves choices
+    export ENABLE_AUTOSTART ENABLE_KIOSK
 }
 
 # --- detect_pi() -------------------------------------------------------------
@@ -288,10 +339,106 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable dubsiren.service
 
-    success "dubsiren.service installed and enabled."
-    info "Service will not start until the binary is built."
+    if [[ "$ENABLE_AUTOSTART" == true ]]; then
+        systemctl enable dubsiren.service
+        success "dubsiren.service installed and enabled."
+    else
+        systemctl disable dubsiren.service 2>/dev/null || true
+        success "dubsiren.service installed (not enabled)."
+        info "To enable later: sudo systemctl enable --now dubsiren.service"
+    fi
+}
+
+# --- configure_kiosk() -------------------------------------------------------
+configure_kiosk() {
+    if [[ "$ENABLE_KIOSK" != true ]]; then
+        return 0
+    fi
+
+    info "Configuring kiosk mode..."
+
+    # --- 1. Console auto-login -----------------------------------------------
+    if command -v raspi-config &>/dev/null; then
+        raspi-config nonint do_boot_behaviour B2
+        success "Console auto-login enabled (raspi-config)."
+    else
+        # Manual getty override for auto-login
+        local getty_dir="/etc/systemd/system/getty@tty1.service.d"
+        mkdir -p "${getty_dir}"
+        cat > "${getty_dir}/autologin.conf" << EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin ${REAL_USER} --noclear %I \$TERM
+EOF
+        success "Console auto-login enabled (getty override)."
+    fi
+
+    # --- 2. CLI-only boot (disable desktop) ----------------------------------
+    if systemctl get-default 2>/dev/null | grep -q 'graphical'; then
+        systemctl set-default multi-user.target
+        BOOT_CHANGED=true
+        success "Boot target set to multi-user (CLI only)."
+    else
+        success "Already booting to CLI."
+    fi
+
+    # --- 3. Disable HDMI output ----------------------------------------------
+    cat > /etc/systemd/system/hdmi-off.service << 'EOF'
+[Unit]
+Description=Disable HDMI output to save power
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/tvservice -o
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable hdmi-off.service
+    success "HDMI output will be disabled on boot."
+
+    # --- 4. Disable screen blanking ------------------------------------------
+    local cmdline_file=""
+    if [[ -e /boot/firmware/cmdline.txt ]]; then
+        cmdline_file="/boot/firmware/cmdline.txt"
+    elif [[ -e /boot/cmdline.txt ]]; then
+        cmdline_file="/boot/cmdline.txt"
+    fi
+
+    if [[ -n "$cmdline_file" ]]; then
+        if ! grep -q 'consoleblank=0' "$cmdline_file"; then
+            cp "${cmdline_file}" "${cmdline_file}.bak.$(date +%Y%m%d%H%M%S)"
+            # cmdline.txt must be a single line — append to it
+            sed -i 's/$/ consoleblank=0/' "$cmdline_file"
+            BOOT_CHANGED=true
+            success "Screen blanking disabled (consoleblank=0)."
+        else
+            success "Screen blanking already disabled."
+        fi
+    else
+        warn "No cmdline.txt found — skipping screen blanking config."
+    fi
+
+    # --- 5. Read-only filesystem (overlay FS) --------------------------------
+    if command -v raspi-config &>/dev/null; then
+        # raspi-config provides a clean overlay FS implementation
+        raspi-config nonint enable_overlayfs
+        BOOT_CHANGED=true
+        success "Read-only overlay filesystem enabled (raspi-config)."
+        warn "To make changes later, disable overlay with:"
+        warn "  sudo raspi-config nonint disable_overlayfs && sudo reboot"
+    else
+        warn "raspi-config not found — skipping overlay filesystem."
+        warn "Install raspi-config or manually configure overlayFS for SD protection."
+    fi
+
+    echo ""
+    success "Kiosk mode configured."
 }
 
 # --- build_project() ---------------------------------------------------------
@@ -323,18 +470,33 @@ print_summary() {
     echo "  Install dir:  ${INSTALL_DIR}"
     echo "  Binary:       ${SCRIPT_DIR}/build/dubsiren"
     echo "  MP3 folder:   ${INSTALL_DIR}/mp3s/"
-    echo "  Service:      dubsiren.service (enabled)"
+    echo ""
+
+    if [[ "$ENABLE_AUTOSTART" == true ]]; then
+        echo "  Autostart:    enabled (dubsiren.service)"
+    else
+        echo "  Autostart:    disabled"
+        echo "                Enable later: sudo systemctl enable --now dubsiren.service"
+    fi
+
+    if [[ "$ENABLE_KIOSK" == true ]]; then
+        echo "  Kiosk mode:   enabled (auto-login, CLI-only, HDMI off, read-only FS)"
+        echo "                Undo overlay: sudo raspi-config nonint disable_overlayfs"
+    else
+        echo "  Kiosk mode:   disabled"
+    fi
+
     echo ""
 
     if [[ "$BOOT_CHANGED" == true ]]; then
-        warn "Boot config was modified — a reboot is required!"
+        warn "Boot configuration was modified — a reboot is required!"
         echo ""
-        read -rp "Reboot now? [y/N]: " reboot_choice
-        if [[ "$reboot_choice" =~ ^[Yy]$ ]]; then
+        read -rp "Reboot now? [Y/n]: " reboot_choice < /dev/tty
+        if [[ "$reboot_choice" =~ ^[Nn]$ ]]; then
+            warn "Remember to reboot before using the dub siren!"
+        else
             info "Rebooting..."
             reboot
-        else
-            warn "Remember to reboot before using the dub siren!"
         fi
     fi
 }
@@ -344,6 +506,7 @@ print_summary() {
 # =============================================================================
 check_root
 detect_pi
+ask_options
 ensure_git
 clone_if_needed
 setup_swap
@@ -353,5 +516,6 @@ configure_boot
 configure_alsa
 create_mp3_dir
 install_service
+configure_kiosk
 build_project
 print_summary

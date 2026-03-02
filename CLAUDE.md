@@ -1,5 +1,13 @@
 # CLAUDE.md
 
+## Fresh Install (one-liner)
+
+Run on a fresh Raspberry Pi to install everything. Prompts for autostart and kiosk mode:
+
+```
+curl -fsSL https://raw.githubusercontent.com/parkredding/poorhouse-lane-v4/main/setup.sh | sudo bash
+```
+
 ## Testing on Raspberry Pi
 
 After SSH'ing into the Raspberry Pi, run this one-liner to fetch the newest branch, check it out, build, and run:
