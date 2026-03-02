@@ -26,6 +26,7 @@
 //
 // Pitch envelope switch (GPIO 9/10):
 //   Rise / Off / Fall — sweeps pitch AND filter on trigger release
+//   Triple-tap to Fall = toggle LFO-pitch link (LFO rate follows envelope)
 
 #include <cstdio>
 #include <cstring>
@@ -76,6 +77,8 @@ static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
 
 // Pitch-delay-LFO link (secret mode: triple-click Shift to toggle)
 static std::atomic<bool>  g_delay_link{false};
+// LFO-pitch-envelope link (secret: triple-tap pitch switch to fall)
+static std::atomic<bool>  g_lfo_pitch_link{false};
 static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay (may be freq-scaled)
 static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (may be freq-scaled)
 
@@ -424,6 +427,7 @@ int main(int argc, char *argv[])
         float rel_t     = g_release_time.load(rlx);
         int   pe_mode   = g_pitch_env.load(rlx);
         bool  linked    = g_delay_link.load(rlx);
+        bool  lfo_link  = g_lfo_pitch_link.load(rlx);
 
         // Recompute release rate and pitch-envelope factors from release time.
         // Pitch sweeps exactly 3 octaves over the release duration so the
@@ -434,7 +438,7 @@ int main(int argc, char *argv[])
         fall_factor  = std::pow(2.0f, -3.0f / rel_samples);  // 3 oct down
 
         // Update DSP modules (once per frame)
-        // lfo rate set per-sample below (tracks pitch envelope)
+        // lfo rate set per-sample below (optionally tracks pitch envelope)
         lfo.setWaveform(static_cast<LfoWave>(g_lfo_waveform.load(rlx)));
         osc.setWaveform(static_cast<Waveform>(waveform));
         filter.setResonance(reso);
@@ -470,9 +474,8 @@ int main(int argc, char *argv[])
                 filter_env_mult  = std::clamp(filter_env_mult, 0.125f, 8.0f);
             }
 
-            // LFO rate tracks pitch envelope (faster when pitch rises,
-            // slower when pitch falls)
-            lfo.setRate(lfo_r * pitch_env_mult);
+            // LFO rate optionally tracks pitch envelope (secret mode)
+            lfo.setRate(lfo_link ? lfo_r * pitch_env_mult : lfo_r);
 
             // LFO → exponential pitch modulation
             float lfo_out = lfo.tick();
@@ -753,6 +756,40 @@ int main(int argc, char *argv[])
         g_pitch_env.store(pos);
         static const char *lbl[] = {"FALL", "OFF", "RISE"};
         printf("  PITCH-ENV  %s\n", lbl[pos + 1]);
+
+        // Secret mode: rapidly toggle to FALL 3 times to toggle
+        // LFO-pitch-envelope link
+        if (pos == -1) {
+            using clock = std::chrono::steady_clock;
+            static clock::time_point taps[3] = {};
+            static int tap_n = 0;
+
+            auto now = clock::now();
+
+            // Reset if too long since first tap
+            if (tap_n > 0) {
+                auto since = std::chrono::duration_cast<
+                                 std::chrono::milliseconds>(
+                                 now - taps[0]).count();
+                if (since > 800) tap_n = 0;
+            }
+
+            taps[tap_n++] = now;
+
+            if (tap_n >= 3) {
+                auto span = std::chrono::duration_cast<
+                                std::chrono::milliseconds>(
+                                taps[2] - taps[0]).count();
+                tap_n = 0;
+
+                if (span < 700) {
+                    bool lk = !g_lfo_pitch_link.load();
+                    g_lfo_pitch_link.store(lk);
+                    printf("  >>> LFO-PITCH LINK %s\n",
+                           lk ? "ON" : "OFF");
+                }
+            }
+        }
     };
 
     // ── Initialise GPIO / simulate ──────────────────────────────────
