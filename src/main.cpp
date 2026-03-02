@@ -16,9 +16,12 @@
 // Buttons:
 //   Trigger  (GPIO 4)   Gate volume envelope; resets LFO phase
 //   Shift    (GPIO 15)  Hold for Bank B; triple-click = pitch-delay link
-//   Waveform (GPIO 5)   Cycle osc waveform; Shift+Waveform = cycle LFO shape
+//   Preset   (GPIO 5)   Cycle dub siren preset; Shift+Preset = cycle LFO shape
 //
-// LFO shapes (Shift+Waveform):
+// Presets (GPIO 5, Bank A):
+//   1. Classic Siren  2. Space Echo  3. Alarm  4. UFO  5. Foghorn
+//
+// LFO shapes (Shift+GPIO 5):
 //   Sine → Triangle → Square → RampUp → RampDown → S&H
 //
 // Pitch envelope switch (GPIO 9/10):
@@ -101,6 +104,148 @@ static constexpr float REVERB_MIX_STEP = 0.05f;                // 5 % per click
 // Pitch-delay link mode
 static constexpr float FREQ_STEP_LINKED = 1.165f;              // ~minor-third jumps
 static constexpr float REF_FREQ         = 440.0f;              // neutral scaling point
+
+static float update_delay_eff();   // forward declaration
+
+// ─── Dub Siren Presets ──────────────────────────────────────────────
+//
+// GPIO 5 (Bank A) cycles through these presets.  Each one configures
+// waveform, LFO, filter, delay, and reverb for a classic dub siren
+// sound.  All knobs remain live after selecting a preset so the
+// performer can tweak from any starting point.
+
+struct DubPreset {
+    const char* name;
+    int         waveform;       // Waveform enum index
+    int         lfo_wave;       // LfoWave enum index
+    float       freq;           // base frequency (Hz)
+    float       lfo_rate;       // LFO rate (Hz)
+    float       lfo_depth;      // LFO depth (0–1)
+    float       filter_cutoff;  // filter cutoff (Hz)
+    float       filter_reso;    // filter resonance (0–0.95)
+    float       delay_time;     // delay time (seconds)
+    float       delay_feedback; // delay feedback (0–0.95)
+    float       delay_mix;      // delay wet/dry (0–1)
+    float       reverb_mix;     // reverb wet/dry (0–1)
+    float       release_time;   // envelope release (seconds)
+};
+
+static constexpr int NUM_PRESETS = 5;
+
+static const DubPreset PRESETS[NUM_PRESETS] = {
+    //  ── 1. Classic Siren ──────────────────────────────────────────
+    //  The quintessential dub siren: smooth sine, medium-fast vibrato,
+    //  warm echo and spring reverb.  Hold the trigger and sweep.
+    {
+        "Classic Siren",
+        0,              // Sine
+        0,              // LFO: Sine
+        800.0f,         // freq
+        3.0f,           // lfo_rate
+        0.60f,          // lfo_depth
+        6000.0f,        // filter_cutoff
+        0.10f,          // filter_reso
+        0.300f,         // delay_time
+        0.55f,          // delay_feedback
+        0.40f,          // delay_mix
+        0.40f,          // reverb_mix
+        0.400f,         // release_time
+    },
+    //  ── 2. Space Echo ─────────────────────────────────────────────
+    //  Deep, spacey dub.  Saw wave for harmonic richness, slow sweeping
+    //  LFO, long delay with high feedback, heavy reverb.
+    {
+        "Space Echo",
+        2,              // Saw
+        1,              // LFO: Triangle
+        600.0f,         // freq
+        0.8f,           // lfo_rate
+        0.50f,          // lfo_depth
+        3000.0f,        // filter_cutoff
+        0.30f,          // filter_reso
+        0.500f,         // delay_time
+        0.70f,          // delay_feedback
+        0.50f,          // delay_mix
+        0.55f,          // reverb_mix
+        0.800f,         // release_time
+    },
+    //  ── 3. Alarm ──────────────────────────────────────────────────
+    //  Urgent, punchy siren.  Square wave with fast square LFO for
+    //  hard on/off warble, tight delay, crisp reverb.
+    {
+        "Alarm",
+        1,              // Square
+        2,              // LFO: Square
+        1200.0f,        // freq
+        6.0f,           // lfo_rate
+        0.40f,          // lfo_depth
+        10000.0f,       // filter_cutoff
+        0.00f,          // filter_reso
+        0.180f,         // delay_time
+        0.45f,          // delay_feedback
+        0.35f,          // delay_mix
+        0.25f,          // reverb_mix
+        0.200f,         // release_time
+    },
+    //  ── 4. UFO ────────────────────────────────────────────────────
+    //  Random alien warble.  Triangle wave with sample-and-hold LFO
+    //  creating unpredictable pitch steps, soaked in delay and reverb.
+    {
+        "UFO",
+        3,              // Triangle
+        5,              // LFO: S&H
+        500.0f,         // freq
+        4.0f,           // lfo_rate
+        0.80f,          // lfo_depth
+        4000.0f,        // filter_cutoff
+        0.50f,          // filter_reso
+        0.400f,         // delay_time
+        0.65f,          // delay_feedback
+        0.45f,          // delay_mix
+        0.60f,          // reverb_mix
+        0.600f,         // release_time
+    },
+    //  ── 5. Foghorn ────────────────────────────────────────────────
+    //  Deep bass siren.  Low saw with slow ramp-down LFO, long delay
+    //  tail, big reverb.  Heavyweight dub pressure.
+    {
+        "Foghorn",
+        2,              // Saw
+        4,              // LFO: RampDown
+        120.0f,         // freq
+        0.3f,           // lfo_rate
+        0.45f,          // lfo_depth
+        1500.0f,        // filter_cutoff
+        0.40f,          // filter_reso
+        0.700f,         // delay_time
+        0.60f,          // delay_feedback
+        0.35f,          // delay_mix
+        0.50f,          // reverb_mix
+        1.200f,         // release_time
+    },
+};
+
+static std::atomic<int> g_preset{0};    // current preset index (0–4)
+
+static void apply_preset(int idx)
+{
+    const DubPreset& p = PRESETS[idx % NUM_PRESETS];
+
+    g_waveform.store(p.waveform);
+    g_lfo_waveform.store(p.lfo_wave);
+    g_freq.store(p.freq);
+    g_lfo_rate.store(p.lfo_rate);
+    g_lfo_depth.store(p.lfo_depth);
+    g_filter_cutoff.store(p.filter_cutoff);
+    g_filter_reso.store(p.filter_reso);
+    g_delay_time.store(p.delay_time);
+    g_delay_feedback.store(p.delay_feedback);
+    g_delay_mix.store(p.delay_mix);
+    g_reverb_mix.store(p.reverb_mix);
+    g_release_time.store(p.release_time);
+
+    update_delay_eff();
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -480,7 +625,7 @@ int main(int argc, char *argv[])
     };
 
     cb.on_button = [](int id, bool pressed) {
-        static const char *btn_name[] = {"Trigger", "Shift", "Waveform"};
+        static const char *btn_name[] = {"Trigger", "Shift", "Preset"};
 
         switch (id) {
         case 0:
@@ -535,8 +680,8 @@ int main(int argc, char *argv[])
             break;
         }
         case 2:
-            // Waveform → cycle shape (on press only)
-            // Shift held: cycle LFO waveform; otherwise: cycle oscillator
+            // Preset / LFO cycle (on press only)
+            // Shift held: cycle LFO waveform; otherwise: cycle dub preset
             if (pressed) {
                 if (g_shift.load()) {
                     int lw = (g_lfo_waveform.load() + 1)
@@ -544,10 +689,21 @@ int main(int argc, char *argv[])
                     g_lfo_waveform.store(lw);
                     printf("  LFO WAVE  %s\n", lfo_wave_name(lw));
                 } else {
-                    int w = (g_waveform.load() + 1)
-                          % static_cast<int>(Waveform::COUNT);
-                    g_waveform.store(w);
-                    printf("  WAVE  %s\n", waveform_name(w));
+                    int idx = (g_preset.load() + 1) % NUM_PRESETS;
+                    g_preset.store(idx);
+                    apply_preset(idx);
+                    const DubPreset& p = PRESETS[idx];
+                    printf("  PRESET %d  \"%s\"\n", idx + 1, p.name);
+                    printf("    %s  LFO:%s %.1fHz@%.0f%%  "
+                           "Dly:%.0fms FB%.0f%% Mix%.0f%%  "
+                           "Rev:%.0f%%\n",
+                           waveform_name(p.waveform),
+                           lfo_wave_name(p.lfo_wave),
+                           p.lfo_rate, p.lfo_depth * 100.0f,
+                           p.delay_time * 1000.0f,
+                           p.delay_feedback * 100.0f,
+                           p.delay_mix * 100.0f,
+                           p.reverb_mix * 100.0f);
                 }
             }
             break;
@@ -569,20 +725,26 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("\nDefaults:\n");
-    printf("  Freq: %.0f Hz  Wave: %s\n",
-           g_freq.load(), waveform_name(g_waveform.load()));
-    printf("  LFO: %.1f Hz @ %.0f%% [%s]  Filter: %.0f Hz / %.0f%%\n",
-           g_lfo_rate.load(), g_lfo_depth.load() * 100.0f,
-           lfo_wave_name(g_lfo_waveform.load()),
-           g_filter_cutoff.load(), g_filter_reso.load() * 100.0f);
-    printf("  Delay: %.0f ms  FB %.0f%%  Mix %.0f%%\n",
-           g_delay_time.load() * 1000.0f,
-           g_delay_feedback.load() * 100.0f,
-           g_delay_mix.load() * 100.0f);
-    printf("  Release: %.0f ms  Reverb: Mix %.0f%%\n",
-           g_release_time.load() * 1000.0f,
-           g_reverb_mix.load() * 100.0f);
+    // Apply the first preset so all defaults are consistent
+    apply_preset(0);
+
+    {
+        const DubPreset& p = PRESETS[g_preset.load()];
+        printf("\nPreset %d: \"%s\"\n", g_preset.load() + 1, p.name);
+        printf("  Freq: %.0f Hz  Wave: %s\n",
+               g_freq.load(), waveform_name(g_waveform.load()));
+        printf("  LFO: %.1f Hz @ %.0f%% [%s]  Filter: %.0f Hz / %.0f%%\n",
+               g_lfo_rate.load(), g_lfo_depth.load() * 100.0f,
+               lfo_wave_name(g_lfo_waveform.load()),
+               g_filter_cutoff.load(), g_filter_reso.load() * 100.0f);
+        printf("  Delay: %.0f ms  FB %.0f%%  Mix %.0f%%\n",
+               g_delay_time.load() * 1000.0f,
+               g_delay_feedback.load() * 100.0f,
+               g_delay_mix.load() * 100.0f);
+        printf("  Release: %.0f ms  Reverb: Mix %.0f%%\n",
+               g_release_time.load() * 1000.0f,
+               g_reverb_mix.load() * 100.0f);
+    }
     printf("\nListening for events (Ctrl-C to quit) ...\n\n");
 
     // ── Main loop ───────────────────────────────────────────────────
