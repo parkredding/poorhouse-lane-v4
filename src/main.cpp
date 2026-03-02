@@ -15,7 +15,7 @@
 //
 // Buttons:
 //   Trigger  (GPIO 4)   Gate volume envelope; resets LFO phase
-//   Shift    (GPIO 15)  Hold for Bank B; triple-click = pitch-delay link
+//   Shift    (GPIO 15)  Hold for Bank B; triple-click = pitch-delay-LFO link
 //   Preset   (GPIO 5)   Cycle dub siren preset; Shift+Preset = cycle LFO shape
 //
 // Presets (GPIO 5, Bank A):
@@ -74,9 +74,10 @@ static std::atomic<bool>  g_gate{false};
 static std::atomic<bool>  g_shift{false};
 static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
 
-// Pitch-delay link (secret mode: triple-click Shift to toggle)
+// Pitch-delay-LFO link (secret mode: triple-click Shift to toggle)
 static std::atomic<bool>  g_delay_link{false};
 static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay (may be freq-scaled)
+static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (may be freq-scaled)
 
 // ─── Per-parameter step sizes (base, before acceleration) ───────────
 //
@@ -105,7 +106,7 @@ static constexpr float REVERB_MIX_STEP = 0.05f;                // 5 % per click
 static constexpr float FREQ_STEP_LINKED = 1.165f;              // ~minor-third jumps
 static constexpr float REF_FREQ         = 440.0f;              // neutral scaling point
 
-static float update_delay_eff();   // forward declaration
+static float update_link_eff();   // forward declaration
 
 // ─── Dub Siren Presets ──────────────────────────────────────────────
 //
@@ -252,7 +253,7 @@ static void apply_preset(int idx)
     g_reverb_mix.store(p.reverb_mix);
     g_release_time.store(p.release_time);
 
-    update_delay_eff();
+    update_link_eff();
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -308,21 +309,30 @@ static float encoder_accel(int id)
     return 1.0f + t * (MAX_MULT - 1.0f);
 }
 
-// ─── Pitch-delay link helper ─────────────────────────────────────────
+// ─── Pitch-delay-LFO link helper ────────────────────────────────────
 //
-// Recomputes the effective delay time from the base delay time and
-// current frequency.  Called from the control layer whenever either
-// value changes or linked mode is toggled.
+// Recomputes the effective delay time and LFO rate from their base
+// values and the current frequency.  Called from the control layer
+// whenever freq, delay time, LFO rate, or linked mode changes.
+//
+// When linked:
+//   delay  ∝ 1/freq  (shorter delays at higher pitches)
+//   LFO    ∝  freq   (faster modulation at higher pitches)
 
-static float update_delay_eff()
+static float update_link_eff()
 {
     float t = g_delay_time.load();
+    float r = g_lfo_rate.load();
     if (g_delay_link.load()) {
         float freq = g_freq.load();
-        t = t * (REF_FREQ / freq);
+        float ratio = freq / REF_FREQ;
+        t = t * (1.0f / ratio);
         t = std::clamp(t, 0.01f, 1.0f);
+        r = r * ratio;
+        r = std::clamp(r, 0.1f, 20.0f);
     }
     g_delay_time_eff.store(t);
+    g_lfo_rate_eff.store(r);
     return t;
 }
 
@@ -398,7 +408,7 @@ int main(int argc, char *argv[])
         float base_freq = g_freq.load(rlx);
         int   waveform  = g_waveform.load(rlx);
         bool  gate      = g_gate.load(rlx);
-        float lfo_r     = g_lfo_rate.load(rlx);
+        float lfo_r     = g_lfo_rate_eff.load(rlx);
         float lfo_d     = g_lfo_depth.load(rlx);
         float cutoff    = g_filter_cutoff.load(rlx);
         float reso      = g_filter_reso.load(rlx);
@@ -536,9 +546,10 @@ int main(int argc, char *argv[])
                 f = std::clamp(f, 30.0f, 8000.0f);
                 g_freq.store(f);
                 if (lk) {
-                    float eff = update_delay_eff();
-                    printf("  [A] FREQ     %.1f Hz  (dly %.0f ms)\n",
-                           f, eff * 1000.0f);
+                    float eff = update_link_eff();
+                    printf("  [A] FREQ     %.1f Hz  (dly %.0f ms  lfo %.1f Hz)\n",
+                           f, eff * 1000.0f,
+                           g_lfo_rate_eff.load());
                 } else {
                     printf("  [A] FREQ     %.1f Hz\n", f);
                 }
@@ -550,7 +561,13 @@ int main(int argc, char *argv[])
                 r *= (dir > 0) ? step : (1.0f / step);
                 r = std::clamp(r, 0.1f, 20.0f);
                 g_lfo_rate.store(r);
-                printf("  [A] LFO RATE %.1f Hz\n", r);
+                if (g_delay_link.load()) {
+                    update_link_eff();
+                    printf("  [A] LFO RATE %.1f Hz  (eff %.1f Hz)\n",
+                           r, g_lfo_rate_eff.load());
+                } else {
+                    printf("  [A] LFO RATE %.1f Hz\n", r);
+                }
                 break;
             }
             case 2: {   // Filter Cutoff — 2 semitones base, fast sweep
@@ -568,7 +585,7 @@ int main(int argc, char *argv[])
                 t *= (dir > 0) ? step : (1.0f / step);
                 t = std::clamp(t, 0.001f, 1.0f);
                 g_delay_time.store(t);
-                float eff = update_delay_eff();
+                float eff = update_link_eff();
                 if (g_delay_link.load()) {
                     printf("  [A] DLY TIME %.0f ms  (eff %.0f ms)\n",
                            t * 1000.0f, eff * 1000.0f);
@@ -676,12 +693,14 @@ int main(int argc, char *argv[])
                         bool lk = !g_delay_link.load();
                         g_delay_link.store(lk);
                         if (lk) {
-                            float eff = update_delay_eff();
-                            printf("  >>> PITCH-DELAY LINK ON"
-                                   "  (dly %.0f ms)\n", eff * 1000.0f);
+                            float eff = update_link_eff();
+                            printf("  >>> PITCH-DELAY-LFO LINK ON"
+                                   "  (dly %.0f ms  lfo %.1f Hz)\n",
+                                   eff * 1000.0f,
+                                   g_lfo_rate_eff.load());
                         } else {
-                            update_delay_eff();
-                            printf("  >>> PITCH-DELAY LINK OFF\n");
+                            update_link_eff();
+                            printf("  >>> PITCH-DELAY-LFO LINK OFF\n");
                         }
                     }
                 }
