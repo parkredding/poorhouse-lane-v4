@@ -434,7 +434,7 @@ int main(int argc, char *argv[])
         fall_factor  = std::pow(2.0f, -3.0f / rel_samples);  // 3 oct down
 
         // Update DSP modules (once per frame)
-        lfo.setRate(lfo_r);
+        // lfo rate set per-sample below (tracks pitch envelope)
         lfo.setWaveform(static_cast<LfoWave>(g_lfo_waveform.load(rlx)));
         osc.setWaveform(static_cast<Waveform>(waveform));
         filter.setResonance(reso);
@@ -469,6 +469,10 @@ int main(int argc, char *argv[])
                                                  : fall_factor;
                 filter_env_mult  = std::clamp(filter_env_mult, 0.125f, 8.0f);
             }
+
+            // LFO rate tracks pitch envelope (faster when pitch rises,
+            // slower when pitch falls)
+            lfo.setRate(lfo_r * pitch_env_mult);
 
             // LFO → exponential pitch modulation
             float lfo_out = lfo.tick();
