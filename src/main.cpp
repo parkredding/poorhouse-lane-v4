@@ -19,7 +19,8 @@
 //   Preset   (GPIO 5)   Cycle dub siren preset; Shift+Preset = cycle LFO shape
 //
 // Presets (GPIO 5, Bank A):
-//   1. Lickshot  2. Machine Gun  3. Droppa  4. Laser Sweep  5. Dub Siren
+//   1. Lickshot  2. Slow Wail  3. Machine Gun  4. Droppa
+//   5. Deep Roller  6. Laser Sweep  7. Dub Siren
 //
 // LFO shapes (Shift+GPIO 5):
 //   Sine → Triangle → Square → RampUp → RampDown
@@ -136,7 +137,7 @@ struct DubPreset {
     float       release_time;   // envelope release (seconds)
 };
 
-static constexpr int NUM_PRESETS = 5;
+static constexpr int NUM_PRESETS = 7;
 
 static const DubPreset PRESETS[NUM_PRESETS] = {
     //  ── 1. Lickshot ───────────────────────────────────────────────
@@ -159,7 +160,26 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.35f,          // reverb_mix  (spring tank)
         0.200f,         // release_time  (punchy but with tail)
     },
-    //  ── 2. Machine Gun ────────────────────────────────────────────
+    //  ── 2. Slow Wail ────────────────────────────────────────────
+    //  Classic slow siren wail.  Sine LFO at low rate for a long,
+    //  smooth sweep.  Sawtooth oscillator for a richer harmonic
+    //  spectrum.  Delay and reverb give it sound-system depth.
+    {
+        "Slow Wail",
+        2,              // Saw
+        0,              // LFO: Sine
+        550.0f,         // freq  (warm mid, not too high)
+        1.4f,           // lfo_rate  (slow, patient sweep)
+        0.70f,          // lfo_depth  (full siren arc)
+        2500.0f,        // filter_cutoff  (warm, sweep audible)
+        0.35f,          // filter_reso  (gentle wah)
+        0.400f,         // delay_time  (dub echo spacing)
+        0.60f,          // delay_feedback  (long trails)
+        0.40f,          // delay_mix  (present echo)
+        0.45f,          // reverb_mix  (spring wash)
+        0.600f,         // release_time  (long fade into FX)
+    },
+    //  ── 3. Machine Gun ────────────────────────────────────────────
     //  Rapid-fire stutter.  Square LFO chops the pitch and filter
     //  between high-bright and low-dark for aggressive on/off bursts.
     //  Tight delay stutter, cavernous spring reverb.
@@ -178,7 +198,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.30f,          // reverb_mix  (room around the bursts)
         0.120f,         // release_time  (snappy cutoff)
     },
-    //  ── 3. Droppa ───────────────────────────────────────────────────
+    //  ── 4. Droppa ───────────────────────────────────────────────────
     //  Descending siren wail.  Ramp-down LFO pulls pitch and filter
     //  down together — each cycle starts bright and falls into a
     //  fat, dark growl.  Heavy dub delay and reverb add weight.
@@ -197,7 +217,26 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.40f,          // reverb_mix  (deep spring wash)
         0.350f,         // release_time  (let the drop breathe)
     },
-    //  ── 4. Laser Sweep ────────────────────────────────────────────
+    //  ── 5. Deep Roller ────────────────────────────────────────────
+    //  Low, rolling siren.  Triangle LFO for a smooth back-and-forth
+    //  swell.  Sub-bass frequency with wide depth — rolls between
+    //  a deep growl and mid-range cry.  Heavy delay and reverb.
+    {
+        "Deep Roller",
+        1,              // Square
+        1,              // LFO: Triangle
+        380.0f,         // freq  (low, chest-rattling)
+        1.0f,           // lfo_rate  (very slow roll)
+        0.75f,          // lfo_depth  (wide sweep — sub to mid)
+        2200.0f,        // filter_cutoff  (darker, opens on peaks)
+        0.45f,          // filter_reso  (squelchy resonance on roll)
+        0.450f,         // delay_time  (wide dub spacing)
+        0.65f,          // delay_feedback  (cascading trails)
+        0.45f,          // delay_mix  (heavy echo)
+        0.50f,          // reverb_mix  (deep spring wash)
+        0.700f,         // release_time  (long tail, rolls out)
+    },
+    //  ── 6. Laser Sweep ────────────────────────────────────────────
     //  Rising laser blast.  Ramp-up LFO sweeps pitch and filter
     //  upward — each cycle growls low then zaps bright.  Resonant
     //  filter adds squelch, delay trails scatter into space.
@@ -216,7 +255,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.35f,          // reverb_mix  (spring splash)
         0.280f,         // release_time  (sharp into reverb tail)
     },
-    //  ── 5. Dub Siren ──────────────────────────────────────────────
+    //  ── 7. Dub Siren ──────────────────────────────────────────────
     //  Classic sound-system siren.  Slow sine LFO sweeps pitch and
     //  filter together for that smooth wah character.  Heavy delay
     //  and reverb create the deep dub wash.
@@ -237,7 +276,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
     },
 };
 
-static std::atomic<int> g_preset{0};    // current preset index (0–4)
+static std::atomic<int> g_preset{0};    // current preset index (0–6)
 
 static void apply_preset(int idx)
 {
