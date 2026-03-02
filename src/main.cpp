@@ -602,7 +602,7 @@ int main(int argc, char *argv[])
                 float step = std::pow(RELEASE_TIME_STEP, accel);
                 float rt = g_release_time.load();
                 rt *= (dir > 0) ? step : (1.0f / step);
-                rt = std::clamp(rt, 0.010f, 3.0f);
+                rt = std::clamp(rt, 0.010f, 3.5f);
                 g_release_time.store(rt);
                 printf("  [B] RELEASE  %.0f ms\n", rt * 1000.0f);
                 break;
