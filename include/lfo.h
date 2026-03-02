@@ -1,13 +1,11 @@
 #pragma once
 
-#include <cstdint>
-
 // ─── LFO waveform shapes ──────────────────────────────────────────
-enum class LfoWave { Sine, Triangle, Square, RampUp, RampDown, SandH, COUNT };
+enum class LfoWave { Sine, Triangle, Square, RampUp, RampDown, COUNT };
 
 // ─── Low-frequency oscillator ──────────────────────────────────────
 //
-// 6 waveform shapes with phase retrigger and sample-and-hold.
+// 5 deterministic waveform shapes with phase retrigger.
 
 class LFO {
 public:
@@ -29,10 +27,6 @@ private:
     float    rate_     = 1.0f;
     float    sr_       = 48000.0f;
     LfoWave  wave_     = LfoWave::Sine;
-
-    // Sample-and-Hold state
-    float    shValue_  = 0.0f;
-    uint32_t rngState_ = 123456789u;
 
     void updateInc();
 };

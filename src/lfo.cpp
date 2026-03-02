@@ -1,6 +1,6 @@
-// lfo.cpp — Low-frequency oscillator with 6 waveform shapes
+// lfo.cpp — Low-frequency oscillator with 5 deterministic waveform shapes
 //
-// Sine, Triangle, Square, Ramp Up, Ramp Down, Sample-and-Hold.
+// Sine, Triangle, Square, Ramp Up, Ramp Down.
 // No antialiasing needed — LFO operates at sub-audio rates (0.1–20 Hz).
 
 #include "lfo.h"
@@ -40,26 +40,14 @@ float LFO::tick()
     case LfoWave::RampDown:
         out = 1.0f - 2.0f * phase_;
         break;
-    case LfoWave::SandH:
-        out = shValue_;
-        break;
     default:
         break;
     }
 
     // Advance phase
     phase_ += phaseInc_;
-    if (phase_ >= 1.0f) {
+    if (phase_ >= 1.0f)
         phase_ -= 1.0f;
-        // S&H: latch new random value on phase wrap (xorshift32)
-        if (wave_ == LfoWave::SandH) {
-            rngState_ ^= rngState_ << 13;
-            rngState_ ^= rngState_ >> 17;
-            rngState_ ^= rngState_ << 5;
-            shValue_ = static_cast<float>(
-                static_cast<int32_t>(rngState_)) / 2147483648.0f;
-        }
-    }
 
     return out;
 }

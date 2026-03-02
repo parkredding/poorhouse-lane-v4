@@ -19,10 +19,10 @@
 //   Preset   (GPIO 5)   Cycle dub siren preset; Shift+Preset = cycle LFO shape
 //
 // Presets (GPIO 5, Bank A):
-//   1. Lickshot  2. Machine Gun  3. Raygun  4. Laser Sweep  5. Dub Siren
+//   1. Lickshot  2. Machine Gun  3. Droppa  4. Laser Sweep  5. Dub Siren
 //
 // LFO shapes (Shift+GPIO 5):
-//   Sine → Triangle → Square → RampUp → RampDown → S&H
+//   Sine → Triangle → Square → RampUp → RampDown
 //
 // Pitch envelope switch (GPIO 9/10):
 //   Rise / Off / Fall — sweeps pitch AND filter on trigger release
@@ -110,8 +110,9 @@ static float update_delay_eff();   // forward declaration
 // ─── Dub Siren Presets ──────────────────────────────────────────────
 //
 // GPIO 5 (Bank A) cycles through these presets.  Inspired by the
-// Benidub Lickshot — square-wave oscillator, aggressive LFO-driven
-// laser/machine-gun sounds, punchy and immediate.  All knobs remain
+// Benidub DS71 — analog square-wave oscillator through 12dB/oct
+// low-pass filter, aggressive LFO-driven siren sounds.  Fat and
+// punchy with deterministic LFO shapes only.  All knobs remain
 // live after selecting a preset so the performer can tweak from any
 // starting point.
 
@@ -172,24 +173,24 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.30f,          // reverb_mix  (room around the bursts)
         0.120f,         // release_time  (snappy cutoff)
     },
-    //  ── 3. Raygun ──────────────────────────────────────────────────
-    //  Alien zap gun.  Square wave with sample-and-hold LFO for
-    //  random pitch steps — unpredictable sci-fi blasts.  Resonant
-    //  filter adds squelch, delay and reverb scatter it into space.
+    //  ── 3. Droppa ───────────────────────────────────────────────────
+    //  Descending siren wail.  Square wave with ramp-down LFO for
+    //  that classic falling pitch.  Filter closes down with the
+    //  pitch for a fat, dark tail.  Dub delay and reverb add weight.
     {
-        "Raygun",
+        "Droppa",
         1,              // Square
-        5,              // LFO: S&H
-        900.0f,         // freq  (mid-high, bright zaps)
-        5.0f,           // lfo_rate  (fast random steps)
-        0.80f,          // lfo_depth  (wide random jumps)
-        5000.0f,        // filter_cutoff  (warm enough to squelch)
-        0.50f,          // filter_reso  (heavy squelch on each step)
-        0.350f,         // delay_time  (spacey echo)
-        0.60f,          // delay_feedback  (long scattered trails)
-        0.45f,          // delay_mix  (prominent)
-        0.45f,          // reverb_mix  (deep space)
-        0.300f,         // release_time  (medium — let FX breathe)
+        4,              // LFO: RampDown
+        1000.0f,        // freq  (starts high, drops)
+        4.0f,           // lfo_rate  (medium sweep speed)
+        0.70f,          // lfo_depth  (wide falling pitch range)
+        5500.0f,        // filter_cutoff  (warm, lets fundamentals through)
+        0.35f,          // filter_reso  (moderate bite)
+        0.375f,         // delay_time  (dub echo)
+        0.65f,          // delay_feedback  (long cascading trails)
+        0.45f,          // delay_mix  (heavy dub echo)
+        0.40f,          // reverb_mix  (deep spring wash)
+        0.350f,         // release_time  (let the drop breathe)
     },
     //  ── 4. Laser Sweep ────────────────────────────────────────────
     //  Rising laser blast.  Square wave with ramp-up LFO for that
@@ -264,7 +265,7 @@ static const char* waveform_name(int w)
 static const char* lfo_wave_name(int w)
 {
     static const char* names[] = {
-        "Sine", "Triangle", "Square", "RampUp", "RampDown", "S&H"
+        "Sine", "Triangle", "Square", "RampUp", "RampDown"
     };
     return names[w % static_cast<int>(LfoWave::COUNT)];
 }
