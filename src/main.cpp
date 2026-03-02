@@ -8,7 +8,7 @@
 //
 // Encoder banks (Shift toggles A / B):
 //   Enc 1:  A = Base Freq (30–8000 Hz)     B = LFO Depth (0–100%)
-//   Enc 2:  A = LFO Rate (0.1–20 Hz)       B = Release Time (10 ms–2 s)
+//   Enc 2:  A = LFO Rate (0.1–20 Hz)       B = Release Time (10 ms–3 s)
 //   Enc 3:  A = Filter Cutoff (20–20 kHz)   B = Filter Resonance (0–95%)
 //   Enc 4:  A = Delay Time (1 ms–2.0 s)     B = Delay Mix (0–100%)
 //   Enc 5:  A = Delay Feedback (0–95%)      B = Reverb Mix (0–100%)
@@ -597,7 +597,7 @@ int main(int argc, char *argv[])
                 float step = std::pow(RELEASE_TIME_STEP, accel);
                 float rt = g_release_time.load();
                 rt *= (dir > 0) ? step : (1.0f / step);
-                rt = std::clamp(rt, 0.010f, 2.0f);
+                rt = std::clamp(rt, 0.010f, 3.0f);
                 g_release_time.store(rt);
                 printf("  [B] RELEASE  %.0f ms\n", rt * 1000.0f);
                 break;
