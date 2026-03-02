@@ -1,10 +1,13 @@
-// lfo.cpp — Low-frequency oscillator with 5 deterministic waveform shapes
+// lfo.cpp — Low-frequency oscillator with 8 waveform shapes
 //
-// Sine, Triangle, Square, Ramp Up, Ramp Down.
+// Traditional: Sine, Triangle, Square, Ramp Up, Ramp Down
+// Experimental: Sample & Hold, Exponential Rise, Exponential Fall
+//
 // No antialiasing needed — LFO operates at sub-audio rates (0.1–20 Hz).
 
 #include "lfo.h"
 #include <cmath>
+#include <cstdlib>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -13,7 +16,13 @@
 void LFO::setSampleRate(float sr) { sr_ = sr; updateInc(); }
 void LFO::setRate(float hz)       { rate_ = hz; updateInc(); }
 void LFO::setWaveform(LfoWave w)  { wave_ = w; }
-void LFO::resetPhase()            { phase_ = 0.0f; }
+
+void LFO::resetPhase()
+{
+    phase_  = 0.0f;
+    shHalf_ = false;
+    shHeld_ = 0.0f;
+}
 
 void LFO::updateInc()
 {
@@ -40,6 +49,33 @@ float LFO::tick()
     case LfoWave::RampDown:
         out = 1.0f - 2.0f * phase_;
         break;
+
+    // ── Experimental waveforms ──────────────────────────────────
+
+    case LfoWave::SampleHold: {
+        // Random step: holds a value, jumps to a new one each half-cycle.
+        // Two steps per cycle gives rhythmic variety at any LFO rate.
+        bool half = (phase_ >= 0.5f);
+        if (half != shHalf_) {
+            shHalf_ = half;
+            // Pseudo-random in [-1, +1]
+            shHeld_ = static_cast<float>(std::rand()) /
+                      static_cast<float>(RAND_MAX) * 2.0f - 1.0f;
+        }
+        out = shHeld_;
+        break;
+    }
+    case LfoWave::ExpRise:
+        // Exponential rise: slow start, accelerating climb.
+        // Maps phase [0,1] → [-1, +1] with exponential curve.
+        out = (std::exp2(4.0f * phase_) - 1.0f) / 15.0f * 2.0f - 1.0f;
+        break;
+
+    case LfoWave::ExpFall:
+        // Exponential fall: fast drop, slow tail (mirror of ExpRise).
+        out = (std::exp2(4.0f * (1.0f - phase_)) - 1.0f) / 15.0f * 2.0f - 1.0f;
+        break;
+
     default:
         break;
     }

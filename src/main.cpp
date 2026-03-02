@@ -23,10 +23,11 @@
 //   5. Deep Roller  6. Laser Sweep
 //
 // LFO shapes (Shift+GPIO 5):
-//   Sine → Triangle → Square → RampUp → RampDown
+//   Sine → Triangle → Square → RampUp → RampDown → S&H → ExpRise → ExpFall
 //
 // Pitch envelope switch (GPIO 9/10):
-//   Rise / Off / Fall — sweeps pitch AND filter on trigger release
+//   Rise / Off / Fall — sweeps pitch on trigger release
+//   Filter always darkens on release (DS71-style), independent of switch
 //   Triple-tap to Fall = toggle LFO-pitch link (LFO rate follows envelope)
 
 #include <cstdio>
@@ -290,7 +291,8 @@ static const char* waveform_name(int w)
 static const char* lfo_wave_name(int w)
 {
     static const char* names[] = {
-        "Sine", "Triangle", "Square", "RampUp", "RampDown"
+        "Sine", "Triangle", "Square", "RampUp", "RampDown",
+        "S&H", "ExpRise", "ExpFall"
     };
     return names[w % static_cast<int>(LfoWave::COUNT)];
 }
@@ -483,14 +485,18 @@ int main(int argc, char *argv[])
         // Per-sample processing
         for (int i = 0; i < frames; i++) {
 
-            // Pitch + filter envelopes — sweep only after trigger release
+            // Pitch envelope — sweep only after trigger release, only
+            // when the pitch switch is set to Rise or Fall.
             if (pe_active && pe_mode != 0) {
-                pitch_env_mult  *= (pe_mode > 0) ? rise_factor
-                                                 : fall_factor;
-                pitch_env_mult   = std::clamp(pitch_env_mult, 0.125f, 8.0f);
+                pitch_env_mult *= (pe_mode > 0) ? rise_factor
+                                                : fall_factor;
+                pitch_env_mult  = std::clamp(pitch_env_mult, 0.125f, 8.0f);
+            }
 
-                filter_env_mult *= (pe_mode > 0) ? rise_factor
-                                                 : fall_factor;
+            // Filter envelope — ALWAYS darkens on release (DS71-style).
+            // Every note gets a warm "waaah" tail regardless of pitch switch.
+            if (pe_active) {
+                filter_env_mult *= fall_factor;
                 filter_env_mult  = std::clamp(filter_env_mult, 0.125f, 8.0f);
             }
 

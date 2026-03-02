@@ -1,11 +1,17 @@
 #pragma once
 
 // ─── LFO waveform shapes ──────────────────────────────────────────
-enum class LfoWave { Sine, Triangle, Square, RampUp, RampDown, COUNT };
+enum class LfoWave {
+    Sine, Triangle, Square, RampUp, RampDown,   // traditional
+    SampleHold, ExpRise, ExpFall,               // experimental
+    COUNT
+};
 
 // ─── Low-frequency oscillator ──────────────────────────────────────
 //
-// 5 deterministic waveform shapes with phase retrigger.
+// 8 waveform shapes with phase retrigger.
+// Traditional: Sine, Triangle, Square, RampUp, RampDown
+// Experimental: Sample & Hold, Exponential Rise, Exponential Fall
 
 class LFO {
 public:
@@ -27,6 +33,10 @@ private:
     float    rate_     = 1.0f;
     float    sr_       = 48000.0f;
     LfoWave  wave_     = LfoWave::Sine;
+
+    // Sample & Hold state
+    float    shHeld_   = 0.0f;  // current held random value
+    bool     shHalf_   = false; // which half of the cycle we're in
 
     void updateInc();
 };
