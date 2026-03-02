@@ -10,22 +10,25 @@
 //   Enc 1:  A = Base Freq (30–8000 Hz)     B = LFO Depth (0–100%)
 //   Enc 2:  A = LFO Rate (0.1–20 Hz)       B = Release Time (10 ms–3 s)
 //   Enc 3:  A = Filter Cutoff (20–20 kHz)   B = Filter Resonance (0–95%)
-//   Enc 4:  A = Delay Time (1 ms–2.0 s)     B = Delay Mix (0–100%)
+//   Enc 4:  A = Delay Time (1 ms–1.0 s)     B = Delay Mix (0–100%)
 //   Enc 5:  A = Delay Feedback (0–95%)      B = Reverb Mix (0–100%)
 //
 // Buttons:
 //   Trigger  (GPIO 4)   Gate volume envelope; resets LFO phase
-//   Shift    (GPIO 15)  Hold for Bank B; triple-click = pitch-delay link
+//   Shift    (GPIO 15)  Hold for Bank B; triple-click = pitch-delay-LFO link
 //   Preset   (GPIO 5)   Cycle dub siren preset; Shift+Preset = cycle LFO shape
 //
 // Presets (GPIO 5, Bank A):
-//   1. Lickshot  2. Machine Gun  3. Raygun  4. Laser Sweep  5. Dub Siren
+//   1. Lickshot  2. Slow Wail  3. Machine Gun  4. Droppa
+//   5. Deep Roller  6. Laser Sweep
 //
 // LFO shapes (Shift+GPIO 5):
-//   Sine → Triangle → Square → RampUp → RampDown → S&H
+//   Sine → Triangle → Square → RampUp → RampDown → S&H → ExpRise → ExpFall
 //
 // Pitch envelope switch (GPIO 9/10):
-//   Rise / Off / Fall — sweeps pitch AND filter on trigger release
+//   Rise / Off / Fall — sweeps pitch on trigger release
+//   Filter always darkens on release (DS71-style), independent of switch
+//   Triple-tap to Fall = toggle LFO-pitch link (LFO rate follows envelope)
 
 #include <cstdio>
 #include <cstring>
@@ -74,9 +77,12 @@ static std::atomic<bool>  g_gate{false};
 static std::atomic<bool>  g_shift{false};
 static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
 
-// Pitch-delay link (secret mode: triple-click Shift to toggle)
+// Pitch-delay-LFO link (secret mode: triple-click Shift to toggle)
 static std::atomic<bool>  g_delay_link{false};
+// LFO-pitch-envelope link (secret: triple-tap pitch switch to fall)
+static std::atomic<bool>  g_lfo_pitch_link{false};
 static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay (may be freq-scaled)
+static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (may be freq-scaled)
 
 // ─── Per-parameter step sizes (base, before acceleration) ───────────
 //
@@ -105,13 +111,14 @@ static constexpr float REVERB_MIX_STEP = 0.05f;                // 5 % per click
 static constexpr float FREQ_STEP_LINKED = 1.165f;              // ~minor-third jumps
 static constexpr float REF_FREQ         = 440.0f;              // neutral scaling point
 
-static float update_delay_eff();   // forward declaration
+static void update_link_eff();   // forward declaration
 
 // ─── Dub Siren Presets ──────────────────────────────────────────────
 //
 // GPIO 5 (Bank A) cycles through these presets.  Inspired by the
-// Benidub Lickshot — square-wave oscillator, aggressive LFO-driven
-// laser/machine-gun sounds, punchy and immediate.  All knobs remain
+// Benidub DS71 — analog square-wave oscillator through 12dB/oct
+// low-pass filter, aggressive LFO-driven siren sounds.  Fat and
+// punchy with deterministic LFO shapes only.  All knobs remain
 // live after selecting a preset so the performer can tweak from any
 // starting point.
 
@@ -131,32 +138,52 @@ struct DubPreset {
     float       release_time;   // envelope release (seconds)
 };
 
-static constexpr int NUM_PRESETS = 5;
+static constexpr int NUM_PRESETS = 6;
 
 static const DubPreset PRESETS[NUM_PRESETS] = {
     //  ── 1. Lickshot ───────────────────────────────────────────────
     //  The classic laser-gun sound.  Square wave with fast triangle
-    //  LFO sweeping the pitch hard.  Spring reverb and tape echo
-    //  give it that sound-system depth.
+    //  LFO sweeping pitch and filter together.  Lower cutoff lets the
+    //  filter sweep open and close audibly.  Punchy attack, spring
+    //  reverb and tape echo for sound-system depth.
     {
         "Lickshot",
         1,              // Square
         1,              // LFO: Triangle
         800.0f,         // freq  (mid tone)
         8.0f,           // lfo_rate  (fast sweep)
-        0.75f,          // lfo_depth  (deep for laser character)
-        8000.0f,        // filter_cutoff  (bright, let harmonics through)
-        0.25f,          // filter_reso  (slight bite)
+        0.80f,          // lfo_depth  (deep — drives filter sweep hard)
+        3500.0f,        // filter_cutoff  (low enough for audible sweep)
+        0.40f,          // filter_reso  (squelchy bite on each sweep)
         0.300f,         // delay_time  (dub echo)
         0.55f,          // delay_feedback  (long repeats)
         0.40f,          // delay_mix  (prominent echo)
         0.35f,          // reverb_mix  (spring tank)
         0.200f,         // release_time  (punchy but with tail)
     },
-    //  ── 2. Machine Gun ────────────────────────────────────────────
-    //  Rapid-fire stutter.  Square osc with very fast square LFO for
-    //  hard on/off bursts.  Tight delay stutter feeds into spring
-    //  reverb for a cavernous burst effect.
+    //  ── 2. Slow Wail ────────────────────────────────────────────
+    //  Classic slow siren wail.  Sine LFO at low rate for a long,
+    //  smooth sweep.  Sawtooth oscillator for a richer harmonic
+    //  spectrum.  Delay and reverb give it sound-system depth.
+    {
+        "Slow Wail",
+        2,              // Saw
+        0,              // LFO: Sine
+        550.0f,         // freq  (warm mid, not too high)
+        0.1f,           // lfo_rate  (very slow, 10-second sweep)
+        1.00f,          // lfo_depth  (full 100% sweep)
+        2500.0f,        // filter_cutoff  (warm, sweep audible)
+        0.35f,          // filter_reso  (gentle wah)
+        0.400f,         // delay_time  (dub echo spacing)
+        0.60f,          // delay_feedback  (long trails)
+        0.40f,          // delay_mix  (present echo)
+        0.45f,          // reverb_mix  (spring wash)
+        0.600f,         // release_time  (long fade into FX)
+    },
+    //  ── 3. Machine Gun ────────────────────────────────────────────
+    //  Rapid-fire stutter.  Square LFO chops the pitch and filter
+    //  between high-bright and low-dark for aggressive on/off bursts.
+    //  Tight delay stutter, cavernous spring reverb.
     {
         "Machine Gun",
         1,              // Square
@@ -164,74 +191,74 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         1000.0f,        // freq  (punchy mid-high)
         14.0f,          // lfo_rate  (rapid fire)
         0.85f,          // lfo_depth  (extreme for hard cuts)
-        10000.0f,       // filter_cutoff  (wide open, raw)
-        0.10f,          // filter_reso
+        4000.0f,        // filter_cutoff  (filter chops with pitch)
+        0.30f,          // filter_reso  (adds bite to each burst)
         0.180f,         // delay_time  (tight stutter echo)
         0.60f,          // delay_feedback  (self-reinforcing bursts)
         0.40f,          // delay_mix  (heavy stutter)
         0.30f,          // reverb_mix  (room around the bursts)
         0.120f,         // release_time  (snappy cutoff)
     },
-    //  ── 3. Raygun ──────────────────────────────────────────────────
-    //  Alien zap gun.  Square wave with sample-and-hold LFO for
-    //  random pitch steps — unpredictable sci-fi blasts.  Resonant
-    //  filter adds squelch, delay and reverb scatter it into space.
+    //  ── 4. Droppa ───────────────────────────────────────────────────
+    //  Descending siren wail.  Ramp-down LFO pulls pitch and filter
+    //  down together — each cycle starts bright and falls into a
+    //  fat, dark growl.  Heavy dub delay and reverb add weight.
     {
-        "Raygun",
+        "Droppa",
         1,              // Square
-        5,              // LFO: S&H
-        900.0f,         // freq  (mid-high, bright zaps)
-        5.0f,           // lfo_rate  (fast random steps)
-        0.80f,          // lfo_depth  (wide random jumps)
-        5000.0f,        // filter_cutoff  (warm enough to squelch)
-        0.50f,          // filter_reso  (heavy squelch on each step)
-        0.350f,         // delay_time  (spacey echo)
-        0.60f,          // delay_feedback  (long scattered trails)
-        0.45f,          // delay_mix  (prominent)
-        0.45f,          // reverb_mix  (deep space)
-        0.300f,         // release_time  (medium — let FX breathe)
+        4,              // LFO: RampDown
+        1000.0f,        // freq  (starts high, drops)
+        4.0f,           // lfo_rate  (medium sweep speed)
+        0.75f,          // lfo_depth  (wide falling range)
+        3000.0f,        // filter_cutoff  (drops into darkness)
+        0.45f,          // filter_reso  (squelchy wah on descent)
+        0.375f,         // delay_time  (dub echo)
+        0.65f,          // delay_feedback  (long cascading trails)
+        0.45f,          // delay_mix  (heavy dub echo)
+        0.40f,          // reverb_mix  (deep spring wash)
+        0.350f,         // release_time  (let the drop breathe)
     },
-    //  ── 4. Laser Sweep ────────────────────────────────────────────
-    //  Rising laser blast.  Square wave with ramp-up LFO for that
-    //  ascending zap.  Filter resonance adds squelch, delay trails
-    //  scatter the zaps into space.
+    //  ── 5. Deep Roller ────────────────────────────────────────────
+    //  Low, rolling siren.  Triangle LFO for a smooth back-and-forth
+    //  swell.  Sub-bass frequency with wide depth — rolls between
+    //  a deep growl and mid-range cry.  Heavy delay and reverb.
+    {
+        "Deep Roller",
+        1,              // Square
+        1,              // LFO: Triangle
+        380.0f,         // freq  (low, chest-rattling)
+        1.0f,           // lfo_rate  (very slow roll)
+        0.75f,          // lfo_depth  (wide sweep — sub to mid)
+        2200.0f,        // filter_cutoff  (darker, opens on peaks)
+        0.45f,          // filter_reso  (squelchy resonance on roll)
+        0.450f,         // delay_time  (wide dub spacing)
+        0.65f,          // delay_feedback  (cascading trails)
+        0.45f,          // delay_mix  (heavy echo)
+        0.50f,          // reverb_mix  (deep spring wash)
+        0.700f,         // release_time  (long tail, rolls out)
+    },
+    //  ── 6. Laser Sweep ────────────────────────────────────────────
+    //  Rising laser blast.  Ramp-up LFO sweeps pitch and filter
+    //  upward — each cycle growls low then zaps bright.  Resonant
+    //  filter adds squelch, delay trails scatter into space.
     {
         "Laser Sweep",
         1,              // Square
         3,              // LFO: RampUp
-        1200.0f,        // freq  (high tone)
-        6.0f,           // lfo_rate  (medium-fast sweep)
-        0.70f,          // lfo_depth  (wide pitch range)
-        6000.0f,        // filter_cutoff
-        0.45f,          // filter_reso  (squelchy)
+        900.0f,         // freq  (lower start for wider sweep)
+        5.0f,           // lfo_rate  (medium sweep)
+        0.80f,          // lfo_depth  (wide pitch + filter range)
+        3000.0f,        // filter_cutoff  (opens up dramatically)
+        0.50f,          // filter_reso  (heavy squelch on rise)
         0.300f,         // delay_time  (echo trails)
         0.60f,          // delay_feedback  (cascading zaps)
         0.40f,          // delay_mix  (prominent echo)
         0.35f,          // reverb_mix  (spring splash)
-        0.250f,         // release_time  (sharp into reverb tail)
-    },
-    //  ── 5. Dub Siren ──────────────────────────────────────────────
-    //  The Lickshot drenched in dub FX.  Square wave keeps the raw
-    //  character, heavy delay and reverb create that classic
-    //  sound-system wash.  Slower LFO for a wider sweep.
-    {
-        "Dub Siren",
-        1,              // Square
-        0,              // LFO: Sine
-        700.0f,         // freq  (warm mid)
-        3.5f,           // lfo_rate  (classic siren speed)
-        0.60f,          // lfo_depth  (full sweep)
-        4500.0f,        // filter_cutoff  (warmer, darker)
-        0.30f,          // filter_reso  (some character)
-        0.450f,         // delay_time  (wide dub echo)
-        0.70f,          // delay_feedback  (long repeats)
-        0.50f,          // delay_mix  (heavy echo)
-        0.50f,          // reverb_mix  (deep spring wash)
-        0.500f,         // release_time  (long tail into FX)
+        0.280f,         // release_time  (sharp into reverb tail)
     },
 };
 
-static std::atomic<int> g_preset{0};    // current preset index (0–4)
+static std::atomic<int> g_preset{0};    // current preset index (0–5)
 
 static void apply_preset(int idx)
 {
@@ -250,7 +277,7 @@ static void apply_preset(int idx)
     g_reverb_mix.store(p.reverb_mix);
     g_release_time.store(p.release_time);
 
-    update_delay_eff();
+    update_link_eff();
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -264,7 +291,8 @@ static const char* waveform_name(int w)
 static const char* lfo_wave_name(int w)
 {
     static const char* names[] = {
-        "Sine", "Triangle", "Square", "RampUp", "RampDown", "S&H"
+        "Sine", "Triangle", "Square", "RampUp", "RampDown",
+        "S&H", "ExpRise", "ExpFall"
     };
     return names[w % static_cast<int>(LfoWave::COUNT)];
 }
@@ -306,22 +334,75 @@ static float encoder_accel(int id)
     return 1.0f + t * (MAX_MULT - 1.0f);
 }
 
-// ─── Pitch-delay link helper ─────────────────────────────────────────
+// ─── Multi-click detector ────────────────────────────────────────────
 //
-// Recomputes the effective delay time from the base delay time and
-// current frequency.  Called from the control layer whenever either
-// value changes or linked mode is toggled.
+// Reusable helper for triple-click (or N-click) detection on buttons
+// and switches.  Tracks timestamps and fires when N clicks land within
+// the given time window.
 
-static float update_delay_eff()
+struct MultiClickDetector {
+    int  required;        // number of clicks to trigger
+    long window_ms;       // max ms from first to last click
+    long reset_ms;        // reset if idle longer than this after first click
+
+    std::chrono::steady_clock::time_point stamps[4] = {};
+    int count = 0;
+
+    // Call on each click.  Returns true when the pattern fires.
+    bool click()
+    {
+        using clock = std::chrono::steady_clock;
+        auto now = clock::now();
+
+        if (count > 0) {
+            auto since = std::chrono::duration_cast<
+                             std::chrono::milliseconds>(
+                             now - stamps[0]).count();
+            if (since > reset_ms) count = 0;
+        }
+
+        stamps[count++] = now;
+
+        if (count >= required) {
+            auto span = std::chrono::duration_cast<
+                            std::chrono::milliseconds>(
+                            stamps[count - 1] - stamps[0]).count();
+            count = 0;
+            return span < window_ms;
+        }
+        return false;
+    }
+};
+
+// ─── Pitch-delay-LFO link helper ────────────────────────────────────
+//
+// Recomputes the effective delay time and LFO rate from their base
+// values and the current frequency.  Called from the control layer
+// whenever freq, delay time, LFO rate, or linked mode changes.
+//
+// When linked:
+//   delay  ∝ 1/freq  (shorter delays at higher pitches)
+// Always:
+//   LFO    ∝  freq   (faster modulation at higher pitches)
+
+static void update_link_eff()
 {
     float t = g_delay_time.load();
+    float r = g_lfo_rate.load();
+    float freq = g_freq.load();
+    float ratio = freq / REF_FREQ;
+
+    // LFO rate always tracks pitch
+    r = r * ratio;
+    r = std::clamp(r, 0.1f, 20.0f);
+
+    // Delay time only tracks pitch in linked mode
     if (g_delay_link.load()) {
-        float freq = g_freq.load();
-        t = t * (REF_FREQ / freq);
-        t = std::clamp(t, 0.01f, 2.0f);
+        t = t * (1.0f / ratio);
+        t = std::clamp(t, 0.01f, 1.0f);
     }
     g_delay_time_eff.store(t);
-    return t;
+    g_lfo_rate_eff.store(r);
 }
 
 // ─── main ───────────────────────────────────────────────────────────
@@ -396,7 +477,7 @@ int main(int argc, char *argv[])
         float base_freq = g_freq.load(rlx);
         int   waveform  = g_waveform.load(rlx);
         bool  gate      = g_gate.load(rlx);
-        float lfo_r     = g_lfo_rate.load(rlx);
+        float lfo_r     = g_lfo_rate_eff.load(rlx);
         float lfo_d     = g_lfo_depth.load(rlx);
         float cutoff    = g_filter_cutoff.load(rlx);
         float reso      = g_filter_reso.load(rlx);
@@ -407,6 +488,7 @@ int main(int argc, char *argv[])
         float rel_t     = g_release_time.load(rlx);
         int   pe_mode   = g_pitch_env.load(rlx);
         bool  linked    = g_delay_link.load(rlx);
+        bool  lfo_link  = g_lfo_pitch_link.load(rlx);
 
         // Recompute release rate and pitch-envelope factors from release time.
         // Pitch sweeps exactly 3 octaves over the release duration so the
@@ -417,7 +499,7 @@ int main(int argc, char *argv[])
         fall_factor  = std::pow(2.0f, -3.0f / rel_samples);  // 3 oct down
 
         // Update DSP modules (once per frame)
-        lfo.setRate(lfo_r);
+        // lfo rate set per-sample below (optionally tracks pitch envelope)
         lfo.setWaveform(static_cast<LfoWave>(g_lfo_waveform.load(rlx)));
         osc.setWaveform(static_cast<Waveform>(waveform));
         filter.setResonance(reso);
@@ -442,31 +524,45 @@ int main(int argc, char *argv[])
         // Per-sample processing
         for (int i = 0; i < frames; i++) {
 
-            // Pitch + filter envelopes — sweep only after trigger release
+            // Pitch envelope — sweep only after trigger release, only
+            // when the pitch switch is set to Rise or Fall.
             if (pe_active && pe_mode != 0) {
-                pitch_env_mult  *= (pe_mode > 0) ? rise_factor
-                                                 : fall_factor;
-                pitch_env_mult   = std::clamp(pitch_env_mult, 0.125f, 8.0f);
+                pitch_env_mult *= (pe_mode > 0) ? rise_factor
+                                                : fall_factor;
+                pitch_env_mult  = std::clamp(pitch_env_mult, 0.125f, 8.0f);
+            }
 
-                filter_env_mult *= (pe_mode > 0) ? rise_factor
-                                                 : fall_factor;
+            // Filter envelope — ALWAYS darkens on release (DS71-style).
+            // Every note gets a warm "waaah" tail regardless of pitch switch.
+            if (pe_active) {
+                filter_env_mult *= fall_factor;
                 filter_env_mult  = std::clamp(filter_env_mult, 0.125f, 8.0f);
             }
 
+            // LFO rate optionally tracks pitch envelope (secret mode)
+            lfo.setRate(lfo_link ? lfo_r * pitch_env_mult : lfo_r);
+
             // LFO → exponential pitch modulation
             float lfo_out = lfo.tick();
-            float freq = base_freq * pitch_env_mult
-                       * std::exp2(lfo_out * lfo_d);
+            float lfo_mod = std::exp2(lfo_out * lfo_d);
+            float freq = base_freq * pitch_env_mult * lfo_mod;
             freq = std::clamp(freq, 20.0f, 20000.0f);
             osc.setFrequency(freq);
 
-            // Filter cutoff with envelope (per-sample for smooth sweep)
+            // Filter cutoff tracks LFO + envelope (DS71-style).
+            // Filter follows 70% of the LFO pitch swing so the
+            // tone brightens on rising sweeps and darkens on falls.
+            float filt_lfo = std::exp2(lfo_out * lfo_d * 0.7f);
             float eff_cutoff = std::clamp(
-                cutoff * filter_env_mult, 20.0f, 20000.0f);
+                cutoff * filter_env_mult * filt_lfo, 20.0f, 20000.0f);
             filter.setCutoff(eff_cutoff);
 
             // Oscillator
             float s = osc.tick();
+
+            // Filter before volume envelope so the sweep is
+            // audible through the full release tail
+            s = filter.process(s);
 
             // Volume envelope (linear attack / release)
             if (gate)
@@ -477,7 +573,6 @@ int main(int argc, char *argv[])
             s *= env_level;
 
             // Effects chain
-            s = filter.process(s);
             s = delay.process(s);
             s = reverb.process(s);
 
@@ -497,7 +592,7 @@ int main(int argc, char *argv[])
         osc.setSampleRate(sr);
         lfo.setSampleRate(sr);
         filter.setSampleRate(sr);
-        delay.init(sr, 2.5f);
+        delay.init(sr, 1.5f);
         delay.setRepitchRate(0.3f);
         reverb.init(sr);
 
@@ -530,12 +625,14 @@ int main(int argc, char *argv[])
                 f *= (dir > 0) ? step : (1.0f / step);
                 f = std::clamp(f, 30.0f, 8000.0f);
                 g_freq.store(f);
+                update_link_eff();
                 if (lk) {
-                    float eff = update_delay_eff();
-                    printf("  [A] FREQ     %.1f Hz  (dly %.0f ms)\n",
-                           f, eff * 1000.0f);
+                    printf("  [A] FREQ     %.1f Hz  (dly %.0f ms  lfo %.1f Hz)\n",
+                           f, g_delay_time_eff.load() * 1000.0f,
+                           g_lfo_rate_eff.load());
                 } else {
-                    printf("  [A] FREQ     %.1f Hz\n", f);
+                    printf("  [A] FREQ     %.1f Hz  (lfo %.1f Hz)\n",
+                           f, g_lfo_rate_eff.load());
                 }
                 break;
             }
@@ -545,7 +642,9 @@ int main(int argc, char *argv[])
                 r *= (dir > 0) ? step : (1.0f / step);
                 r = std::clamp(r, 0.1f, 20.0f);
                 g_lfo_rate.store(r);
-                printf("  [A] LFO RATE %.1f Hz\n", r);
+                update_link_eff();
+                printf("  [A] LFO RATE %.1f Hz  (eff %.1f Hz)\n",
+                       r, g_lfo_rate_eff.load());
                 break;
             }
             case 2: {   // Filter Cutoff — 2 semitones base, fast sweep
@@ -561,12 +660,13 @@ int main(int argc, char *argv[])
                 float step = std::pow(DELAY_TIME_STEP, accel);
                 float t = g_delay_time.load();
                 t *= (dir > 0) ? step : (1.0f / step);
-                t = std::clamp(t, 0.001f, 2.0f);
+                t = std::clamp(t, 0.001f, 1.0f);
                 g_delay_time.store(t);
-                float eff = update_delay_eff();
+                update_link_eff();
                 if (g_delay_link.load()) {
                     printf("  [A] DLY TIME %.0f ms  (eff %.0f ms)\n",
-                           t * 1000.0f, eff * 1000.0f);
+                           t * 1000.0f,
+                           g_delay_time_eff.load() * 1000.0f);
                 } else {
                     printf("  [A] DLY TIME %.0f ms\n", t * 1000.0f);
                 }
@@ -597,7 +697,7 @@ int main(int argc, char *argv[])
                 float step = std::pow(RELEASE_TIME_STEP, accel);
                 float rt = g_release_time.load();
                 rt *= (dir > 0) ? step : (1.0f / step);
-                rt = std::clamp(rt, 0.010f, 3.0f);
+                rt = std::clamp(rt, 0.010f, 3.5f);
                 g_release_time.store(rt);
                 printf("  [B] RELEASE  %.0f ms\n", rt * 1000.0f);
                 break;
@@ -645,39 +745,18 @@ int main(int argc, char *argv[])
             g_shift.store(pressed);
 
             if (pressed) {
-                using clock = std::chrono::steady_clock;
-                static clock::time_point clicks[3] = {};
-                static int click_n = 0;
-
-                auto now = clock::now();
-
-                // Reset count if too long since first click
-                if (click_n > 0) {
-                    auto since = std::chrono::duration_cast<
-                                     std::chrono::milliseconds>(
-                                     now - clicks[0]).count();
-                    if (since > 600) click_n = 0;
-                }
-
-                clicks[click_n++] = now;
-
-                if (click_n >= 3) {
-                    auto span = std::chrono::duration_cast<
-                                    std::chrono::milliseconds>(
-                                    clicks[2] - clicks[0]).count();
-                    click_n = 0;
-
-                    if (span < 500) {
-                        bool lk = !g_delay_link.load();
-                        g_delay_link.store(lk);
-                        if (lk) {
-                            float eff = update_delay_eff();
-                            printf("  >>> PITCH-DELAY LINK ON"
-                                   "  (dly %.0f ms)\n", eff * 1000.0f);
-                        } else {
-                            update_delay_eff();
-                            printf("  >>> PITCH-DELAY LINK OFF\n");
-                        }
+                static MultiClickDetector det{3, 500, 600};
+                if (det.click()) {
+                    bool lk = !g_delay_link.load();
+                    g_delay_link.store(lk);
+                    update_link_eff();
+                    if (lk) {
+                        printf("  >>> PITCH-DELAY-LFO LINK ON"
+                               "  (dly %.0f ms  lfo %.1f Hz)\n",
+                               g_delay_time_eff.load() * 1000.0f,
+                               g_lfo_rate_eff.load());
+                    } else {
+                        printf("  >>> PITCH-DELAY-LFO LINK OFF\n");
                     }
                 }
             }
@@ -720,6 +799,18 @@ int main(int argc, char *argv[])
         g_pitch_env.store(pos);
         static const char *lbl[] = {"FALL", "OFF", "RISE"};
         printf("  PITCH-ENV  %s\n", lbl[pos + 1]);
+
+        // Secret mode: rapidly toggle to FALL 3 times to toggle
+        // LFO-pitch-envelope link
+        if (pos == -1) {
+            static MultiClickDetector det{3, 700, 800};
+            if (det.click()) {
+                bool lk = !g_lfo_pitch_link.load();
+                g_lfo_pitch_link.store(lk);
+                printf("  >>> LFO-PITCH LINK %s\n",
+                       lk ? "ON" : "OFF");
+            }
+        }
     };
 
     // ── Initialise GPIO / simulate ──────────────────────────────────
