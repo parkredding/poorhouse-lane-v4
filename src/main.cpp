@@ -20,7 +20,7 @@
 //
 // Presets (GPIO 5, Bank A):
 //   1. Lickshot  2. Slow Wail  3. Machine Gun  4. Droppa
-//   5. Deep Roller  6. Laser Sweep  7. Dub Siren
+//   5. Deep Roller  6. Laser Sweep
 //
 // LFO shapes (Shift+GPIO 5):
 //   Sine → Triangle → Square → RampUp → RampDown
@@ -137,7 +137,7 @@ struct DubPreset {
     float       release_time;   // envelope release (seconds)
 };
 
-static constexpr int NUM_PRESETS = 7;
+static constexpr int NUM_PRESETS = 6;
 
 static const DubPreset PRESETS[NUM_PRESETS] = {
     //  ── 1. Lickshot ───────────────────────────────────────────────
@@ -169,8 +169,8 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         2,              // Saw
         0,              // LFO: Sine
         550.0f,         // freq  (warm mid, not too high)
-        1.4f,           // lfo_rate  (slow, patient sweep)
-        0.70f,          // lfo_depth  (full siren arc)
+        0.1f,           // lfo_rate  (very slow, 10-second sweep)
+        1.00f,          // lfo_depth  (full 100% sweep)
         2500.0f,        // filter_cutoff  (warm, sweep audible)
         0.35f,          // filter_reso  (gentle wah)
         0.400f,         // delay_time  (dub echo spacing)
@@ -255,28 +255,9 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.35f,          // reverb_mix  (spring splash)
         0.280f,         // release_time  (sharp into reverb tail)
     },
-    //  ── 7. Dub Siren ──────────────────────────────────────────────
-    //  Classic sound-system siren.  Slow sine LFO sweeps pitch and
-    //  filter together for that smooth wah character.  Heavy delay
-    //  and reverb create the deep dub wash.
-    {
-        "Dub Siren",
-        1,              // Square
-        0,              // LFO: Sine
-        700.0f,         // freq  (warm mid)
-        3.5f,           // lfo_rate  (classic siren speed)
-        0.65f,          // lfo_depth  (full sweep)
-        2800.0f,        // filter_cutoff  (warm — sweep is audible)
-        0.40f,          // filter_reso  (wah character)
-        0.450f,         // delay_time  (wide dub echo)
-        0.70f,          // delay_feedback  (long repeats)
-        0.50f,          // delay_mix  (heavy echo)
-        0.50f,          // reverb_mix  (deep spring wash)
-        0.500f,         // release_time  (long tail into FX)
-    },
 };
 
-static std::atomic<int> g_preset{0};    // current preset index (0–6)
+static std::atomic<int> g_preset{0};    // current preset index (0–5)
 
 static void apply_preset(int idx)
 {
