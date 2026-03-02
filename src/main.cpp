@@ -317,19 +317,24 @@ static float encoder_accel(int id)
 //
 // When linked:
 //   delay  ∝ 1/freq  (shorter delays at higher pitches)
+// Always:
 //   LFO    ∝  freq   (faster modulation at higher pitches)
 
 static float update_link_eff()
 {
     float t = g_delay_time.load();
     float r = g_lfo_rate.load();
+    float freq = g_freq.load();
+    float ratio = freq / REF_FREQ;
+
+    // LFO rate always tracks pitch
+    r = r * ratio;
+    r = std::clamp(r, 0.1f, 20.0f);
+
+    // Delay time only tracks pitch in linked mode
     if (g_delay_link.load()) {
-        float freq = g_freq.load();
-        float ratio = freq / REF_FREQ;
         t = t * (1.0f / ratio);
         t = std::clamp(t, 0.01f, 1.0f);
-        r = r * ratio;
-        r = std::clamp(r, 0.1f, 20.0f);
     }
     g_delay_time_eff.store(t);
     g_lfo_rate_eff.store(r);
@@ -545,13 +550,14 @@ int main(int argc, char *argv[])
                 f *= (dir > 0) ? step : (1.0f / step);
                 f = std::clamp(f, 30.0f, 8000.0f);
                 g_freq.store(f);
+                update_link_eff();
                 if (lk) {
-                    float eff = update_link_eff();
                     printf("  [A] FREQ     %.1f Hz  (dly %.0f ms  lfo %.1f Hz)\n",
-                           f, eff * 1000.0f,
+                           f, g_delay_time_eff.load() * 1000.0f,
                            g_lfo_rate_eff.load());
                 } else {
-                    printf("  [A] FREQ     %.1f Hz\n", f);
+                    printf("  [A] FREQ     %.1f Hz  (lfo %.1f Hz)\n",
+                           f, g_lfo_rate_eff.load());
                 }
                 break;
             }
@@ -561,13 +567,9 @@ int main(int argc, char *argv[])
                 r *= (dir > 0) ? step : (1.0f / step);
                 r = std::clamp(r, 0.1f, 20.0f);
                 g_lfo_rate.store(r);
-                if (g_delay_link.load()) {
-                    update_link_eff();
-                    printf("  [A] LFO RATE %.1f Hz  (eff %.1f Hz)\n",
-                           r, g_lfo_rate_eff.load());
-                } else {
-                    printf("  [A] LFO RATE %.1f Hz\n", r);
-                }
+                update_link_eff();
+                printf("  [A] LFO RATE %.1f Hz  (eff %.1f Hz)\n",
+                       r, g_lfo_rate_eff.load());
                 break;
             }
             case 2: {   // Filter Cutoff — 2 semitones base, fast sweep
