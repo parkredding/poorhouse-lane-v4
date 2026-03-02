@@ -8,7 +8,7 @@
 //
 // Encoder banks (Shift toggles A / B):
 //   Enc 1:  A = Base Freq (30–8000 Hz)     B = LFO Depth (0–100%)
-//   Enc 2:  A = LFO Rate (0.1–20 Hz)       B = Release Time (10 ms–2 s)
+//   Enc 2:  A = LFO Rate (0.1–20 Hz)       B = Release Time (10 ms–3 s)
 //   Enc 3:  A = Filter Cutoff (20–20 kHz)   B = Filter Resonance (0–95%)
 //   Enc 4:  A = Delay Time (1 ms–2.0 s)     B = Delay Mix (0–100%)
 //   Enc 5:  A = Delay Feedback (0–95%)      B = Reverb Mix (0–100%)
@@ -16,9 +16,12 @@
 // Buttons:
 //   Trigger  (GPIO 4)   Gate volume envelope; resets LFO phase
 //   Shift    (GPIO 15)  Hold for Bank B; triple-click = pitch-delay link
-//   Waveform (GPIO 5)   Cycle osc waveform; Shift+Waveform = cycle LFO shape
+//   Preset   (GPIO 5)   Cycle dub siren preset; Shift+Preset = cycle LFO shape
 //
-// LFO shapes (Shift+Waveform):
+// Presets (GPIO 5, Bank A):
+//   1. Lickshot  2. Machine Gun  3. Raygun  4. Laser Sweep  5. Dub Siren
+//
+// LFO shapes (Shift+GPIO 5):
 //   Sine → Triangle → Square → RampUp → RampDown → S&H
 //
 // Pitch envelope switch (GPIO 9/10):
@@ -101,6 +104,154 @@ static constexpr float REVERB_MIX_STEP = 0.05f;                // 5 % per click
 // Pitch-delay link mode
 static constexpr float FREQ_STEP_LINKED = 1.165f;              // ~minor-third jumps
 static constexpr float REF_FREQ         = 440.0f;              // neutral scaling point
+
+static float update_delay_eff();   // forward declaration
+
+// ─── Dub Siren Presets ──────────────────────────────────────────────
+//
+// GPIO 5 (Bank A) cycles through these presets.  Inspired by the
+// Benidub Lickshot — square-wave oscillator, aggressive LFO-driven
+// laser/machine-gun sounds, punchy and immediate.  All knobs remain
+// live after selecting a preset so the performer can tweak from any
+// starting point.
+
+struct DubPreset {
+    const char* name;
+    int         waveform;       // Waveform enum index
+    int         lfo_wave;       // LfoWave enum index
+    float       freq;           // base frequency (Hz)
+    float       lfo_rate;       // LFO rate (Hz)
+    float       lfo_depth;      // LFO depth (0–1)
+    float       filter_cutoff;  // filter cutoff (Hz)
+    float       filter_reso;    // filter resonance (0–0.95)
+    float       delay_time;     // delay time (seconds)
+    float       delay_feedback; // delay feedback (0–0.95)
+    float       delay_mix;      // delay wet/dry (0–1)
+    float       reverb_mix;     // reverb wet/dry (0–1)
+    float       release_time;   // envelope release (seconds)
+};
+
+static constexpr int NUM_PRESETS = 5;
+
+static const DubPreset PRESETS[NUM_PRESETS] = {
+    //  ── 1. Lickshot ───────────────────────────────────────────────
+    //  The classic laser-gun sound.  Square wave with fast triangle
+    //  LFO sweeping the pitch hard.  Spring reverb and tape echo
+    //  give it that sound-system depth.
+    {
+        "Lickshot",
+        1,              // Square
+        1,              // LFO: Triangle
+        800.0f,         // freq  (mid tone)
+        8.0f,           // lfo_rate  (fast sweep)
+        0.75f,          // lfo_depth  (deep for laser character)
+        8000.0f,        // filter_cutoff  (bright, let harmonics through)
+        0.25f,          // filter_reso  (slight bite)
+        0.300f,         // delay_time  (dub echo)
+        0.55f,          // delay_feedback  (long repeats)
+        0.40f,          // delay_mix  (prominent echo)
+        0.35f,          // reverb_mix  (spring tank)
+        0.200f,         // release_time  (punchy but with tail)
+    },
+    //  ── 2. Machine Gun ────────────────────────────────────────────
+    //  Rapid-fire stutter.  Square osc with very fast square LFO for
+    //  hard on/off bursts.  Tight delay stutter feeds into spring
+    //  reverb for a cavernous burst effect.
+    {
+        "Machine Gun",
+        1,              // Square
+        2,              // LFO: Square
+        1000.0f,        // freq  (punchy mid-high)
+        14.0f,          // lfo_rate  (rapid fire)
+        0.85f,          // lfo_depth  (extreme for hard cuts)
+        10000.0f,       // filter_cutoff  (wide open, raw)
+        0.10f,          // filter_reso
+        0.180f,         // delay_time  (tight stutter echo)
+        0.60f,          // delay_feedback  (self-reinforcing bursts)
+        0.40f,          // delay_mix  (heavy stutter)
+        0.30f,          // reverb_mix  (room around the bursts)
+        0.120f,         // release_time  (snappy cutoff)
+    },
+    //  ── 3. Raygun ──────────────────────────────────────────────────
+    //  Alien zap gun.  Square wave with sample-and-hold LFO for
+    //  random pitch steps — unpredictable sci-fi blasts.  Resonant
+    //  filter adds squelch, delay and reverb scatter it into space.
+    {
+        "Raygun",
+        1,              // Square
+        5,              // LFO: S&H
+        900.0f,         // freq  (mid-high, bright zaps)
+        5.0f,           // lfo_rate  (fast random steps)
+        0.80f,          // lfo_depth  (wide random jumps)
+        5000.0f,        // filter_cutoff  (warm enough to squelch)
+        0.50f,          // filter_reso  (heavy squelch on each step)
+        0.350f,         // delay_time  (spacey echo)
+        0.60f,          // delay_feedback  (long scattered trails)
+        0.45f,          // delay_mix  (prominent)
+        0.45f,          // reverb_mix  (deep space)
+        0.300f,         // release_time  (medium — let FX breathe)
+    },
+    //  ── 4. Laser Sweep ────────────────────────────────────────────
+    //  Rising laser blast.  Square wave with ramp-up LFO for that
+    //  ascending zap.  Filter resonance adds squelch, delay trails
+    //  scatter the zaps into space.
+    {
+        "Laser Sweep",
+        1,              // Square
+        3,              // LFO: RampUp
+        1200.0f,        // freq  (high tone)
+        6.0f,           // lfo_rate  (medium-fast sweep)
+        0.70f,          // lfo_depth  (wide pitch range)
+        6000.0f,        // filter_cutoff
+        0.45f,          // filter_reso  (squelchy)
+        0.300f,         // delay_time  (echo trails)
+        0.60f,          // delay_feedback  (cascading zaps)
+        0.40f,          // delay_mix  (prominent echo)
+        0.35f,          // reverb_mix  (spring splash)
+        0.250f,         // release_time  (sharp into reverb tail)
+    },
+    //  ── 5. Dub Siren ──────────────────────────────────────────────
+    //  The Lickshot drenched in dub FX.  Square wave keeps the raw
+    //  character, heavy delay and reverb create that classic
+    //  sound-system wash.  Slower LFO for a wider sweep.
+    {
+        "Dub Siren",
+        1,              // Square
+        0,              // LFO: Sine
+        700.0f,         // freq  (warm mid)
+        3.5f,           // lfo_rate  (classic siren speed)
+        0.60f,          // lfo_depth  (full sweep)
+        4500.0f,        // filter_cutoff  (warmer, darker)
+        0.30f,          // filter_reso  (some character)
+        0.450f,         // delay_time  (wide dub echo)
+        0.70f,          // delay_feedback  (long repeats)
+        0.50f,          // delay_mix  (heavy echo)
+        0.50f,          // reverb_mix  (deep spring wash)
+        0.500f,         // release_time  (long tail into FX)
+    },
+};
+
+static std::atomic<int> g_preset{0};    // current preset index (0–4)
+
+static void apply_preset(int idx)
+{
+    const DubPreset& p = PRESETS[idx % NUM_PRESETS];
+
+    g_waveform.store(p.waveform);
+    g_lfo_waveform.store(p.lfo_wave);
+    g_freq.store(p.freq);
+    g_lfo_rate.store(p.lfo_rate);
+    g_lfo_depth.store(p.lfo_depth);
+    g_filter_cutoff.store(p.filter_cutoff);
+    g_filter_reso.store(p.filter_reso);
+    g_delay_time.store(p.delay_time);
+    g_delay_feedback.store(p.delay_feedback);
+    g_delay_mix.store(p.delay_mix);
+    g_reverb_mix.store(p.reverb_mix);
+    g_release_time.store(p.release_time);
+
+    update_delay_eff();
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -446,7 +597,7 @@ int main(int argc, char *argv[])
                 float step = std::pow(RELEASE_TIME_STEP, accel);
                 float rt = g_release_time.load();
                 rt *= (dir > 0) ? step : (1.0f / step);
-                rt = std::clamp(rt, 0.010f, 2.0f);
+                rt = std::clamp(rt, 0.010f, 3.0f);
                 g_release_time.store(rt);
                 printf("  [B] RELEASE  %.0f ms\n", rt * 1000.0f);
                 break;
@@ -480,7 +631,7 @@ int main(int argc, char *argv[])
     };
 
     cb.on_button = [](int id, bool pressed) {
-        static const char *btn_name[] = {"Trigger", "Shift", "Waveform"};
+        static const char *btn_name[] = {"Trigger", "Shift", "Preset"};
 
         switch (id) {
         case 0:
@@ -535,8 +686,8 @@ int main(int argc, char *argv[])
             break;
         }
         case 2:
-            // Waveform → cycle shape (on press only)
-            // Shift held: cycle LFO waveform; otherwise: cycle oscillator
+            // Preset / LFO cycle (on press only)
+            // Shift held: cycle LFO waveform; otherwise: cycle dub preset
             if (pressed) {
                 if (g_shift.load()) {
                     int lw = (g_lfo_waveform.load() + 1)
@@ -544,10 +695,21 @@ int main(int argc, char *argv[])
                     g_lfo_waveform.store(lw);
                     printf("  LFO WAVE  %s\n", lfo_wave_name(lw));
                 } else {
-                    int w = (g_waveform.load() + 1)
-                          % static_cast<int>(Waveform::COUNT);
-                    g_waveform.store(w);
-                    printf("  WAVE  %s\n", waveform_name(w));
+                    int idx = (g_preset.load() + 1) % NUM_PRESETS;
+                    g_preset.store(idx);
+                    apply_preset(idx);
+                    const DubPreset& p = PRESETS[idx];
+                    printf("  PRESET %d  \"%s\"\n", idx + 1, p.name);
+                    printf("    %s  LFO:%s %.1fHz@%.0f%%  "
+                           "Dly:%.0fms FB%.0f%% Mix%.0f%%  "
+                           "Rev:%.0f%%\n",
+                           waveform_name(p.waveform),
+                           lfo_wave_name(p.lfo_wave),
+                           p.lfo_rate, p.lfo_depth * 100.0f,
+                           p.delay_time * 1000.0f,
+                           p.delay_feedback * 100.0f,
+                           p.delay_mix * 100.0f,
+                           p.reverb_mix * 100.0f);
                 }
             }
             break;
@@ -569,20 +731,26 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("\nDefaults:\n");
-    printf("  Freq: %.0f Hz  Wave: %s\n",
-           g_freq.load(), waveform_name(g_waveform.load()));
-    printf("  LFO: %.1f Hz @ %.0f%% [%s]  Filter: %.0f Hz / %.0f%%\n",
-           g_lfo_rate.load(), g_lfo_depth.load() * 100.0f,
-           lfo_wave_name(g_lfo_waveform.load()),
-           g_filter_cutoff.load(), g_filter_reso.load() * 100.0f);
-    printf("  Delay: %.0f ms  FB %.0f%%  Mix %.0f%%\n",
-           g_delay_time.load() * 1000.0f,
-           g_delay_feedback.load() * 100.0f,
-           g_delay_mix.load() * 100.0f);
-    printf("  Release: %.0f ms  Reverb: Mix %.0f%%\n",
-           g_release_time.load() * 1000.0f,
-           g_reverb_mix.load() * 100.0f);
+    // Apply the first preset so all defaults are consistent
+    apply_preset(0);
+
+    {
+        const DubPreset& p = PRESETS[g_preset.load()];
+        printf("\nPreset %d: \"%s\"\n", g_preset.load() + 1, p.name);
+        printf("  Freq: %.0f Hz  Wave: %s\n",
+               g_freq.load(), waveform_name(g_waveform.load()));
+        printf("  LFO: %.1f Hz @ %.0f%% [%s]  Filter: %.0f Hz / %.0f%%\n",
+               g_lfo_rate.load(), g_lfo_depth.load() * 100.0f,
+               lfo_wave_name(g_lfo_waveform.load()),
+               g_filter_cutoff.load(), g_filter_reso.load() * 100.0f);
+        printf("  Delay: %.0f ms  FB %.0f%%  Mix %.0f%%\n",
+               g_delay_time.load() * 1000.0f,
+               g_delay_feedback.load() * 100.0f,
+               g_delay_mix.load() * 100.0f);
+        printf("  Release: %.0f ms  Reverb: Mix %.0f%%\n",
+               g_release_time.load() * 1000.0f,
+               g_reverb_mix.load() * 100.0f);
+    }
     printf("\nListening for events (Ctrl-C to quit) ...\n\n");
 
     // ── Main loop ───────────────────────────────────────────────────
