@@ -7,7 +7,7 @@
 
 #include "lfo.h"
 #include <cmath>
-#include <cstdlib>
+#include <random>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -58,9 +58,10 @@ float LFO::tick()
         bool half = (phase_ >= 0.5f);
         if (half != shHalf_) {
             shHalf_ = half;
-            // Pseudo-random in [-1, +1]
-            shHeld_ = static_cast<float>(std::rand()) /
-                      static_cast<float>(RAND_MAX) * 2.0f - 1.0f;
+            // High-quality pseudo-random in [-1, +1]
+            static std::mt19937 gen(std::random_device{}());
+            static std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+            shHeld_ = dist(gen);
         }
         out = shHeld_;
         break;

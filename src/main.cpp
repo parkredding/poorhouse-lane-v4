@@ -111,7 +111,7 @@ static constexpr float REVERB_MIX_STEP = 0.05f;                // 5 % per click
 static constexpr float FREQ_STEP_LINKED = 1.165f;              // ~minor-third jumps
 static constexpr float REF_FREQ         = 440.0f;              // neutral scaling point
 
-static float update_link_eff();   // forward declaration
+static void update_link_eff();   // forward declaration
 
 // ─── Dub Siren Presets ──────────────────────────────────────────────
 //
@@ -334,6 +334,46 @@ static float encoder_accel(int id)
     return 1.0f + t * (MAX_MULT - 1.0f);
 }
 
+// ─── Multi-click detector ────────────────────────────────────────────
+//
+// Reusable helper for triple-click (or N-click) detection on buttons
+// and switches.  Tracks timestamps and fires when N clicks land within
+// the given time window.
+
+struct MultiClickDetector {
+    int  required;        // number of clicks to trigger
+    long window_ms;       // max ms from first to last click
+    long reset_ms;        // reset if idle longer than this after first click
+
+    std::chrono::steady_clock::time_point stamps[4] = {};
+    int count = 0;
+
+    // Call on each click.  Returns true when the pattern fires.
+    bool click()
+    {
+        using clock = std::chrono::steady_clock;
+        auto now = clock::now();
+
+        if (count > 0) {
+            auto since = std::chrono::duration_cast<
+                             std::chrono::milliseconds>(
+                             now - stamps[0]).count();
+            if (since > reset_ms) count = 0;
+        }
+
+        stamps[count++] = now;
+
+        if (count >= required) {
+            auto span = std::chrono::duration_cast<
+                            std::chrono::milliseconds>(
+                            stamps[count - 1] - stamps[0]).count();
+            count = 0;
+            return span < window_ms;
+        }
+        return false;
+    }
+};
+
 // ─── Pitch-delay-LFO link helper ────────────────────────────────────
 //
 // Recomputes the effective delay time and LFO rate from their base
@@ -345,7 +385,7 @@ static float encoder_accel(int id)
 // Always:
 //   LFO    ∝  freq   (faster modulation at higher pitches)
 
-static float update_link_eff()
+static void update_link_eff()
 {
     float t = g_delay_time.load();
     float r = g_lfo_rate.load();
@@ -363,7 +403,6 @@ static float update_link_eff()
     }
     g_delay_time_eff.store(t);
     g_lfo_rate_eff.store(r);
-    return t;
 }
 
 // ─── main ───────────────────────────────────────────────────────────
@@ -623,10 +662,11 @@ int main(int argc, char *argv[])
                 t *= (dir > 0) ? step : (1.0f / step);
                 t = std::clamp(t, 0.001f, 1.0f);
                 g_delay_time.store(t);
-                float eff = update_link_eff();
+                update_link_eff();
                 if (g_delay_link.load()) {
                     printf("  [A] DLY TIME %.0f ms  (eff %.0f ms)\n",
-                           t * 1000.0f, eff * 1000.0f);
+                           t * 1000.0f,
+                           g_delay_time_eff.load() * 1000.0f);
                 } else {
                     printf("  [A] DLY TIME %.0f ms\n", t * 1000.0f);
                 }
@@ -705,41 +745,18 @@ int main(int argc, char *argv[])
             g_shift.store(pressed);
 
             if (pressed) {
-                using clock = std::chrono::steady_clock;
-                static clock::time_point clicks[3] = {};
-                static int click_n = 0;
-
-                auto now = clock::now();
-
-                // Reset count if too long since first click
-                if (click_n > 0) {
-                    auto since = std::chrono::duration_cast<
-                                     std::chrono::milliseconds>(
-                                     now - clicks[0]).count();
-                    if (since > 600) click_n = 0;
-                }
-
-                clicks[click_n++] = now;
-
-                if (click_n >= 3) {
-                    auto span = std::chrono::duration_cast<
-                                    std::chrono::milliseconds>(
-                                    clicks[2] - clicks[0]).count();
-                    click_n = 0;
-
-                    if (span < 500) {
-                        bool lk = !g_delay_link.load();
-                        g_delay_link.store(lk);
-                        if (lk) {
-                            float eff = update_link_eff();
-                            printf("  >>> PITCH-DELAY-LFO LINK ON"
-                                   "  (dly %.0f ms  lfo %.1f Hz)\n",
-                                   eff * 1000.0f,
-                                   g_lfo_rate_eff.load());
-                        } else {
-                            update_link_eff();
-                            printf("  >>> PITCH-DELAY-LFO LINK OFF\n");
-                        }
+                static MultiClickDetector det{3, 500, 600};
+                if (det.click()) {
+                    bool lk = !g_delay_link.load();
+                    g_delay_link.store(lk);
+                    update_link_eff();
+                    if (lk) {
+                        printf("  >>> PITCH-DELAY-LFO LINK ON"
+                               "  (dly %.0f ms  lfo %.1f Hz)\n",
+                               g_delay_time_eff.load() * 1000.0f,
+                               g_lfo_rate_eff.load());
+                    } else {
+                        printf("  >>> PITCH-DELAY-LFO LINK OFF\n");
                     }
                 }
             }
@@ -786,34 +803,12 @@ int main(int argc, char *argv[])
         // Secret mode: rapidly toggle to FALL 3 times to toggle
         // LFO-pitch-envelope link
         if (pos == -1) {
-            using clock = std::chrono::steady_clock;
-            static clock::time_point taps[3] = {};
-            static int tap_n = 0;
-
-            auto now = clock::now();
-
-            // Reset if too long since first tap
-            if (tap_n > 0) {
-                auto since = std::chrono::duration_cast<
-                                 std::chrono::milliseconds>(
-                                 now - taps[0]).count();
-                if (since > 800) tap_n = 0;
-            }
-
-            taps[tap_n++] = now;
-
-            if (tap_n >= 3) {
-                auto span = std::chrono::duration_cast<
-                                std::chrono::milliseconds>(
-                                taps[2] - taps[0]).count();
-                tap_n = 0;
-
-                if (span < 700) {
-                    bool lk = !g_lfo_pitch_link.load();
-                    g_lfo_pitch_link.store(lk);
-                    printf("  >>> LFO-PITCH LINK %s\n",
-                           lk ? "ON" : "OFF");
-                }
+            static MultiClickDetector det{3, 700, 800};
+            if (det.click()) {
+                bool lk = !g_lfo_pitch_link.load();
+                g_lfo_pitch_link.store(lk);
+                printf("  >>> LFO-PITCH LINK %s\n",
+                       lk ? "ON" : "OFF");
             }
         }
     };
