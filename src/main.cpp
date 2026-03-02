@@ -492,6 +492,10 @@ int main(int argc, char *argv[])
             // Oscillator
             float s = osc.tick();
 
+            // Filter before volume envelope so the sweep is
+            // audible through the full release tail
+            s = filter.process(s);
+
             // Volume envelope (linear attack / release)
             if (gate)
                 env_level += attack_rate;
@@ -501,7 +505,6 @@ int main(int argc, char *argv[])
             s *= env_level;
 
             // Effects chain
-            s = filter.process(s);
             s = delay.process(s);
             s = reverb.process(s);
 
