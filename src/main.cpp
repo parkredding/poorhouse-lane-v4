@@ -136,8 +136,8 @@ static constexpr int NUM_PRESETS = 5;
 static const DubPreset PRESETS[NUM_PRESETS] = {
     //  ── 1. Lickshot ───────────────────────────────────────────────
     //  The classic laser-gun sound.  Square wave with fast triangle
-    //  LFO sweeping the pitch hard.  Dry and punchy — the signature
-    //  Lickshot tone.  Use the pitch-env switch for extra drama.
+    //  LFO sweeping the pitch hard.  Spring reverb and tape echo
+    //  give it that sound-system depth.
     {
         "Lickshot",
         1,              // Square
@@ -147,16 +147,16 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.75f,          // lfo_depth  (deep for laser character)
         8000.0f,        // filter_cutoff  (bright, let harmonics through)
         0.25f,          // filter_reso  (slight bite)
-        0.250f,         // delay_time  (tight slapback)
-        0.45f,          // delay_feedback
-        0.25f,          // delay_mix  (mostly dry)
-        0.15f,          // reverb_mix  (just a touch)
-        0.150f,         // release_time  (punchy, immediate)
+        0.300f,         // delay_time  (dub echo)
+        0.55f,          // delay_feedback  (long repeats)
+        0.40f,          // delay_mix  (prominent echo)
+        0.35f,          // reverb_mix  (spring tank)
+        0.200f,         // release_time  (punchy but with tail)
     },
     //  ── 2. Machine Gun ────────────────────────────────────────────
     //  Rapid-fire stutter.  Square osc with very fast square LFO for
-    //  hard on/off bursts — the Lickshot's machine-gun mode.  Tight
-    //  delay adds rhythmic stutter to the bursts.
+    //  hard on/off bursts.  Tight delay stutter feeds into spring
+    //  reverb for a cavernous burst effect.
     {
         "Machine Gun",
         1,              // Square
@@ -166,16 +166,16 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.85f,          // lfo_depth  (extreme for hard cuts)
         10000.0f,       // filter_cutoff  (wide open, raw)
         0.10f,          // filter_reso
-        0.120f,         // delay_time  (very tight, stutter echo)
-        0.50f,          // delay_feedback  (rhythmic repeats)
-        0.30f,          // delay_mix
-        0.10f,          // reverb_mix  (dry)
-        0.080f,         // release_time  (snappy cutoff)
+        0.180f,         // delay_time  (tight stutter echo)
+        0.60f,          // delay_feedback  (self-reinforcing bursts)
+        0.40f,          // delay_mix  (heavy stutter)
+        0.30f,          // reverb_mix  (room around the bursts)
+        0.120f,         // release_time  (snappy cutoff)
     },
     //  ── 3. Airhorn ────────────────────────────────────────────────
-    //  The Lickshot with LFO off — a sustained blast at a single
-    //  pitch.  Square wave for that raw, nasal horn character.
-    //  Slow sine LFO adds just a hint of wobble.
+    //  Sustained blast at a single pitch.  Square wave for that raw,
+    //  nasal horn character.  Dub delay and reverb give it weight
+    //  and presence on the sound system.
     {
         "Airhorn",
         1,              // Square
@@ -185,16 +185,16 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.08f,          // lfo_depth  (barely there — near-static pitch)
         5000.0f,        // filter_cutoff  (warm but present)
         0.35f,          // filter_reso  (nasal horn resonance)
-        0.350f,         // delay_time  (dub echo)
-        0.50f,          // delay_feedback
-        0.30f,          // delay_mix
-        0.20f,          // reverb_mix  (some space)
-        0.300f,         // release_time  (medium sustain)
+        0.400f,         // delay_time  (dub tempo echo)
+        0.55f,          // delay_feedback  (long trail)
+        0.40f,          // delay_mix  (prominent)
+        0.40f,          // reverb_mix  (full spring wash)
+        0.350f,         // release_time  (sustain into reverb)
     },
     //  ── 4. Laser Sweep ────────────────────────────────────────────
     //  Rising laser blast.  Square wave with ramp-up LFO for that
-    //  ascending zap.  Filter resonance adds a squelchy edge.
-    //  Delay trails make it sci-fi.
+    //  ascending zap.  Filter resonance adds squelch, delay trails
+    //  scatter the zaps into space.
     {
         "Laser Sweep",
         1,              // Square
@@ -204,16 +204,16 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.70f,          // lfo_depth  (wide pitch range)
         6000.0f,        // filter_cutoff
         0.45f,          // filter_reso  (squelchy)
-        0.200f,         // delay_time  (tight echo)
-        0.55f,          // delay_feedback
-        0.30f,          // delay_mix
-        0.15f,          // reverb_mix  (mostly dry)
-        0.200f,         // release_time  (sharp)
+        0.300f,         // delay_time  (echo trails)
+        0.60f,          // delay_feedback  (cascading zaps)
+        0.40f,          // delay_mix  (prominent echo)
+        0.35f,          // reverb_mix  (spring splash)
+        0.250f,         // release_time  (sharp into reverb tail)
     },
     //  ── 5. Dub Siren ──────────────────────────────────────────────
-    //  The Lickshot through a dub effects chain.  Square wave keeps
-    //  the raw character but heavier delay and reverb give it that
-    //  classic sound-system wash.  Slower LFO for a wider sweep.
+    //  The Lickshot drenched in dub FX.  Square wave keeps the raw
+    //  character, heavy delay and reverb create that classic
+    //  sound-system wash.  Slower LFO for a wider sweep.
     {
         "Dub Siren",
         1,              // Square
@@ -223,11 +223,11 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.60f,          // lfo_depth  (full sweep)
         4500.0f,        // filter_cutoff  (warmer, darker)
         0.30f,          // filter_reso  (some character)
-        0.375f,         // delay_time  (dub tempo echo)
-        0.65f,          // delay_feedback  (long repeats)
-        0.40f,          // delay_mix  (prominent echo)
-        0.35f,          // reverb_mix  (spring tank wash)
-        0.400f,         // release_time  (medium tail)
+        0.450f,         // delay_time  (wide dub echo)
+        0.70f,          // delay_feedback  (long repeats)
+        0.50f,          // delay_mix  (heavy echo)
+        0.50f,          // reverb_mix  (deep spring wash)
+        0.500f,         // release_time  (long tail into FX)
     },
 };
 
