@@ -81,9 +81,11 @@ static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
 // Pitch-delay-LFO link (secret mode: triple-click Shift to toggle)
 static std::atomic<bool>  g_delay_link{false};
 // LFO-pitch-envelope link (secret: triple-tap pitch switch to fall)
-static std::atomic<bool>  g_lfo_pitch_link{false};
+// ON by default — LFO rate follows pitch envelope for expressive sweeps
+static std::atomic<bool>  g_lfo_pitch_link{true};
 // Super drip reverb (secret: hold Shift + triple-tap fall)
-static std::atomic<bool>  g_super_drip{false};
+// ON by default — heavy dub spring reverb with metallic drip
+static std::atomic<bool>  g_super_drip{true};
 static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay (may be freq-scaled)
 static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (may be freq-scaled)
 
@@ -856,6 +858,9 @@ int main(int argc, char *argv[])
         printf("  Release: %.0f ms  Reverb: Mix %.0f%%\n",
                g_release_time.load() * 1000.0f,
                g_reverb_mix.load() * 100.0f);
+        printf("  Super Drip: %s  LFO-Pitch Link: %s\n",
+               g_super_drip.load() ? "ON" : "OFF",
+               g_lfo_pitch_link.load() ? "ON" : "OFF");
     }
     printf("\nListening for events (Ctrl-C to quit) ...\n\n");
 
