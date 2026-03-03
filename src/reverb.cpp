@@ -95,8 +95,8 @@ void Reverb::setSize(float size)
 
     if (drip_) {
         // Super drip: extreme chirp and long lush decay
-        for (auto& s : springs_)    s.feedback = 0.90f;
-        for (auto& d : dispersion_) d.coeff    = 0.85f;
+        for (auto& s : springs_)    s.feedback = 0.94f;
+        for (auto& d : dispersion_) d.coeff    = 0.92f;
     } else {
         // Feedback: 0.3 (tight) to 0.85 (long spring)
         float fb = 0.3f + size_ * 0.55f;
@@ -116,8 +116,8 @@ void Reverb::setMix(float mix) { mix_ = std::clamp(mix, 0.0f, 1.0f); }
 // High dispersion for metallic drip, high feedback for long decay,
 // darker LP filtering, and hotter input gain for spring saturation.
 
-static constexpr float DRIP_LP_HZ    = 2500.0f;  // darker than normal 4 kHz
-static constexpr float DRIP_IN_GAIN  = 0.50f;    // drive springs harder
+static constexpr float DRIP_LP_HZ    = 1800.0f;  // darker than normal 4 kHz
+static constexpr float DRIP_IN_GAIN  = 0.65f;    // drive springs harder
 static constexpr float NORMAL_IN_GAIN = 0.35f;
 
 void Reverb::setSuperDrip(bool on)
