@@ -326,8 +326,8 @@ After=sound.target
 
 [Service]
 Type=simple
-ExecStart="${INSTALL_DIR}/build/dubsiren"
-WorkingDirectory="${INSTALL_DIR}"
+ExecStart=${INSTALL_DIR}/build/dubsiren
+WorkingDirectory=${INSTALL_DIR}
 Restart=on-failure
 RestartSec=3
 StartLimitIntervalSec=0
