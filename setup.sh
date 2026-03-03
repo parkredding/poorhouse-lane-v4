@@ -523,6 +523,7 @@ build_project() {
     fi
 
     cd "${SCRIPT_DIR}"
+    chown -R "${REAL_USER}:${REAL_USER}" "${build_dir}"
     success "Build complete: ${build_dir}/dubsiren"
 }
 
