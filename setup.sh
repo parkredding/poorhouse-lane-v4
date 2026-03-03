@@ -83,6 +83,7 @@ ask_options() {
     echo -e "    ${YELLOW}•${NC} HDMI output disabled to save power"
     echo -e "    ${YELLOW}•${NC} Screen blanking disabled"
     echo -e "    ${YELLOW}•${NC} Read-only filesystem (protects SD card from corruption)"
+    echo -e "    ${YELLOW}•${NC} Writable data/ directory preserved for presets & mp3s"
     echo ""
     read -rp "  Enable kiosk mode? [y/N]: " kiosk_choice < /dev/tty
     if [[ "$kiosk_choice" =~ ^[Yy]$ ]]; then
@@ -305,11 +306,12 @@ ALSA_EOF
     success "ALSA config written to /etc/asound.conf"
 }
 
-# --- create_mp3_dir() --------------------------------------------------------
-create_mp3_dir() {
-    mkdir -p "${INSTALL_DIR}/mp3s"
-    chown -R "${REAL_USER}:${REAL_USER}" "${INSTALL_DIR}/mp3s"
-    success "MP3 directory created at ${INSTALL_DIR}/mp3s"
+# --- create_data_dirs() ------------------------------------------------------
+create_data_dirs() {
+    mkdir -p "${INSTALL_DIR}/data/mp3s"
+    mkdir -p "${INSTALL_DIR}/data/presets"
+    chown -R "${REAL_USER}:${REAL_USER}" "${INSTALL_DIR}/data"
+    success "Data directories created at ${INSTALL_DIR}/data/{mp3s,presets}"
 }
 
 # --- install_service() -------------------------------------------------------
@@ -424,12 +426,63 @@ EOF
         warn "No cmdline.txt found — skipping screen blanking config."
     fi
 
-    # --- 5. Read-only filesystem (overlay FS) --------------------------------
+    # --- 5. Read-only filesystem (overlay FS) with writable data dir ----------
     if command -v raspi-config &>/dev/null; then
-        # raspi-config provides a clean overlay FS implementation
+        # Set up writable data directory BEFORE enabling overlay.
+        # After overlay, root is read-only. We mount the root block device
+        # at /mnt/persist (read-write) and bind-mount the data dir from it.
+        local root_dev
+        root_dev=$(findmnt -n -o SOURCE /)
+
+        # Generate systemd-compatible mount unit names
+        local persist_unit="mnt-persist.mount"
+        local data_mount_path
+        data_mount_path=$(systemd-escape --path "${INSTALL_DIR}/data")
+        local data_unit="${data_mount_path}.mount"
+
+        # Mount unit: root device read-write at /mnt/persist
+        mkdir -p /mnt/persist
+        cat > "/etc/systemd/system/${persist_unit}" << EOF
+[Unit]
+Description=Writable mount of root device for persistent data
+DefaultDependencies=no
+After=local-fs.target
+
+[Mount]
+What=${root_dev}
+Where=/mnt/persist
+Type=ext4
+Options=rw,noatime
+
+[Install]
+WantedBy=local-fs.target
+EOF
+
+        # Bind mount: /mnt/persist/.../data -> INSTALL_DIR/data
+        cat > "/etc/systemd/system/${data_unit}" << EOF
+[Unit]
+Description=Bind mount persistent dubsiren data
+After=${persist_unit}
+Requires=${persist_unit}
+
+[Mount]
+What=/mnt/persist${INSTALL_DIR}/data
+Where=${INSTALL_DIR}/data
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target
+EOF
+
+        systemctl daemon-reload
+        systemctl enable "${persist_unit}" "${data_unit}"
+        success "Writable data directory configured at ${INSTALL_DIR}/data/"
+
+        # Now enable the overlay FS
         raspi-config nonint enable_overlayfs
         BOOT_CHANGED=true
-        success "Read-only overlay filesystem enabled (raspi-config)."
+        success "Read-only overlay filesystem enabled."
         warn "To make changes later, disable overlay with:"
         warn "  sudo raspi-config nonint disable_overlayfs && sudo reboot"
     else
@@ -469,7 +522,9 @@ print_summary() {
     echo ""
     echo "  Install dir:  ${INSTALL_DIR}"
     echo "  Binary:       ${SCRIPT_DIR}/build/dubsiren"
-    echo "  MP3 folder:   ${INSTALL_DIR}/mp3s/"
+    echo "  Data folder:  ${INSTALL_DIR}/data/"
+    echo "    MP3s:       ${INSTALL_DIR}/data/mp3s/"
+    echo "    Presets:    ${INSTALL_DIR}/data/presets/"
     echo ""
 
     if [[ "$ENABLE_AUTOSTART" == true ]]; then
@@ -481,6 +536,7 @@ print_summary() {
 
     if [[ "$ENABLE_KIOSK" == true ]]; then
         echo "  Kiosk mode:   enabled (auto-login, CLI-only, HDMI off, read-only FS)"
+        echo "  Writable:     ${INSTALL_DIR}/data/ persists through overlay FS"
         echo "                Undo overlay: sudo raspi-config nonint disable_overlayfs"
     else
         echo "  Kiosk mode:   disabled"
@@ -514,7 +570,7 @@ install_deps
 build_rpi_ws281x
 configure_boot
 configure_alsa
-create_mp3_dir
+create_data_dirs
 install_service
 configure_kiosk
 build_project
