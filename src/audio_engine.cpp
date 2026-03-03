@@ -68,8 +68,8 @@ bool AudioEngine::init(const std::string& device, int sampleRate,
 
     // Retry opening the ALSA device — at boot the I2S DAC module may
     // still be loading when the service starts.
-    static constexpr int  MAX_RETRIES    = 10;
-    static constexpr int  RETRY_DELAY_MS = 1000;
+    static constexpr int  MAX_RETRIES = 10;
+    static constexpr auto RETRY_DELAY = std::chrono::seconds(1);
 
     for (int attempt = 1; attempt <= MAX_RETRIES; ++attempt) {
         err = snd_pcm_open(&pimpl_->pcm, device.c_str(),
@@ -80,8 +80,7 @@ bool AudioEngine::init(const std::string& device, int sampleRate,
                 device.c_str(), snd_strerror(err), attempt, MAX_RETRIES);
 
         if (attempt < MAX_RETRIES)
-            std::this_thread::sleep_for(
-                std::chrono::milliseconds(RETRY_DELAY_MS));
+            std::this_thread::sleep_for(RETRY_DELAY);
     }
     if (err < 0) return false;
 
