@@ -67,6 +67,7 @@ static std::atomic<float> g_release_time{0.050f};  // 50 ms default
 static std::atomic<float> g_filter_reso{0.0f};
 static std::atomic<float> g_delay_mix{0.30f};
 static std::atomic<float> g_reverb_mix{0.35f};
+static std::atomic<float> g_sweep_dir{-1.0f};  // filter sweep: -1=Down, 0=Flat, +1=Up
 
 // Fixed (no encoder control)
 static constexpr float REVERB_SIZE = 0.65f;
@@ -139,6 +140,7 @@ struct DubPreset {
     float       delay_mix;      // delay wet/dry (0–1)
     float       reverb_mix;     // reverb wet/dry (0–1)
     float       release_time;   // envelope release (seconds)
+    float       sweep_dir;      // filter sweep on release: -1=Down, 0=Flat, +1=Up
 };
 
 static constexpr int NUM_PRESETS = 8;
@@ -163,6 +165,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.40f,          // delay_mix  (prominent echo)
         0.35f,          // reverb_mix  (spring tank)
         0.200f,         // release_time  (punchy but with tail)
+        0.0f,           // sweep_dir  (Flat — LFO already drives all filter motion)
     },
     //  ── 2. Earthshaker ────────────────────────────────────────────
     //  Sub-bass siren deep in the chest.  Square wave at 90 Hz with a
@@ -182,6 +185,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.50f,          // delay_mix  (heavy echo)
         0.60f,          // reverb_mix  (maximum spring wash)
         1.000f,         // release_time  (slow fade, sub hangs long)
+        -1.0f,          // sweep_dir  (Down — filter closes as the sub fades)
     },
     //  ── 3. Slow Wail ────────────────────────────────────────────
     //  Classic slow siren wail.  Sine LFO at low rate for a long,
@@ -201,6 +205,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.40f,          // delay_mix  (present echo)
         0.45f,          // reverb_mix  (spring wash)
         0.600f,         // release_time  (long fade into FX)
+        -1.0f,          // sweep_dir  (Down — canonical dub waaah on release)
     },
     //  ── 4. Machine Gun ────────────────────────────────────────────
     //  Rapid-fire stutter.  Square LFO chops the pitch and filter
@@ -220,6 +225,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.40f,          // delay_mix  (heavy stutter)
         0.30f,          // reverb_mix  (room around the bursts)
         0.120f,         // release_time  (snappy cutoff)
+        0.0f,           // sweep_dir  (Flat — 14 Hz square LFO, sweep inaudible)
     },
     //  ── 5. Roots ────────────────────────────────────────────────────
     //  Low-mid dub siren, the classic sound-system foundation tone.
@@ -239,6 +245,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.45f,          // delay_mix  (heavy echo)
         0.50f,          // reverb_mix  (deep spring wash)
         0.600f,         // release_time  (lets the bass breathe)
+        -1.0f,          // sweep_dir  (Down — bass darkens into the delay echoes)
     },
     //  ── 6. Droppa ───────────────────────────────────────────────────
     //  Descending siren wail.  Ramp-down LFO pulls pitch and filter
@@ -258,6 +265,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.45f,          // delay_mix  (heavy dub echo)
         0.40f,          // reverb_mix  (deep spring wash)
         0.350f,         // release_time  (let the drop breathe)
+        -1.0f,          // sweep_dir  (Down — filter falls with the pitch, completes the drop)
     },
     //  ── 7. Deep Roller ────────────────────────────────────────────
     //  Low, rolling siren.  Triangle LFO for a smooth back-and-forth
@@ -277,6 +285,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.45f,          // delay_mix  (heavy echo)
         0.50f,          // reverb_mix  (deep spring wash)
         0.700f,         // release_time  (long tail, rolls out)
+        -1.0f,          // sweep_dir  (Down — filter rolls away as the sound fades)
     },
     //  ── 8. Laser Sweep ────────────────────────────────────────────
     //  Rising laser blast.  Ramp-up LFO sweeps pitch and filter
@@ -296,6 +305,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.40f,          // delay_mix  (prominent echo)
         0.35f,          // reverb_mix  (spring splash)
         0.280f,         // release_time  (sharp into reverb tail)
+        +1.0f,          // sweep_dir  (Up — filter opens on release, the "whale" tail)
     },
 };
 
@@ -317,6 +327,7 @@ static void apply_preset(int idx)
     g_delay_mix.store(p.delay_mix);
     g_reverb_mix.store(p.reverb_mix);
     g_release_time.store(p.release_time);
+    g_sweep_dir.store(p.sweep_dir);
 
     update_link_eff();
 }
@@ -499,7 +510,7 @@ int main(int argc, char *argv[])
     float release_rate   = 0.0f;
     float sr_f           = 48000.0f;    // set after init, read in callback
     float pitch_env_mult  = 1.0f;
-    float filter_env_mult = 1.0f;
+    float sweep_phase     = 0.0f;   // 0→1 linear ramp during release
     bool  prev_gate       = false;
     bool  pe_active       = false;   // true after trigger release
     float rise_factor     = 1.0f;
@@ -530,6 +541,7 @@ int main(int argc, char *argv[])
         int   pe_mode   = g_pitch_env.load(rlx);
         bool  linked    = g_delay_link.load(rlx);
         bool  lfo_link  = g_lfo_pitch_link.load(rlx);
+        float sweep_dir = g_sweep_dir.load(rlx);
 
         // Recompute release rate and pitch-envelope factors from release time.
         // Pitch sweeps exactly 3 octaves over the release duration so the
@@ -538,6 +550,7 @@ int main(int argc, char *argv[])
         release_rate = 1.0f / rel_samples;
         rise_factor  = std::pow(2.0f,  3.0f / rel_samples);  // 3 oct up
         fall_factor  = std::pow(2.0f, -3.0f / rel_samples);  // 3 oct down
+        float sweep_inc  = 1.0f / rel_samples;               // linear phase increment
 
         // Update DSP modules (once per frame)
         // lfo rate set per-sample below (optionally tracks pitch envelope)
@@ -554,9 +567,9 @@ int main(int argc, char *argv[])
 
         // Gate edge — envelopes start on release, reset on press
         if (gate && !prev_gate) {
-            pitch_env_mult  = 1.0f;     // reset on new trigger press
-            filter_env_mult = 1.0f;
-            pe_active = false;          // no sweep while held
+            pitch_env_mult = 1.0f;      // reset on new trigger press
+            sweep_phase    = 0.0f;      // filter sweep restarts from cutoff
+            pe_active      = false;     // no sweep while held
             lfo.resetPhase();           // consistent attacks
         }
         if (!gate && prev_gate)
@@ -574,29 +587,25 @@ int main(int argc, char *argv[])
                 pitch_env_mult  = std::clamp(pitch_env_mult, 0.125f, 8.0f);
             }
 
-            // Filter envelope — ALWAYS darkens on release (DS71-style).
-            // Every note gets a warm "waaah" tail regardless of pitch switch.
-            if (pe_active) {
-                filter_env_mult *= fall_factor;
-                filter_env_mult  = std::clamp(filter_env_mult, 0.125f, 8.0f);
-            }
+            // Sweep phase: 0 while held (static cutoff), ramps 0→1 on release.
+            if (pe_active)
+                sweep_phase = std::min(sweep_phase + sweep_inc, 1.0f);
 
             // LFO rate optionally tracks pitch envelope (secret mode)
             lfo.setRate(lfo_link ? lfo_r * pitch_env_mult : lfo_r);
 
-            // LFO → exponential pitch modulation
+            // LFO → exponential pitch modulation (pitch only, not filter)
             float lfo_out = lfo.tick();
             float lfo_mod = std::exp2(lfo_out * lfo_d);
             float freq = base_freq * pitch_env_mult * lfo_mod;
             freq = std::clamp(freq, 20.0f, 20000.0f);
             osc.setFrequency(freq);
 
-            // Filter cutoff tracks LFO + envelope (DS71-style).
-            // Filter follows 70% of the LFO pitch swing so the
-            // tone brightens on rising sweeps and darkens on falls.
-            float filt_lfo = std::exp2(lfo_out * lfo_d * 0.7f);
+            // Filter: static at cutoff while held; sweeps directionally on release.
+            // sweep_dir * 3 octaves at sweep_phase=1: +1→8x brighter, -1→1/8 darker.
             float eff_cutoff = std::clamp(
-                cutoff * filter_env_mult * filt_lfo, 20.0f, 20000.0f);
+                cutoff * std::exp2(sweep_dir * 3.0f * sweep_phase),
+                20.0f, 20000.0f);
             filter.setCutoff(eff_cutoff);
 
             // Oscillator
