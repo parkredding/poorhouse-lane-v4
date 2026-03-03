@@ -8,7 +8,7 @@
 //
 // Encoder banks (Shift toggles A / B):
 //   Enc 1:  A = Base Freq (30–8000 Hz)     B = LFO Depth (0–100%)
-//   Enc 2:  A = LFO Rate (0.1–20 Hz)       B = Release Time (10 ms–3 s)
+//   Enc 2:  A = LFO Rate (0.1–20 Hz)       B = Release Time (10 ms–5 s)
 //   Enc 3:  A = Filter Cutoff (20–20 kHz)   B = Filter Resonance (0–95%)
 //   Enc 4:  A = Delay Time (1 ms–1.0 s)     B = Delay Mix (0–100%)
 //   Enc 5:  A = Delay Feedback (0–95%)      B = Reverb Mix (0–100%)
@@ -80,10 +80,10 @@ static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
 
 // Pitch-delay-LFO link (secret mode: triple-click Shift to toggle)
 static std::atomic<bool>  g_delay_link{false};
-// LFO-pitch-envelope link (secret: triple-tap pitch switch to fall)
-static std::atomic<bool>  g_lfo_pitch_link{false};
-// Super drip reverb (secret: hold Shift + triple-tap fall)
-static std::atomic<bool>  g_super_drip{false};
+// LFO-pitch-envelope link (default on; secret: triple-tap pitch switch to fall to toggle)
+static std::atomic<bool>  g_lfo_pitch_link{true};
+// Super drip reverb (default on; secret: hold Shift + triple-tap fall to toggle)
+static std::atomic<bool>  g_super_drip{true};
 static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay (may be freq-scaled)
 static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (may be freq-scaled)
 
@@ -599,6 +599,7 @@ int main(int argc, char *argv[])
         delay.init(sr, 1.5f);
         delay.setRepitchRate(0.3f);
         reverb.init(sr);
+        reverb.setSuperDrip(true);
 
         attack_rate  = 1.0f / (0.005f * sr);           // ~5 ms
         release_rate = 1.0f / (0.050f * sr);            // ~50 ms
@@ -701,7 +702,7 @@ int main(int argc, char *argv[])
                 float step = std::pow(RELEASE_TIME_STEP, accel);
                 float rt = g_release_time.load();
                 rt *= (dir > 0) ? step : (1.0f / step);
-                rt = std::clamp(rt, 0.010f, 3.5f);
+                rt = std::clamp(rt, 0.010f, 5.0f);
                 g_release_time.store(rt);
                 printf("  [B] RELEASE  %.0f ms\n", rt * 1000.0f);
                 break;
