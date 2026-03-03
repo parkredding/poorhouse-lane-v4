@@ -502,21 +502,28 @@ EOF
 
 # --- build_project() ---------------------------------------------------------
 build_project() {
-    info "Building the project..."
-
-    cd "${SCRIPT_DIR}"
-    mkdir -p build
-    cd build
-    cmake ..
-
+    local build_dir="${SCRIPT_DIR}/build"
+    local make_jobs
     if [[ "$IS_PI_ZERO" == true ]]; then
-        make -j2
+        make_jobs=2
     else
-        make -j"$(nproc)"
+        make_jobs="$(nproc)"
+    fi
+
+    if [[ -f "${build_dir}/CMakeCache.txt" ]]; then
+        info "Existing build detected — updating..."
+        cd "${build_dir}"
+        make -j"${make_jobs}"
+    else
+        info "No existing build found — configuring and building..."
+        mkdir -p "${build_dir}"
+        cd "${build_dir}"
+        cmake ..
+        make -j"${make_jobs}"
     fi
 
     cd "${SCRIPT_DIR}"
-    success "Build complete: ${SCRIPT_DIR}/build/dubsiren"
+    success "Build complete: ${build_dir}/dubsiren"
 }
 
 # --- print_summary() ---------------------------------------------------------
