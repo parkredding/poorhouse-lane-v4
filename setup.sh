@@ -400,9 +400,7 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable hdmi-off.service
-    success "HDMI output will be disabled on boot."
+    success "HDMI-off service created."
 
     # --- 4. Disable screen blanking ------------------------------------------
     local cmdline_file=""
@@ -431,8 +429,9 @@ EOF
         # Set up writable data directory BEFORE enabling overlay.
         # After overlay, root is read-only. We mount the root block device
         # at /mnt/persist (read-write) and bind-mount the data dir from it.
-        local root_dev
+        local root_dev root_fstype
         root_dev=$(findmnt -n -o SOURCE /)
+        root_fstype=$(findmnt -n -o FSTYPE /)
 
         # Generate systemd-compatible mount unit names
         local persist_unit="mnt-persist.mount"
@@ -451,7 +450,7 @@ After=local-fs.target
 [Mount]
 What=${root_dev}
 Where=/mnt/persist
-Type=ext4
+Type=${root_fstype}
 Options=rw,noatime
 
 [Install]
@@ -475,19 +474,26 @@ Options=bind
 WantedBy=local-fs.target
 EOF
 
-        systemctl daemon-reload
+        success "Persist mount units created."
+    else
+        warn "raspi-config not found — skipping overlay filesystem."
+        warn "Install raspi-config or manually configure overlayFS for SD protection."
+    fi
+
+    # --- 6. Reload systemd and enable all kiosk units ------------------------
+    systemctl daemon-reload
+    systemctl enable hdmi-off.service
+    success "HDMI output will be disabled on boot."
+
+    if command -v raspi-config &>/dev/null; then
         systemctl enable "${persist_unit}" "${data_unit}"
         success "Writable data directory configured at ${INSTALL_DIR}/data/"
 
-        # Now enable the overlay FS
         raspi-config nonint enable_overlayfs
         BOOT_CHANGED=true
         success "Read-only overlay filesystem enabled."
         warn "To make changes later, disable overlay with:"
         warn "  sudo raspi-config nonint disable_overlayfs && sudo reboot"
-    else
-        warn "raspi-config not found — skipping overlay filesystem."
-        warn "Install raspi-config or manually configure overlayFS for SD protection."
     fi
 
     echo ""
