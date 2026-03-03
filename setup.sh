@@ -321,6 +321,7 @@ install_service() {
     cat > /etc/systemd/system/dubsiren.service << EOF
 [Unit]
 Description=Poorhouse Lane Dub Siren V4
+Wants=sound.target
 After=sound.target
 
 [Service]
@@ -329,6 +330,7 @@ ExecStart="${INSTALL_DIR}/build/dubsiren"
 WorkingDirectory="${INSTALL_DIR}"
 Restart=on-failure
 RestartSec=3
+StartLimitIntervalSec=0
 CPUSchedulingPolicy=fifo
 CPUSchedulingPriority=80
 Nice=-20
@@ -523,6 +525,7 @@ build_project() {
     fi
 
     cd "${SCRIPT_DIR}"
+    chown -R "${REAL_USER}:${REAL_USER}" "${build_dir}"
     success "Build complete: ${build_dir}/dubsiren"
 }
 

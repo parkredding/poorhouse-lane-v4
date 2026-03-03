@@ -653,7 +653,8 @@ int main(int argc, char *argv[])
 
         audio.start();
     } else {
-        fprintf(stderr, "Audio engine init failed\n");
+        fprintf(stderr, "Audio engine init failed — exiting so systemd can restart\n");
+        return 1;
     }
 
     // ── GPIO callbacks ──────────────────────────────────────────────
