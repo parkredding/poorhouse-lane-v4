@@ -64,6 +64,7 @@ void Reverb::SpringLine::reset()
 
 void Reverb::init(float sampleRate)
 {
+    sampleRate_ = sampleRate;
     float scale = sampleRate / 48000.0f;
 
     for (int i = 0; i < NUM_DISPERSION; i++) {
@@ -92,16 +93,46 @@ void Reverb::setSize(float size)
 {
     size_ = std::clamp(size, 0.0f, 1.0f);
 
-    // Feedback: 0.3 (tight) to 0.85 (long spring)
-    float fb = 0.3f + size_ * 0.55f;
-    for (auto& s : springs_) s.feedback = fb;
+    if (drip_) {
+        // Super drip: extreme chirp and long lush decay
+        for (auto& s : springs_)    s.feedback = 0.90f;
+        for (auto& d : dispersion_) d.coeff    = 0.85f;
+    } else {
+        // Feedback: 0.3 (tight) to 0.85 (long spring)
+        float fb = 0.3f + size_ * 0.55f;
+        for (auto& s : springs_) s.feedback = fb;
 
-    // Dispersion: more chirp at higher sizes (0.4 – 0.7)
-    float disp = 0.4f + size_ * 0.3f;
-    for (auto& d : dispersion_) d.coeff = disp;
+        // Dispersion: more chirp at higher sizes (0.4 – 0.7)
+        float disp = 0.4f + size_ * 0.3f;
+        for (auto& d : dispersion_) d.coeff = disp;
+    }
 }
 
 void Reverb::setMix(float mix) { mix_ = std::clamp(mix, 0.0f, 1.0f); }
+
+// ─── Super drip mode ────────────────────────────────────────────────
+//
+// Emulates the heavy, splashy spring reverb of Jamaican dub music.
+// High dispersion for metallic drip, high feedback for long decay,
+// darker LP filtering, and hotter input gain for spring saturation.
+
+static constexpr float DRIP_LP_HZ    = 2500.0f;  // darker than normal 4 kHz
+static constexpr float DRIP_IN_GAIN  = 0.50f;    // drive springs harder
+static constexpr float NORMAL_IN_GAIN = 0.35f;
+
+void Reverb::setSuperDrip(bool on)
+{
+    if (drip_ == on) return;
+    drip_ = on;
+
+    float lpHz = on ? DRIP_LP_HZ : SPRING_LP_HZ;
+    float lp   = 1.0f - std::exp(-2.0f * 3.14159265f * lpHz / sampleRate_);
+    for (auto& s : springs_) s.lpCoeff = lp;
+
+    inputGain_ = on ? DRIP_IN_GAIN : NORMAL_IN_GAIN;
+
+    setSize(size_);   // reapply feedback / dispersion with new drip state
+}
 
 void Reverb::reset()
 {
@@ -113,7 +144,7 @@ void Reverb::reset()
 float Reverb::process(float input)
 {
     // Dispersion chain — creates the spring chirp
-    float dispersed = input * INPUT_GAIN;
+    float dispersed = input * inputGain_;
     for (auto& d : dispersion_)
         dispersed = d.process(dispersed);
 

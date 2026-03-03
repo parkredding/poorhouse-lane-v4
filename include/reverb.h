@@ -17,6 +17,7 @@ public:
     void  init(float sampleRate);
     void  setSize(float size);      // 0 – 1.0
     void  setMix(float mix);        // 0 – 1.0
+    void  setSuperDrip(bool on);    // heavy dub spring reverb mode
     float process(float input);
     void  reset();
 
@@ -46,8 +47,11 @@ private:
 
     Allpass    dispersion_[NUM_DISPERSION];
     SpringLine springs_[NUM_SPRINGS];
-    float      size_ = 0.65f;
-    float      mix_  = 0.0f;
+    float      size_       = 0.65f;
+    float      mix_        = 0.0f;
+    bool       drip_       = false;
+    float      sampleRate_ = 48000.0f;
+    float      inputGain_  = 0.35f;
 
     // DC blocker state
     float dcIn_  = 0.0f;
