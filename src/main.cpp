@@ -29,6 +29,7 @@
 //   Rise / Off / Fall — sweeps pitch on trigger release
 //   Filter always darkens on release (DS71-style), independent of switch
 //   Triple-tap to Fall = toggle LFO-pitch link (LFO rate follows envelope)
+//   Shift + triple-tap to Fall = toggle super drip reverb (heavy dub spring)
 
 #include <cstdio>
 #include <cstring>
@@ -81,6 +82,8 @@ static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
 static std::atomic<bool>  g_delay_link{false};
 // LFO-pitch-envelope link (secret: triple-tap pitch switch to fall)
 static std::atomic<bool>  g_lfo_pitch_link{false};
+// Super drip reverb (secret: hold Shift + triple-tap fall)
+static std::atomic<bool>  g_super_drip{false};
 static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay (may be freq-scaled)
 static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (may be freq-scaled)
 
@@ -509,6 +512,7 @@ int main(int argc, char *argv[])
         delay.setRepitchRate(linked ? 0.6f : 0.3f);
         reverb.setSize(REVERB_SIZE);
         reverb.setMix(rev_mix);
+        reverb.setSuperDrip(g_super_drip.load(rlx));
 
         // Gate edge — envelopes start on release, reset on press
         if (gate && !prev_gate) {
@@ -800,15 +804,26 @@ int main(int argc, char *argv[])
         static const char *lbl[] = {"FALL", "OFF", "RISE"};
         printf("  PITCH-ENV  %s\n", lbl[pos + 1]);
 
-        // Secret mode: rapidly toggle to FALL 3 times to toggle
-        // LFO-pitch-envelope link
+        // Secret modes on triple-tap to FALL:
+        //   Shift held  → super drip reverb (heavy dub spring)
+        //   Shift free  → LFO-pitch-envelope link
         if (pos == -1) {
-            static MultiClickDetector det{3, 700, 800};
-            if (det.click()) {
-                bool lk = !g_lfo_pitch_link.load();
-                g_lfo_pitch_link.store(lk);
-                printf("  >>> LFO-PITCH LINK %s\n",
-                       lk ? "ON" : "OFF");
+            if (g_shift.load()) {
+                static MultiClickDetector det{3, 700, 800};
+                if (det.click()) {
+                    bool sd = !g_super_drip.load();
+                    g_super_drip.store(sd);
+                    printf("  >>> SUPER DRIP REVERB %s\n",
+                           sd ? "ON" : "OFF");
+                }
+            } else {
+                static MultiClickDetector det{3, 700, 800};
+                if (det.click()) {
+                    bool lk = !g_lfo_pitch_link.load();
+                    g_lfo_pitch_link.store(lk);
+                    printf("  >>> LFO-PITCH LINK %s\n",
+                           lk ? "ON" : "OFF");
+                }
             }
         }
     };
