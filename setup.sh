@@ -133,10 +133,22 @@ clone_if_needed() {
         return 0
     fi
 
-    info "Repository not found locally. Cloning to ${INSTALL_DIR}..."
-    git clone -b "${REPO_BRANCH}" "${REPO_URL}" "${INSTALL_DIR}"
-    chown -R "${REAL_USER}:${REAL_USER}" "${INSTALL_DIR}"
-    info "Re-running setup from cloned repo..."
+    if [[ -d "${INSTALL_DIR}/.git" ]]; then
+        # Existing install detected — pull latest updates
+        info "Existing install detected at ${INSTALL_DIR}. Updating..."
+        cd "${INSTALL_DIR}"
+        sudo -u "${REAL_USER}" git fetch origin "${REPO_BRANCH}"
+        sudo -u "${REAL_USER}" git checkout "${REPO_BRANCH}"
+        sudo -u "${REAL_USER}" git reset --hard "origin/${REPO_BRANCH}"
+        cd - > /dev/null
+        success "Repository updated."
+    else
+        info "Repository not found locally. Cloning to ${INSTALL_DIR}..."
+        git clone -b "${REPO_BRANCH}" "${REPO_URL}" "${INSTALL_DIR}"
+        chown -R "${REAL_USER}:${REAL_USER}" "${INSTALL_DIR}"
+    fi
+
+    info "Re-running setup from ${INSTALL_DIR}..."
     exec bash "${INSTALL_DIR}/setup.sh"
 }
 
