@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -65,13 +66,24 @@ bool AudioEngine::init(const std::string& device, int sampleRate,
 #ifdef HAS_ALSA
     int err;
 
-    err = snd_pcm_open(&pimpl_->pcm, device.c_str(),
-                       SND_PCM_STREAM_PLAYBACK, 0);
-    if (err < 0) {
-        fprintf(stderr, "ALSA: cannot open '%s': %s\n",
-                device.c_str(), snd_strerror(err));
-        return false;
+    // Retry opening the ALSA device — at boot the I2S DAC module may
+    // still be loading when the service starts.
+    static constexpr int  MAX_RETRIES    = 10;
+    static constexpr int  RETRY_DELAY_MS = 1000;
+
+    for (int attempt = 1; attempt <= MAX_RETRIES; ++attempt) {
+        err = snd_pcm_open(&pimpl_->pcm, device.c_str(),
+                           SND_PCM_STREAM_PLAYBACK, 0);
+        if (err == 0) break;
+
+        fprintf(stderr, "ALSA: cannot open '%s': %s (attempt %d/%d)\n",
+                device.c_str(), snd_strerror(err), attempt, MAX_RETRIES);
+
+        if (attempt < MAX_RETRIES)
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(RETRY_DELAY_MS));
     }
+    if (err < 0) return false;
 
     // ── HW params ──────────────────────────────────────────────────
     snd_pcm_hw_params_t *hw;
