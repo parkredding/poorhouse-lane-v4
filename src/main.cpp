@@ -45,6 +45,9 @@
 
 #include <sys/stat.h>
 #include <unistd.h>
+#include <pwd.h>
+#include <fcntl.h>
+#include <cerrno>
 
 #include "gpio_hw.h"
 #include "oscillator.h"
@@ -326,9 +329,17 @@ static const char* preset_file_path()
     if (path[0]) return path;
 
     const char* home = getenv("HOME");
-    if (!home) home = "/tmp";
+    if (!home || home[0] == '\0') {
+        struct passwd* pw = getpwuid(getuid());
+        if (pw) home = pw->pw_dir;
+    }
+    if (!home || home[0] == '\0') home = "/tmp";
+    snprintf(path, sizeof(path), "%s/.config", home);
+    if (mkdir(path, 0755) != 0 && errno != EEXIST)
+        fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
     snprintf(path, sizeof(path), "%s/.config/dubsiren", home);
-    mkdir(path, 0755);
+    if (mkdir(path, 0755) != 0 && errno != EEXIST)
+        fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
     snprintf(path, sizeof(path), "%s/.config/dubsiren/user_presets.txt", home);
     return path;
 }
@@ -393,6 +404,16 @@ static void save_user_presets()
     fsync(fileno(f));
     fclose(f);
     rename(tmp, path);
+
+    // Sync the directory so the rename is durable across power loss
+    char dir[512];
+    snprintf(dir, sizeof(dir), "%s", path);
+    char* slash = strrchr(dir, '/');
+    if (slash) {
+        *slash = '\0';
+        int dfd = open(dir, O_RDONLY);
+        if (dfd >= 0) { fsync(dfd); close(dfd); }
+    }
 }
 
 static void load_user_presets()

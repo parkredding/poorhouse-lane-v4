@@ -337,6 +337,7 @@ Nice=-20
 LimitRTPRIO=99
 LimitMEMLOCK=infinity
 User=${REAL_USER}
+Environment=HOME=${REAL_HOME}
 
 [Install]
 WantedBy=multi-user.target
