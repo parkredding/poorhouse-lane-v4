@@ -96,7 +96,9 @@ bool GpioHw::init(bool simulate, const HwCallbacks& cb)
         printf("  ! @ # $ %%    Encoder 1-5 CCW\n");
         printf("  z / Z         Trigger   press / release\n");
         printf("  x / X         Shift     press / release\n");
-        printf("  c / C         Waveform  press / release\n");
+        printf("  c / C         Preset    press / release\n");
+        printf("  v             Save to user preset (long-press shortcut)\n");
+        printf("  b             Toggle factory / user bank\n");
         printf("  a / s / d     Pitch envelope  Rise / Off / Fall\n\n");
         return true;
     }
@@ -257,6 +259,10 @@ void GpioHw::poll()
             case 'C': if (cb.on_button) cb.on_button(2, false); return;
             default: break;
         }
+        // Preset shortcuts (simulate long-press / double-click)
+        if (ch == 'v') { if (cb.on_save_preset) cb.on_save_preset(); return; }
+        if (ch == 'b') { if (cb.on_toggle_bank) cb.on_toggle_bank(); return; }
+
         // Pitch switch
         switch (ch) {
             case 'a': if (cb.on_pitch_switch) cb.on_pitch_switch(+1); return;

@@ -35,6 +35,8 @@ struct HwCallbacks {
     std::function<void(int encoder_id, int direction)> on_encoder;      // +1 CW, -1 CCW
     std::function<void(int button_id, bool pressed)>   on_button;
     std::function<void(int position)>                  on_pitch_switch; // -1 / 0 / +1
+    std::function<void()>                              on_save_preset;  // keyboard shortcut
+    std::function<void()>                              on_toggle_bank;  // keyboard shortcut
 };
 
 // ─── Hardware abstraction ───────────────────────────────────────────
