@@ -111,13 +111,15 @@ bool GpioHw::init(bool simulate, const HwCallbacks& cb)
         return false;
     }
 
-    // Encoder line settings: pull-up, active-low, both edges, 1 ms debounce
+    // Encoder line settings: pull-up, active-low, both edges, no debounce
+    // (Encoders produce clean quadrature signals; the ENC_DIR table discards
+    //  invalid transitions. Debounce silently drops events from marginal
+    //  connections — a common cause of encoders only working when pressed in.)
     auto *enc_set = gpiod_line_settings_new();
     gpiod_line_settings_set_direction(enc_set, GPIOD_LINE_DIRECTION_INPUT);
     gpiod_line_settings_set_bias(enc_set, GPIOD_LINE_BIAS_PULL_UP);
     gpiod_line_settings_set_active_low(enc_set, true);
     gpiod_line_settings_set_edge_detection(enc_set, GPIOD_LINE_EDGE_BOTH);
-    gpiod_line_settings_set_debounce_period_us(enc_set, 1000);
 
     // Button / switch settings: same but 5 ms debounce
     auto *btn_set = gpiod_line_settings_new();
