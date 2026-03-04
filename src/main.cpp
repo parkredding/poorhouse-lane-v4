@@ -333,23 +333,25 @@ static const char* preset_file_path()
     //   /home/<user>/dubsiren/build/dubsiren  →  /home/<user>/dubsiren
     // The data/ directory under install dir is bind-mounted from the real
     // disk when overlayFS is active, so writes here survive power loss.
-    char exe[PATH_MAX - 64];  // leave room for suffix in path[]
-    ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-    if (len > 0) {
-        exe[len] = '\0';
+    // Buffer leaves room for the longest suffix ("/data/presets/user_presets.txt")
+    static constexpr size_t SUFFIX_MAX = 48;
+    char base[PATH_MAX - SUFFIX_MAX];
+    ssize_t len = readlink("/proc/self/exe", base, sizeof(base) - 1);
+    if (len > 0 && len < (ssize_t)sizeof(base) - 1) {
+        base[len] = '\0';
         // Strip "/build/dubsiren" (go up two path components)
-        char* slash = strrchr(exe, '/');         // strip binary name
+        char* slash = strrchr(base, '/');         // strip binary name
         if (slash) *slash = '\0';
-        slash = strrchr(exe, '/');               // strip "build"
+        slash = strrchr(base, '/');               // strip "build"
         if (slash) *slash = '\0';
 
-        snprintf(path, sizeof(path), "%s/data", exe);
+        snprintf(path, sizeof(path), "%s/data", base);
         if (mkdir(path, 0755) != 0 && errno != EEXIST)
             fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
-        snprintf(path, sizeof(path), "%s/data/presets", exe);
+        snprintf(path, sizeof(path), "%s/data/presets", base);
         if (mkdir(path, 0755) != 0 && errno != EEXIST)
             fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
-        snprintf(path, sizeof(path), "%s/data/presets/user_presets.txt", exe);
+        snprintf(path, sizeof(path), "%s/data/presets/user_presets.txt", base);
         printf("  Preset file: %s\n", path);
         return path;
     }
