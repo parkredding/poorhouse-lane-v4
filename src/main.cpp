@@ -459,6 +459,14 @@ static void load_user_presets()
                        &u.reverb_mix, &u.release_time, &u.sweep_dir,
                        &dl, &lpl, &sd);
         if (n == 17) {
+            // Validate enum indices to prevent out-of-bounds access
+            if (u.waveform < 0 || u.waveform >= static_cast<int>(Waveform::COUNT) ||
+                u.lfo_wave < 0 || u.lfo_wave >= static_cast<int>(LfoWave::COUNT) ||
+                u.sweep_dir < -1 || u.sweep_dir > 1) {
+                fprintf(stderr, "  !!! Preset %d has invalid values — skipping\n", i);
+                u.saved = false;
+                continue;
+            }
             u.saved         = (saved != 0);
             u.delay_link    = (dl != 0);
             u.lfo_pitch_link= (lpl != 0);
@@ -544,6 +552,24 @@ static void apply_preset(int idx)
     g_sweep_dir.store(p.sweep_dir);
 
     update_link_eff();
+}
+
+// ─── Toggle factory/user bank ─────────────────────────────────────────
+
+static void toggle_bank()
+{
+    bool ub = !g_user_bank.load();
+    g_user_bank.store(ub);
+    int idx = g_preset.load();
+    if (ub) {
+        apply_user_preset(g_user_presets[idx]);
+        printf("  BANK: USER  slot %d%s\n",
+               idx + 1,
+               g_user_presets[idx].saved ? "" : "  (factory copy)");
+    } else {
+        apply_preset(idx);
+        printf("  BANK: FACTORY  \"%s\"\n", PRESETS[idx].name);
+    }
 }
 
 // ─── Cycle to next preset in current bank ────────────────────────────
@@ -1192,20 +1218,7 @@ int main(int argc, char *argv[])
                lfo_wave_name(g_lfo_waveform.load()));
     };
 
-    cb.on_toggle_bank = []() {
-        bool ub = !g_user_bank.load();
-        g_user_bank.store(ub);
-        int idx = g_preset.load();
-        if (ub) {
-            apply_user_preset(g_user_presets[idx]);
-            printf("  BANK: USER  slot %d%s\n",
-                   idx + 1,
-                   g_user_presets[idx].saved ? "" : "  (factory copy)");
-        } else {
-            apply_preset(idx);
-            printf("  BANK: FACTORY  \"%s\"\n", PRESETS[idx].name);
-        }
-    };
+    cb.on_toggle_bank = []() { toggle_bank(); };
 
     // ── Initialise GPIO / simulate ──────────────────────────────────
 
@@ -1255,22 +1268,7 @@ int main(int argc, char *argv[])
             if (elapsed > 350) {
                 g_shift_dblclick_pending.store(false);
                 g_shift_clicks = 0;
-
-                // Toggle factory/user bank
-                bool ub = !g_user_bank.load();
-                g_user_bank.store(ub);
-                int idx = g_preset.load();
-                if (ub) {
-                    apply_user_preset(g_user_presets[idx]);
-                    printf("  BANK: USER  slot %d%s\n",
-                           idx + 1,
-                           g_user_presets[idx].saved
-                               ? "" : "  (factory copy)");
-                } else {
-                    apply_preset(idx);
-                    printf("  BANK: FACTORY  \"%s\"\n",
-                           PRESETS[idx].name);
-                }
+                toggle_bank();
             }
         }
     }
