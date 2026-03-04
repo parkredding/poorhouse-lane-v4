@@ -48,6 +48,7 @@
 #include <pwd.h>
 #include <fcntl.h>
 #include <cerrno>
+#include <climits>
 
 #include "gpio_hw.h"
 #include "oscillator.h"
@@ -325,9 +326,37 @@ static std::chrono::steady_clock::time_point g_shift_first_click{};
 
 static const char* preset_file_path()
 {
-    static char path[512] = {};
+    static char path[PATH_MAX] = {};
     if (path[0]) return path;
 
+    // Resolve install dir from executable path:
+    //   /home/<user>/dubsiren/build/dubsiren  →  /home/<user>/dubsiren
+    // The data/ directory under install dir is bind-mounted from the real
+    // disk when overlayFS is active, so writes here survive power loss.
+    // Buffer leaves room for the longest suffix ("/data/presets/user_presets.txt")
+    static constexpr size_t SUFFIX_MAX = 48;
+    char base[PATH_MAX - SUFFIX_MAX];
+    ssize_t len = readlink("/proc/self/exe", base, sizeof(base) - 1);
+    if (len > 0 && len < (ssize_t)sizeof(base) - 1) {
+        base[len] = '\0';
+        // Strip "/build/dubsiren" (go up two path components)
+        char* slash = strrchr(base, '/');         // strip binary name
+        if (slash) *slash = '\0';
+        slash = strrchr(base, '/');               // strip "build"
+        if (slash) *slash = '\0';
+
+        snprintf(path, sizeof(path), "%s/data", base);
+        if (mkdir(path, 0755) != 0 && errno != EEXIST)
+            fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
+        snprintf(path, sizeof(path), "%s/data/presets", base);
+        if (mkdir(path, 0755) != 0 && errno != EEXIST)
+            fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
+        snprintf(path, sizeof(path), "%s/data/presets/user_presets.txt", base);
+        printf("  Preset file: %s\n", path);
+        return path;
+    }
+
+    // Fallback: use HOME-based path (non-overlay systems / development)
     const char* home = getenv("HOME");
     if (!home || home[0] == '\0') {
         struct passwd* pw = getpwuid(getuid());
@@ -341,6 +370,7 @@ static const char* preset_file_path()
     if (mkdir(path, 0755) != 0 && errno != EEXIST)
         fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
     snprintf(path, sizeof(path), "%s/.config/dubsiren/user_presets.txt", home);
+    printf("  Preset file: %s (HOME fallback)\n", path);
     return path;
 }
 
@@ -486,6 +516,37 @@ static void init_user_presets()
         u.delay_link    = false;
         u.lfo_pitch_link= true;
         u.super_drip    = true;
+    }
+
+    // Migrate from old ~/.config/dubsiren/ location if new path has no file
+    const char* new_path = preset_file_path();
+    if (access(new_path, F_OK) != 0) {
+        const char* home = getenv("HOME");
+        if (!home || home[0] == '\0') {
+            struct passwd* pw = getpwuid(getuid());
+            if (pw) home = pw->pw_dir;
+        }
+        if (home && home[0] != '\0') {
+            char old_path[PATH_MAX];
+            snprintf(old_path, sizeof(old_path),
+                     "%s/.config/dubsiren/user_presets.txt", home);
+            if (access(old_path, R_OK) == 0) {
+                // Copy old file to new persistent location
+                FILE* src = fopen(old_path, "r");
+                FILE* dst = fopen(new_path, "w");
+                if (src && dst) {
+                    char buf[4096];
+                    size_t n;
+                    while ((n = fread(buf, 1, sizeof(buf), src)) > 0)
+                        fwrite(buf, 1, n, dst);
+                    fflush(dst);
+                    fsync(fileno(dst));
+                    printf("  Migrated presets from %s\n", old_path);
+                }
+                if (src) fclose(src);
+                if (dst) fclose(dst);
+            }
+        }
     }
 
     // Override with saved data from disk
