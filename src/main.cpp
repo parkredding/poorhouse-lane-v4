@@ -146,26 +146,26 @@ struct DubPreset {
 static constexpr int NUM_PRESETS = 5;
 
 static const DubPreset PRESETS[NUM_PRESETS] = {
-    //  ── 1. Lickshot ───────────────────────────────────────────────
-    //  The classic laser-gun sound.  Square wave with fast triangle
-    //  LFO sweeping pitch and filter together.  Lower cutoff lets the
-    //  filter sweep open and close audibly.  Punchy attack, spring
-    //  reverb and tape echo for sound-system depth.
+    //  ── 1. Slow Wail ──────────────────────────────────────────────
+    //  Classic slow siren wail — also the boot sound.  Sine LFO at
+    //  low rate for a long, smooth sweep.  Sawtooth oscillator for a
+    //  richer harmonic spectrum.  Long 2-second release lets the sound
+    //  fade out slowly with filter sweeping down.
     {
-        "Lickshot",
-        1,              // Square
-        1,              // LFO: Triangle
-        800.0f,         // freq  (mid tone)
-        8.0f,           // lfo_rate  (fast sweep)
-        0.80f,          // lfo_depth  (deep — drives filter sweep hard)
-        3500.0f,        // filter_cutoff  (low enough for audible sweep)
-        0.40f,          // filter_reso  (squelchy bite on each sweep)
-        0.300f,         // delay_time  (dub echo)
-        0.55f,          // delay_feedback  (long repeats)
-        0.40f,          // delay_mix  (prominent echo)
-        0.35f,          // reverb_mix  (spring tank)
-        0.350f,         // release_time  (medium tail — filter sweep audible)
-        -1.0f,          // sweep_dir  (Down — filter darkens into delay on release)
+        "Slow Wail",
+        2,              // Saw
+        0,              // LFO: Sine
+        550.0f,         // freq  (warm mid, not too high)
+        0.1f,           // lfo_rate  (very slow, 10-second sweep)
+        1.00f,          // lfo_depth  (full 100% sweep)
+        2500.0f,        // filter_cutoff  (warm, sweep audible)
+        0.35f,          // filter_reso  (gentle wah)
+        0.400f,         // delay_time  (dub echo spacing)
+        0.60f,          // delay_feedback  (long trails)
+        0.40f,          // delay_mix  (present echo)
+        0.45f,          // reverb_mix  (spring wash)
+        2.000f,         // release_time  (long 2-second fade — boot signature)
+        -1.0f,          // sweep_dir  (Down — canonical dub waaah on release)
     },
     //  ── 2. Machine Gun ────────────────────────────────────────────
     //  Rapid-fire stutter.  Square LFO chops the pitch and filter
@@ -188,26 +188,26 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.500f,         // release_time  (longer tail — stutter fades through filter)
         -1.0f,          // sweep_dir  (Down — filter closes as stutter fades out)
     },
-    //  ── 3. Boot Sound ─────────────────────────────────────────────
-    //  Startup chime — slow siren wail.  Sine LFO at low rate for a
-    //  long, smooth sweep.  Sawtooth oscillator for a richer harmonic
-    //  spectrum.  Long 2-second release lets the sound fade out slowly
-    //  with filter sweeping down — the signature power-on voice.
+    //  ── 3. Lickshot ───────────────────────────────────────────────
+    //  The classic laser-gun sound.  Square wave with fast triangle
+    //  LFO sweeping pitch and filter together.  Lower cutoff lets the
+    //  filter sweep open and close audibly.  Punchy attack, spring
+    //  reverb and tape echo for sound-system depth.
     {
-        "Boot Sound",
-        2,              // Saw
-        0,              // LFO: Sine
-        550.0f,         // freq  (warm mid, not too high)
-        0.1f,           // lfo_rate  (very slow, 10-second sweep)
-        1.00f,          // lfo_depth  (full 100% sweep)
-        2500.0f,        // filter_cutoff  (warm, sweep audible)
-        0.35f,          // filter_reso  (gentle wah)
-        0.400f,         // delay_time  (dub echo spacing)
-        0.60f,          // delay_feedback  (long trails)
-        0.40f,          // delay_mix  (present echo)
-        0.45f,          // reverb_mix  (spring wash)
-        2.000f,         // release_time  (long 2-second fade — boot signature)
-        -1.0f,          // sweep_dir  (Down — canonical dub waaah on release)
+        "Lickshot",
+        1,              // Square
+        1,              // LFO: Triangle
+        800.0f,         // freq  (mid tone)
+        8.0f,           // lfo_rate  (fast sweep)
+        0.80f,          // lfo_depth  (deep — drives filter sweep hard)
+        3500.0f,        // filter_cutoff  (low enough for audible sweep)
+        0.40f,          // filter_reso  (squelchy bite on each sweep)
+        0.300f,         // delay_time  (dub echo)
+        0.55f,          // delay_feedback  (long repeats)
+        0.40f,          // delay_mix  (prominent echo)
+        0.35f,          // reverb_mix  (spring tank)
+        0.350f,         // release_time  (medium tail — filter sweep audible)
+        -1.0f,          // sweep_dir  (Down — filter darkens into delay on release)
     },
     //  ── 4. Droppa ───────────────────────────────────────────────────
     //  Descending siren wail.  Ramp-down LFO pulls pitch and filter
