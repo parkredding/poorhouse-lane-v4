@@ -1072,7 +1072,7 @@ int main(int argc, char *argv[])
             //   Shift+press:  cycle LFO waveform (immediate, unchanged)
             //   Short press:  cycle preset (deferred — fires after 350 ms if no 2nd click)
             //   Double-click: toggle factory/user bank
-            //   Long-press:   save current state to user bank slot
+            //   Long-press (3s): save current state to user bank slot
 
             static auto btn2_press_time = std::chrono::steady_clock::time_point{};
             static bool btn2_shift_at_press = false;
@@ -1096,7 +1096,7 @@ int main(int argc, char *argv[])
                         std::chrono::milliseconds>(
                             now - btn2_press_time).count();
 
-                    if (hold_ms >= 1500) {
+                    if (hold_ms >= 3000) {
                         // ── Long press: save to user bank ──
                         int idx = g_preset.load();
                         g_user_presets[idx] = snapshot_current();
