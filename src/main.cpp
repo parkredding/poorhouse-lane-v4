@@ -350,9 +350,11 @@ struct UserPreset {
 static UserPreset g_user_presets[NUM_USER_PRESETS];
 static std::atomic<bool> g_user_bank{false};  // false=factory, true=user
 
-// Pending single-click state for double-click detection on Preset button
-static std::atomic<bool> g_preset_click_pending{false};
-static std::chrono::steady_clock::time_point g_preset_click_time{};
+// Pending double-click state for bank toggle on Shift button
+static std::atomic<bool> g_shift_dblclick_pending{false};
+static std::chrono::steady_clock::time_point g_shift_dblclick_time{};
+static int g_shift_clicks = 0;
+static std::chrono::steady_clock::time_point g_shift_first_click{};
 
 // ─── Preset file path ────────────────────────────────────────────────
 
@@ -1044,23 +1046,49 @@ int main(int argc, char *argv[])
                    pressed ? "GATE ON" : "GATE OFF");
             break;
         case 1: {
-            // Shift → bank select (+ triple-click → linked delay)
+            // Shift → bank select
+            //   Double-click: toggle factory/user bank
+            //   Triple-click: toggle pitch-delay-LFO link
             g_shift.store(pressed);
 
             if (pressed) {
-                static MultiClickDetector det{3, 500, 600};
-                if (det.click()) {
-                    bool lk = !g_delay_link.load();
-                    g_delay_link.store(lk);
-                    update_link_eff();
-                    if (lk) {
-                        printf("  >>> PITCH-DELAY-LFO LINK ON"
-                               "  (dly %.0f ms  lfo %.1f Hz)\n",
-                               g_delay_time_eff.load() * 1000.0f,
-                               g_lfo_rate_eff.load());
-                    } else {
-                        printf("  >>> PITCH-DELAY-LFO LINK OFF\n");
+                auto now = std::chrono::steady_clock::now();
+
+                // Reset if too long since first click
+                if (g_shift_clicks > 0) {
+                    auto since = std::chrono::duration_cast<
+                        std::chrono::milliseconds>(
+                            now - g_shift_first_click).count();
+                    if (since > 600) g_shift_clicks = 0;
+                }
+
+                if (g_shift_clicks == 0) g_shift_first_click = now;
+                g_shift_clicks++;
+
+                if (g_shift_clicks >= 3) {
+                    // Triple-click: toggle link (cancels pending double)
+                    g_shift_dblclick_pending.store(false);
+                    auto span = std::chrono::duration_cast<
+                        std::chrono::milliseconds>(
+                            now - g_shift_first_click).count();
+                    g_shift_clicks = 0;
+                    if (span < 500) {
+                        bool lk = !g_delay_link.load();
+                        g_delay_link.store(lk);
+                        update_link_eff();
+                        if (lk) {
+                            printf("  >>> PITCH-DELAY-LFO LINK ON"
+                                   "  (dly %.0f ms  lfo %.1f Hz)\n",
+                                   g_delay_time_eff.load() * 1000.0f,
+                                   g_lfo_rate_eff.load());
+                        } else {
+                            printf("  >>> PITCH-DELAY-LFO LINK OFF\n");
+                        }
                     }
+                } else if (g_shift_clicks == 2) {
+                    // Pending double-click (may become triple)
+                    g_shift_dblclick_pending.store(true);
+                    g_shift_dblclick_time = now;
                 }
             }
 
@@ -1068,10 +1096,9 @@ int main(int argc, char *argv[])
             break;
         }
         case 2: {
-            // Preset button: cycle, save (long-press), bank toggle (double-click)
-            //   Shift+press:  cycle LFO waveform (immediate, unchanged)
-            //   Short press:  cycle preset (deferred — fires after 350 ms if no 2nd click)
-            //   Double-click: toggle factory/user bank
+            // Preset button: cycle presets, save (long-press)
+            //   Shift+press:  cycle LFO waveform (immediate)
+            //   Short press:  cycle preset (immediate)
             //   Long-press (3s): save current state to user bank slot
 
             static auto btn2_press_time = std::chrono::steady_clock::time_point{};
@@ -1112,42 +1139,8 @@ int main(int argc, char *argv[])
                                waveform_name(g_waveform.load()),
                                lfo_wave_name(g_lfo_waveform.load()));
                     } else {
-                        // ── Short press: double-click or cycle ──
-                        // Cancel any pending single-click and check for double
-                        if (g_preset_click_pending.load()) {
-                            auto gap = std::chrono::duration_cast<
-                                std::chrono::milliseconds>(
-                                    now - g_preset_click_time).count();
-                            g_preset_click_pending.store(false);
-
-                            if (gap < 350) {
-                                // Double-click: toggle bank
-                                bool ub = !g_user_bank.load();
-                                g_user_bank.store(ub);
-
-                                int idx = g_preset.load();
-                                if (ub) {
-                                    apply_user_preset(g_user_presets[idx]);
-                                    printf("  BANK: USER  slot %d%s\n",
-                                           idx + 1,
-                                           g_user_presets[idx].saved
-                                               ? "" : "  (factory copy)");
-                                } else {
-                                    apply_preset(idx);
-                                    const DubPreset& p = PRESETS[idx];
-                                    printf("  BANK: FACTORY  \"%s\"\n",
-                                           p.name);
-                                }
-                                break;
-                            }
-                            // Gap too long — the old pending click fires
-                            // as a cycle below, then this click becomes
-                            // a new pending click.
-                        }
-
-                        // Register as pending single-click
-                        g_preset_click_pending.store(true);
-                        g_preset_click_time = now;
+                        // ── Short press: cycle preset immediately ──
+                        cycle_preset();
                     }
                 }
             }
@@ -1252,16 +1245,32 @@ int main(int argc, char *argv[])
     while (g_running) {
         hw.poll();
 
-        // Resolve pending preset single-click (fires 350 ms after
-        // a short press if no second click arrives for double-click)
-        if (g_preset_click_pending.load()) {
+        // Resolve pending shift double-click (fires 350 ms after
+        // 2nd press if no 3rd click arrives for triple-click)
+        if (g_shift_dblclick_pending.load()) {
             auto elapsed = std::chrono::duration_cast<
                 std::chrono::milliseconds>(
                     std::chrono::steady_clock::now()
-                    - g_preset_click_time).count();
+                    - g_shift_dblclick_time).count();
             if (elapsed > 350) {
-                g_preset_click_pending.store(false);
-                cycle_preset();
+                g_shift_dblclick_pending.store(false);
+                g_shift_clicks = 0;
+
+                // Toggle factory/user bank
+                bool ub = !g_user_bank.load();
+                g_user_bank.store(ub);
+                int idx = g_preset.load();
+                if (ub) {
+                    apply_user_preset(g_user_presets[idx]);
+                    printf("  BANK: USER  slot %d%s\n",
+                           idx + 1,
+                           g_user_presets[idx].saved
+                               ? "" : "  (factory copy)");
+                } else {
+                    apply_preset(idx);
+                    printf("  BANK: FACTORY  \"%s\"\n",
+                           PRESETS[idx].name);
+                }
             }
         }
     }

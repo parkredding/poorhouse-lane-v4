@@ -18,7 +18,7 @@ constexpr EncoderPins ENCODERS[] = {
 constexpr int NUM_ENCODERS = 5;
 
 // Momentary buttons (active LOW with pull-up)
-constexpr unsigned BUTTONS[] = {4, 15, 5};  // Trigger, Shift, Waveform
+constexpr unsigned BUTTONS[] = {4, 15, 5};  // Trigger, Shift (dbl-click=bank), Preset
 constexpr int NUM_BUTTONS = 3;
 
 // 3-position pitch-envelope switch (active LOW)
