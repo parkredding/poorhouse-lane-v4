@@ -318,11 +318,15 @@ create_data_dirs() {
 install_service() {
     info "Installing systemd service..."
 
+    local data_mount_unit
+    data_mount_unit="$(systemd-escape --path "${INSTALL_DIR}/data").mount"
+
     cat > /etc/systemd/system/dubsiren.service << EOF
 [Unit]
 Description=Poorhouse Lane Dub Siren V4
 Wants=sound.target
-After=sound.target
+After=sound.target ${data_mount_unit}
+Wants=${data_mount_unit}
 
 [Service]
 Type=simple
