@@ -150,10 +150,52 @@ struct DubPreset {
     float       sweep_dir;      // filter sweep on release: -1=Down, 0=Flat, +1=Up
 };
 
-static constexpr int NUM_PRESETS = 8;
+static constexpr int NUM_PRESETS = 5;
 
 static const DubPreset PRESETS[NUM_PRESETS] = {
-    //  ── 1. Lickshot ───────────────────────────────────────────────
+    //  ── 1. Slow Wail ──────────────────────────────────────────────
+    //  Classic slow siren wail — also the boot sound.  Sine LFO at
+    //  low rate for a long, smooth sweep.  Sawtooth oscillator for a
+    //  richer harmonic spectrum.  Long 2-second release lets the sound
+    //  fade out slowly with filter sweeping down.
+    {
+        "Slow Wail",
+        2,              // Saw
+        0,              // LFO: Sine
+        550.0f,         // freq  (warm mid, not too high)
+        0.1f,           // lfo_rate  (very slow, 10-second sweep)
+        1.00f,          // lfo_depth  (full 100% sweep)
+        2500.0f,        // filter_cutoff  (warm, sweep audible)
+        0.35f,          // filter_reso  (gentle wah)
+        0.400f,         // delay_time  (dub echo spacing)
+        0.60f,          // delay_feedback  (long trails)
+        0.40f,          // delay_mix  (present echo)
+        0.45f,          // reverb_mix  (spring wash)
+        2.000f,         // release_time  (long 2-second fade — boot signature)
+        -1.0f,          // sweep_dir  (Down — canonical dub waaah on release)
+    },
+    //  ── 2. Machine Gun ────────────────────────────────────────────
+    //  Rapid-fire stutter.  Square LFO chops the pitch and filter
+    //  between high-bright and low-dark for aggressive on/off bursts.
+    //  Tight delay stutter, longer release lets the stuttered echoes
+    //  ring out with filter sweep closing them down.
+    {
+        "Machine Gun",
+        1,              // Square
+        2,              // LFO: Square
+        1000.0f,        // freq  (punchy mid-high)
+        14.0f,          // lfo_rate  (rapid fire)
+        0.85f,          // lfo_depth  (extreme for hard cuts)
+        4000.0f,        // filter_cutoff  (filter chops with pitch)
+        0.30f,          // filter_reso  (adds bite to each burst)
+        0.180f,         // delay_time  (tight stutter echo)
+        0.60f,          // delay_feedback  (self-reinforcing bursts)
+        0.40f,          // delay_mix  (heavy stutter)
+        0.30f,          // reverb_mix  (room around the bursts)
+        0.500f,         // release_time  (longer tail — stutter fades through filter)
+        -1.0f,          // sweep_dir  (Down — filter closes as stutter fades out)
+    },
+    //  ── 3. Lickshot ───────────────────────────────────────────────
     //  The classic laser-gun sound.  Square wave with fast triangle
     //  LFO sweeping pitch and filter together.  Lower cutoff lets the
     //  filter sweep open and close audibly.  Punchy attack, spring
@@ -171,93 +213,14 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.55f,          // delay_feedback  (long repeats)
         0.40f,          // delay_mix  (prominent echo)
         0.35f,          // reverb_mix  (spring tank)
-        0.200f,         // release_time  (punchy but with tail)
-        0.0f,           // sweep_dir  (Flat — LFO already drives all filter motion)
+        0.350f,         // release_time  (medium tail — filter sweep audible)
+        -1.0f,          // sweep_dir  (Down — filter darkens into delay on release)
     },
-    //  ── 2. Earthshaker ────────────────────────────────────────────
-    //  Sub-bass siren deep in the chest.  Square wave at 90 Hz with a
-    //  slow sine LFO — the pitch barely moves, the whole room moves.
-    //  Heavy spring reverb and long delay fill the space below.
-    {
-        "Earthshaker",
-        1,              // Square
-        0,              // LFO: Sine
-        90.0f,          // freq  (sub-bass, below normal vocal range)
-        0.25f,          // lfo_rate  (very slow, tidal swell)
-        0.55f,          // lfo_depth  (moderate — stays in sub territory)
-        900.0f,         // filter_cutoff  (dark and warm)
-        0.20f,          // filter_reso  (subtle — sub freqs need clean headroom)
-        0.600f,         // delay_time  (wide spacing for sub weight)
-        0.65f,          // delay_feedback  (long deep trails)
-        0.50f,          // delay_mix  (heavy echo)
-        0.60f,          // reverb_mix  (maximum spring wash)
-        1.000f,         // release_time  (slow fade, sub hangs long)
-        -1.0f,          // sweep_dir  (Down — filter closes as the sub fades)
-    },
-    //  ── 3. Slow Wail ────────────────────────────────────────────
-    //  Classic slow siren wail.  Sine LFO at low rate for a long,
-    //  smooth sweep.  Sawtooth oscillator for a richer harmonic
-    //  spectrum.  Delay and reverb give it sound-system depth.
-    {
-        "Slow Wail",
-        2,              // Saw
-        0,              // LFO: Sine
-        550.0f,         // freq  (warm mid, not too high)
-        0.1f,           // lfo_rate  (very slow, 10-second sweep)
-        1.00f,          // lfo_depth  (full 100% sweep)
-        2500.0f,        // filter_cutoff  (warm, sweep audible)
-        0.35f,          // filter_reso  (gentle wah)
-        0.400f,         // delay_time  (dub echo spacing)
-        0.60f,          // delay_feedback  (long trails)
-        0.40f,          // delay_mix  (present echo)
-        0.45f,          // reverb_mix  (spring wash)
-        0.600f,         // release_time  (long fade into FX)
-        -1.0f,          // sweep_dir  (Down — canonical dub waaah on release)
-    },
-    //  ── 4. Machine Gun ────────────────────────────────────────────
-    //  Rapid-fire stutter.  Square LFO chops the pitch and filter
-    //  between high-bright and low-dark for aggressive on/off bursts.
-    //  Tight delay stutter, cavernous spring reverb.
-    {
-        "Machine Gun",
-        1,              // Square
-        2,              // LFO: Square
-        1000.0f,        // freq  (punchy mid-high)
-        14.0f,          // lfo_rate  (rapid fire)
-        0.85f,          // lfo_depth  (extreme for hard cuts)
-        4000.0f,        // filter_cutoff  (filter chops with pitch)
-        0.30f,          // filter_reso  (adds bite to each burst)
-        0.180f,         // delay_time  (tight stutter echo)
-        0.60f,          // delay_feedback  (self-reinforcing bursts)
-        0.40f,          // delay_mix  (heavy stutter)
-        0.30f,          // reverb_mix  (room around the bursts)
-        0.120f,         // release_time  (snappy cutoff)
-        0.0f,           // sweep_dir  (Flat — 14 Hz square LFO, sweep inaudible)
-    },
-    //  ── 5. Roots ────────────────────────────────────────────────────
-    //  Low-mid dub siren, the classic sound-system foundation tone.
-    //  Sawtooth for harmonic richness, triangle LFO at a rolling pace.
-    //  Resonant filter gives it a dark, nasal growl on each sweep.
-    {
-        "Roots",
-        2,              // Saw
-        1,              // LFO: Triangle
-        240.0f,         // freq  (low-mid, bass register)
-        1.8f,           // lfo_rate  (easy rolling pace)
-        0.70f,          // lfo_depth  (wide sweep through bass-mid range)
-        1400.0f,        // filter_cutoff  (dark, opens on LFO peaks)
-        0.45f,          // filter_reso  (growly resonant wah)
-        0.450f,         // delay_time  (dub spacing)
-        0.60f,          // delay_feedback  (long rolling trails)
-        0.45f,          // delay_mix  (heavy echo)
-        0.50f,          // reverb_mix  (deep spring wash)
-        0.600f,         // release_time  (lets the bass breathe)
-        -1.0f,          // sweep_dir  (Down — bass darkens into the delay echoes)
-    },
-    //  ── 6. Droppa ───────────────────────────────────────────────────
+    //  ── 4. Droppa ───────────────────────────────────────────────────
     //  Descending siren wail.  Ramp-down LFO pulls pitch and filter
     //  down together — each cycle starts bright and falls into a
-    //  fat, dark growl.  Heavy dub delay and reverb add weight.
+    //  fat, dark growl.  Longer release with fast filter sweep gives
+    //  a dramatic darkening tail as the drop fades.
     {
         "Droppa",
         1,              // Square
@@ -271,33 +234,14 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.65f,          // delay_feedback  (long cascading trails)
         0.45f,          // delay_mix  (heavy dub echo)
         0.40f,          // reverb_mix  (deep spring wash)
-        0.350f,         // release_time  (let the drop breathe)
+        0.800f,         // release_time  (longer tail — drop fades into darkness)
         -1.0f,          // sweep_dir  (Down — filter falls with the pitch, completes the drop)
     },
-    //  ── 7. Deep Roller ────────────────────────────────────────────
-    //  Low, rolling siren.  Triangle LFO for a smooth back-and-forth
-    //  swell.  Sub-bass frequency with wide depth — rolls between
-    //  a deep growl and mid-range cry.  Heavy delay and reverb.
-    {
-        "Deep Roller",
-        1,              // Square
-        1,              // LFO: Triangle
-        380.0f,         // freq  (low, chest-rattling)
-        1.0f,           // lfo_rate  (very slow roll)
-        0.75f,          // lfo_depth  (wide sweep — sub to mid)
-        2200.0f,        // filter_cutoff  (darker, opens on peaks)
-        0.45f,          // filter_reso  (squelchy resonance on roll)
-        0.450f,         // delay_time  (wide dub spacing)
-        0.65f,          // delay_feedback  (cascading trails)
-        0.45f,          // delay_mix  (heavy echo)
-        0.50f,          // reverb_mix  (deep spring wash)
-        0.700f,         // release_time  (long tail, rolls out)
-        -1.0f,          // sweep_dir  (Down — filter rolls away as the sound fades)
-    },
-    //  ── 8. Laser Sweep ────────────────────────────────────────────
+    //  ── 5. Laser Sweep ────────────────────────────────────────────
     //  Rising laser blast.  Ramp-up LFO sweeps pitch and filter
     //  upward — each cycle growls low then zaps bright.  Resonant
-    //  filter adds squelch, delay trails scatter into space.
+    //  filter adds squelch, quick release with upward sweep leaves
+    //  a bright splash that scatters through the delay.
     {
         "Laser Sweep",
         1,              // Square
@@ -311,227 +255,12 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.60f,          // delay_feedback  (cascading zaps)
         0.40f,          // delay_mix  (prominent echo)
         0.35f,          // reverb_mix  (spring splash)
-        0.280f,         // release_time  (sharp into reverb tail)
+        0.400f,         // release_time  (medium tail — bright sweep into delay)
         +1.0f,          // sweep_dir  (Up — filter opens on release, the "whale" tail)
     },
 };
 
-static std::atomic<int> g_preset{0};    // current preset index (0–7)
-
-// ─── User preset bank ────────────────────────────────────────────────
-//
-// 8 user slots (initially copies of factory presets, overridden by
-// saved data on disk).  Double-click the Preset button to toggle
-// between factory and user bank.  Long-press Preset to save the
-// current knob state into the active user slot.
-
-static constexpr int NUM_USER_PRESETS = 8;
-
-struct UserPreset {
-    bool saved;             // true = has user data, false = factory copy
-    int  waveform;
-    int  lfo_wave;
-    float freq;
-    float lfo_rate;
-    float lfo_depth;
-    float filter_cutoff;
-    float filter_reso;
-    float delay_time;
-    float delay_feedback;
-    float delay_mix;
-    float reverb_mix;
-    float release_time;
-    float sweep_dir;
-    bool  delay_link;
-    bool  lfo_pitch_link;
-    bool  super_drip;
-};
-
-static UserPreset g_user_presets[NUM_USER_PRESETS];
-static std::atomic<bool> g_user_bank{false};  // false=factory, true=user
-
-// Pending double-click state for bank toggle on Shift button
-static std::atomic<bool> g_shift_dblclick_pending{false};
-static std::chrono::steady_clock::time_point g_shift_dblclick_time{};
-static int g_shift_clicks = 0;
-static std::chrono::steady_clock::time_point g_shift_first_click{};
-
-// ─── Preset file path ────────────────────────────────────────────────
-
-static const char* preset_file_path()
-{
-    static char path[512] = {};
-    if (path[0]) return path;
-
-    const char* home = getenv("HOME");
-    if (!home) home = "/tmp";
-    snprintf(path, sizeof(path), "%s/.config/dubsiren", home);
-    mkdir(path, 0755);
-    snprintf(path, sizeof(path), "%s/.config/dubsiren/user_presets.txt", home);
-    return path;
-}
-
-// ─── Snapshot current state into a UserPreset ────────────────────────
-
-static UserPreset snapshot_current()
-{
-    UserPreset u;
-    u.saved         = true;
-    u.waveform      = g_waveform.load();
-    u.lfo_wave      = g_lfo_waveform.load();
-    u.freq          = g_freq.load();
-    u.lfo_rate      = g_lfo_rate.load();
-    u.lfo_depth     = g_lfo_depth.load();
-    u.filter_cutoff = g_filter_cutoff.load();
-    u.filter_reso   = g_filter_reso.load();
-    u.delay_time    = g_delay_time.load();
-    u.delay_feedback= g_delay_feedback.load();
-    u.delay_mix     = g_delay_mix.load();
-    u.reverb_mix    = g_reverb_mix.load();
-    u.release_time  = g_release_time.load();
-    u.sweep_dir     = g_sweep_dir.load();
-    u.delay_link    = g_delay_link.load();
-    u.lfo_pitch_link= g_lfo_pitch_link.load();
-    u.super_drip    = g_super_drip.load();
-    return u;
-}
-
-// ─── Save / load user presets to disk ────────────────────────────────
-
-static void save_user_presets()
-{
-    const char* path = preset_file_path();
-
-    // Write to temp file, then rename for power-safety
-    char tmp[520];
-    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-
-    FILE* f = fopen(tmp, "w");
-    if (!f) {
-        fprintf(stderr, "  !!! Failed to save presets: %s\n", tmp);
-        return;
-    }
-
-    fprintf(f, "DUBSIREN_PRESETS_V1\n");
-    for (int i = 0; i < NUM_USER_PRESETS; i++) {
-        const UserPreset& u = g_user_presets[i];
-        fprintf(f, "%d %d %d %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %d %d %d\n",
-                u.saved ? 1 : 0,
-                u.waveform, u.lfo_wave,
-                u.freq, u.lfo_rate, u.lfo_depth,
-                u.filter_cutoff, u.filter_reso,
-                u.delay_time, u.delay_feedback, u.delay_mix,
-                u.reverb_mix, u.release_time, u.sweep_dir,
-                u.delay_link ? 1 : 0,
-                u.lfo_pitch_link ? 1 : 0,
-                u.super_drip ? 1 : 0);
-    }
-
-    fflush(f);
-    fsync(fileno(f));
-    fclose(f);
-    rename(tmp, path);
-}
-
-static void load_user_presets()
-{
-    const char* path = preset_file_path();
-    FILE* f = fopen(path, "r");
-    if (!f) return;  // no saved presets — keep factory defaults
-
-    char header[64];
-    if (!fgets(header, sizeof(header), f) ||
-        strncmp(header, "DUBSIREN_PRESETS_V1", 19) != 0) {
-        fprintf(stderr, "  !!! Invalid preset file — ignoring\n");
-        fclose(f);
-        return;
-    }
-
-    for (int i = 0; i < NUM_USER_PRESETS; i++) {
-        UserPreset& u = g_user_presets[i];
-        int saved, dl, lpl, sd;
-        int n = fscanf(f, "%d %d %d %f %f %f %f %f %f %f %f %f %f %f %d %d %d",
-                       &saved,
-                       &u.waveform, &u.lfo_wave,
-                       &u.freq, &u.lfo_rate, &u.lfo_depth,
-                       &u.filter_cutoff, &u.filter_reso,
-                       &u.delay_time, &u.delay_feedback, &u.delay_mix,
-                       &u.reverb_mix, &u.release_time, &u.sweep_dir,
-                       &dl, &lpl, &sd);
-        if (n == 17) {
-            // Validate enum indices to prevent out-of-bounds access
-            if (u.waveform < 0 || u.waveform >= static_cast<int>(Waveform::COUNT) ||
-                u.lfo_wave < 0 || u.lfo_wave >= static_cast<int>(LfoWave::COUNT) ||
-                u.sweep_dir < -1 || u.sweep_dir > 1) {
-                fprintf(stderr, "  !!! Preset %d has invalid values — skipping\n", i);
-                u.saved = false;
-                continue;
-            }
-            u.saved         = (saved != 0);
-            u.delay_link    = (dl != 0);
-            u.lfo_pitch_link= (lpl != 0);
-            u.super_drip    = (sd != 0);
-        } else {
-            break;  // corrupt file — stop reading
-        }
-    }
-
-    fclose(f);
-    printf("  User presets loaded from %s\n", path);
-}
-
-static void init_user_presets()
-{
-    // Start with factory defaults in all user slots
-    for (int i = 0; i < NUM_USER_PRESETS; i++) {
-        const DubPreset& f = PRESETS[i % NUM_PRESETS];
-        UserPreset& u = g_user_presets[i];
-        u.saved         = false;
-        u.waveform      = f.waveform;
-        u.lfo_wave      = f.lfo_wave;
-        u.freq          = f.freq;
-        u.lfo_rate      = f.lfo_rate;
-        u.lfo_depth     = f.lfo_depth;
-        u.filter_cutoff = f.filter_cutoff;
-        u.filter_reso   = f.filter_reso;
-        u.delay_time    = f.delay_time;
-        u.delay_feedback= f.delay_feedback;
-        u.delay_mix     = f.delay_mix;
-        u.reverb_mix    = f.reverb_mix;
-        u.release_time  = f.release_time;
-        u.sweep_dir     = f.sweep_dir;
-        u.delay_link    = false;
-        u.lfo_pitch_link= true;
-        u.super_drip    = true;
-    }
-
-    // Override with saved data from disk
-    load_user_presets();
-}
-
-// ─── Apply preset (supports both banks) ──────────────────────────────
-
-static void apply_user_preset(const UserPreset& u)
-{
-    g_waveform.store(u.waveform);
-    g_lfo_waveform.store(u.lfo_wave);
-    g_freq.store(u.freq);
-    g_lfo_rate.store(u.lfo_rate);
-    g_lfo_depth.store(u.lfo_depth);
-    g_filter_cutoff.store(u.filter_cutoff);
-    g_filter_reso.store(u.filter_reso);
-    g_delay_time.store(u.delay_time);
-    g_delay_feedback.store(u.delay_feedback);
-    g_delay_mix.store(u.delay_mix);
-    g_reverb_mix.store(u.reverb_mix);
-    g_release_time.store(u.release_time);
-    g_sweep_dir.store(u.sweep_dir);
-    g_delay_link.store(u.delay_link);
-    g_lfo_pitch_link.store(u.lfo_pitch_link);
-    g_super_drip.store(u.super_drip);
-
-    update_link_eff();
-}
+static std::atomic<int> g_preset{0};    // current preset index (0–4)
 
 static void apply_preset(int idx)
 {
