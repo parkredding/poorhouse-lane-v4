@@ -47,6 +47,7 @@
 #include <unistd.h>
 #include <pwd.h>
 #include <fcntl.h>
+#include <cerrno>
 
 #include "gpio_hw.h"
 #include "oscillator.h"
@@ -334,9 +335,11 @@ static const char* preset_file_path()
     }
     if (!home || home[0] == '\0') home = "/tmp";
     snprintf(path, sizeof(path), "%s/.config", home);
-    mkdir(path, 0755);
+    if (mkdir(path, 0755) != 0 && errno != EEXIST)
+        fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
     snprintf(path, sizeof(path), "%s/.config/dubsiren", home);
-    mkdir(path, 0755);
+    if (mkdir(path, 0755) != 0 && errno != EEXIST)
+        fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
     snprintf(path, sizeof(path), "%s/.config/dubsiren/user_presets.txt", home);
     return path;
 }
