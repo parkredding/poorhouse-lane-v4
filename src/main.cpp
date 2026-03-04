@@ -15,9 +15,10 @@
 //
 // Buttons:
 //   Trigger  (GPIO 4)   Gate volume envelope; resets LFO phase
-//   Shift    (GPIO 15)  Hold for Bank B; triple-click = pitch-delay-LFO link
+//   Shift    (GPIO 15)  Hold for Bank B; double-click = toggle factory/user bank
+//                        triple-click = pitch-delay-LFO link
 //   Preset   (GPIO 5)   Cycle dub siren preset; Shift+Preset = cycle LFO shape
-//                        Long-press = save to user bank; Double-click = toggle bank
+//                        Long-press (3s) = save to user bank
 //
 // Presets (GPIO 5, Bank A):
 //   Factory:  1. Lickshot  2. Earthshaker  3. Slow Wail  4. Machine Gun
@@ -43,6 +44,7 @@
 #include <chrono>
 
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "gpio_hw.h"
 #include "oscillator.h"
@@ -279,6 +281,216 @@ static void apply_preset(int idx)
     g_reverb_mix.store(p.reverb_mix);
     g_release_time.store(p.release_time);
     g_sweep_dir.store(p.sweep_dir);
+
+    update_link_eff();
+}
+
+// ─── User preset bank ────────────────────────────────────────────────
+
+static constexpr int NUM_USER_PRESETS = 8;
+
+struct UserPreset {
+    bool saved;             // true = has user data, false = factory copy
+    int  waveform;
+    int  lfo_wave;
+    float freq;
+    float lfo_rate;
+    float lfo_depth;
+    float filter_cutoff;
+    float filter_reso;
+    float delay_time;
+    float delay_feedback;
+    float delay_mix;
+    float reverb_mix;
+    float release_time;
+    float sweep_dir;
+    bool  delay_link;
+    bool  lfo_pitch_link;
+    bool  super_drip;
+};
+
+static UserPreset g_user_presets[NUM_USER_PRESETS];
+static std::atomic<bool> g_user_bank{false};  // false=factory, true=user
+
+// Pending double-click state for bank toggle on Shift button
+static std::atomic<bool> g_shift_dblclick_pending{false};
+static std::chrono::steady_clock::time_point g_shift_dblclick_time{};
+static int g_shift_clicks = 0;
+static std::chrono::steady_clock::time_point g_shift_first_click{};
+
+// ─── Preset file path ────────────────────────────────────────────────
+
+static const char* preset_file_path()
+{
+    static char path[512] = {};
+    if (path[0]) return path;
+
+    const char* home = getenv("HOME");
+    if (!home) home = "/tmp";
+    snprintf(path, sizeof(path), "%s/.config/dubsiren", home);
+    mkdir(path, 0755);
+    snprintf(path, sizeof(path), "%s/.config/dubsiren/user_presets.txt", home);
+    return path;
+}
+
+// ─── Snapshot current state into a UserPreset ────────────────────────
+
+static UserPreset snapshot_current()
+{
+    UserPreset u;
+    u.saved         = true;
+    u.waveform      = g_waveform.load();
+    u.lfo_wave      = g_lfo_waveform.load();
+    u.freq          = g_freq.load();
+    u.lfo_rate      = g_lfo_rate.load();
+    u.lfo_depth     = g_lfo_depth.load();
+    u.filter_cutoff = g_filter_cutoff.load();
+    u.filter_reso   = g_filter_reso.load();
+    u.delay_time    = g_delay_time.load();
+    u.delay_feedback= g_delay_feedback.load();
+    u.delay_mix     = g_delay_mix.load();
+    u.reverb_mix    = g_reverb_mix.load();
+    u.release_time  = g_release_time.load();
+    u.sweep_dir     = g_sweep_dir.load();
+    u.delay_link    = g_delay_link.load();
+    u.lfo_pitch_link= g_lfo_pitch_link.load();
+    u.super_drip    = g_super_drip.load();
+    return u;
+}
+
+// ─── Save / load user presets to disk ────────────────────────────────
+
+static void save_user_presets()
+{
+    const char* path = preset_file_path();
+
+    // Write to temp file, then rename for power-safety
+    char tmp[520];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+
+    FILE* f = fopen(tmp, "w");
+    if (!f) {
+        fprintf(stderr, "  !!! Failed to save presets: %s\n", tmp);
+        return;
+    }
+
+    fprintf(f, "DUBSIREN_PRESETS_V1\n");
+    for (int i = 0; i < NUM_USER_PRESETS; i++) {
+        const UserPreset& u = g_user_presets[i];
+        fprintf(f, "%d %d %d %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %d %d %d\n",
+                u.saved ? 1 : 0,
+                u.waveform, u.lfo_wave,
+                u.freq, u.lfo_rate, u.lfo_depth,
+                u.filter_cutoff, u.filter_reso,
+                u.delay_time, u.delay_feedback, u.delay_mix,
+                u.reverb_mix, u.release_time, u.sweep_dir,
+                u.delay_link ? 1 : 0,
+                u.lfo_pitch_link ? 1 : 0,
+                u.super_drip ? 1 : 0);
+    }
+
+    fflush(f);
+    fsync(fileno(f));
+    fclose(f);
+    rename(tmp, path);
+}
+
+static void load_user_presets()
+{
+    const char* path = preset_file_path();
+    FILE* f = fopen(path, "r");
+    if (!f) return;  // no saved presets — keep factory defaults
+
+    char header[64];
+    if (!fgets(header, sizeof(header), f) ||
+        strncmp(header, "DUBSIREN_PRESETS_V1", 19) != 0) {
+        fprintf(stderr, "  !!! Invalid preset file — ignoring\n");
+        fclose(f);
+        return;
+    }
+
+    for (int i = 0; i < NUM_USER_PRESETS; i++) {
+        UserPreset& u = g_user_presets[i];
+        int saved, dl, lpl, sd;
+        int n = fscanf(f, "%d %d %d %f %f %f %f %f %f %f %f %f %f %f %d %d %d",
+                       &saved,
+                       &u.waveform, &u.lfo_wave,
+                       &u.freq, &u.lfo_rate, &u.lfo_depth,
+                       &u.filter_cutoff, &u.filter_reso,
+                       &u.delay_time, &u.delay_feedback, &u.delay_mix,
+                       &u.reverb_mix, &u.release_time, &u.sweep_dir,
+                       &dl, &lpl, &sd);
+        if (n == 17) {
+            // Validate enum indices to prevent out-of-bounds access
+            if (u.waveform < 0 || u.waveform >= static_cast<int>(Waveform::COUNT) ||
+                u.lfo_wave < 0 || u.lfo_wave >= static_cast<int>(LfoWave::COUNT) ||
+                u.sweep_dir < -1 || u.sweep_dir > 1) {
+                fprintf(stderr, "  !!! Preset %d has invalid values — skipping\n", i);
+                u.saved = false;
+                continue;
+            }
+            u.saved         = (saved != 0);
+            u.delay_link    = (dl != 0);
+            u.lfo_pitch_link= (lpl != 0);
+            u.super_drip    = (sd != 0);
+        } else {
+            break;  // corrupt file — stop reading
+        }
+    }
+
+    fclose(f);
+    printf("  User presets loaded from %s\n", path);
+}
+
+static void init_user_presets()
+{
+    // Start with factory defaults in all user slots
+    for (int i = 0; i < NUM_USER_PRESETS; i++) {
+        const DubPreset& f = PRESETS[i % NUM_PRESETS];
+        UserPreset& u = g_user_presets[i];
+        u.saved         = false;
+        u.waveform      = f.waveform;
+        u.lfo_wave      = f.lfo_wave;
+        u.freq          = f.freq;
+        u.lfo_rate      = f.lfo_rate;
+        u.lfo_depth     = f.lfo_depth;
+        u.filter_cutoff = f.filter_cutoff;
+        u.filter_reso   = f.filter_reso;
+        u.delay_time    = f.delay_time;
+        u.delay_feedback= f.delay_feedback;
+        u.delay_mix     = f.delay_mix;
+        u.reverb_mix    = f.reverb_mix;
+        u.release_time  = f.release_time;
+        u.sweep_dir     = f.sweep_dir;
+        u.delay_link    = false;
+        u.lfo_pitch_link= true;
+        u.super_drip    = true;
+    }
+
+    // Override with saved data from disk
+    load_user_presets();
+}
+
+// ─── Apply user preset ──────────────────────────────────────────────
+
+static void apply_user_preset(const UserPreset& u)
+{
+    g_waveform.store(u.waveform);
+    g_lfo_waveform.store(u.lfo_wave);
+    g_freq.store(u.freq);
+    g_lfo_rate.store(u.lfo_rate);
+    g_lfo_depth.store(u.lfo_depth);
+    g_filter_cutoff.store(u.filter_cutoff);
+    g_filter_reso.store(u.filter_reso);
+    g_delay_time.store(u.delay_time);
+    g_delay_feedback.store(u.delay_feedback);
+    g_delay_mix.store(u.delay_mix);
+    g_reverb_mix.store(u.reverb_mix);
+    g_release_time.store(u.release_time);
+    g_sweep_dir.store(u.sweep_dir);
+    g_delay_link.store(u.delay_link);
+    g_lfo_pitch_link.store(u.lfo_pitch_link);
+    g_super_drip.store(u.super_drip);
 
     update_link_eff();
 }
