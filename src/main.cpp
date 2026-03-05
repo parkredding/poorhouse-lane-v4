@@ -531,6 +531,19 @@ static void save_user_presets()
     }
 }
 
+// Validate that a loaded preset's enum fields are in range
+static bool validate_preset(const UserPreset& u, int pitch_env, int index)
+{
+    if (u.waveform < 0 || u.waveform >= static_cast<int>(Waveform::COUNT) ||
+        u.lfo_wave < 0 || u.lfo_wave >= static_cast<int>(LfoWave::COUNT) ||
+        u.sweep_dir < -1 || u.sweep_dir > 1 ||
+        pitch_env < -1 || pitch_env > 1) {
+        fprintf(stderr, "  !!! Preset %d has invalid values — skipping\n", index);
+        return false;
+    }
+    return true;
+}
+
 static void load_user_presets()
 {
     const char* path = preset_file_path();
@@ -572,14 +585,7 @@ static void load_user_presets()
                            &u.reverb_mix, &u.release_time, &u.sweep_dir,
                            &pe, &sd);
             if (n == 16) {
-                if (u.waveform < 0 || u.waveform >= static_cast<int>(Waveform::COUNT) ||
-                    u.lfo_wave < 0 || u.lfo_wave >= static_cast<int>(LfoWave::COUNT) ||
-                    u.sweep_dir < -1 || u.sweep_dir > 1 ||
-                    pe < -1 || pe > 1) {
-                    fprintf(stderr, "  !!! Preset %d has invalid values — skipping\n", i);
-                    u.saved = false;
-                    continue;
-                }
+                if (!validate_preset(u, pe, i)) { u.saved = false; continue; }
                 u.saved      = (saved != 0);
                 u.pitch_env  = pe;
                 u.super_drip = (sd != 0);
@@ -598,13 +604,7 @@ static void load_user_presets()
                            &u.reverb_mix, &u.release_time, &u.sweep_dir,
                            &dl, &lpl, &sd);
             if (n == 17) {
-                if (u.waveform < 0 || u.waveform >= static_cast<int>(Waveform::COUNT) ||
-                    u.lfo_wave < 0 || u.lfo_wave >= static_cast<int>(LfoWave::COUNT) ||
-                    u.sweep_dir < -1 || u.sweep_dir > 1) {
-                    fprintf(stderr, "  !!! Preset %d has invalid values — skipping\n", i);
-                    u.saved = false;
-                    continue;
-                }
+                if (!validate_preset(u, 0, i)) { u.saved = false; continue; }
                 u.saved      = (saved != 0);
                 u.pitch_env  = 0;  // V1 didn't store pitch_env, default off
                 u.super_drip = (sd != 0);
@@ -738,6 +738,31 @@ static void switch_bank(BankMode mode)
         printf("  BANK: EXPERIMENTAL  \"%s\"\n", EXPERIMENTAL[idx].name);
         break;
     }
+}
+
+// ─── Cycle to next preset in current bank ────────────────────────────
+
+// ─── Save current state to user bank slot ─────────────────────────────
+
+static void save_current_to_user_bank()
+{
+    int idx = g_preset.load();
+    if (idx >= NUM_USER_PRESETS) idx = 0;
+    g_user_presets[idx] = snapshot_current();
+    save_user_presets();
+
+    // Switch to user bank if not already
+    auto bm = static_cast<BankMode>(g_bank_mode.load());
+    if (bm != BankMode::USER) {
+        g_preset.store(idx);
+        g_bank_mode.store(static_cast<int>(BankMode::USER));
+    }
+
+    printf("  >>> SAVED to USER %d  (Freq:%.0fHz %s LFO:%s)\n",
+           idx + 1,
+           g_freq.load(),
+           waveform_name(g_waveform.load()),
+           lfo_wave_name(g_lfo_waveform.load()));
 }
 
 // ─── Cycle to next preset in current bank ────────────────────────────
@@ -1310,24 +1335,7 @@ int main(int argc, char *argv[])
 
                     if (hold_ms >= 3000) {
                         // ── Long press: save to user bank ──
-                        int idx = g_preset.load();
-                        if (idx >= NUM_USER_PRESETS) idx = 0;
-                        g_user_presets[idx] = snapshot_current();
-                        save_user_presets();
-
-                        // Switch to user bank if not already
-                        auto bm = static_cast<BankMode>(g_bank_mode.load());
-                        if (bm != BankMode::USER) {
-                            g_preset.store(idx);
-                            g_bank_mode.store(static_cast<int>(BankMode::USER));
-                        }
-
-                        printf("  >>> SAVED to USER %d  "
-                               "(Freq:%.0fHz %s LFO:%s)\n",
-                               idx + 1,
-                               g_freq.load(),
-                               waveform_name(g_waveform.load()),
-                               lfo_wave_name(g_lfo_waveform.load()));
+                        save_current_to_user_bank();
                     } else {
                         // ── Short press: cycle preset immediately ──
                         cycle_preset();
@@ -1370,22 +1378,7 @@ int main(int argc, char *argv[])
 
     // ── Keyboard-only shortcuts (simulate mode) ─────────────────────
 
-    cb.on_save_preset = []() {
-        int idx = g_preset.load();
-        if (idx >= NUM_USER_PRESETS) idx = 0;
-        g_user_presets[idx] = snapshot_current();
-        save_user_presets();
-        auto bm = static_cast<BankMode>(g_bank_mode.load());
-        if (bm != BankMode::USER) {
-            g_preset.store(idx);
-            g_bank_mode.store(static_cast<int>(BankMode::USER));
-        }
-        printf("  >>> SAVED to USER %d  (Freq:%.0fHz %s LFO:%s)\n",
-               idx + 1,
-               g_freq.load(),
-               waveform_name(g_waveform.load()),
-               lfo_wave_name(g_lfo_waveform.load()));
-    };
+    cb.on_save_preset = []() { save_current_to_user_bank(); };
 
     cb.on_toggle_bank = []() {
         // Keyboard shortcut cycles: USER → STANDARD → EXPERIMENTAL → USER
