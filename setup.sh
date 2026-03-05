@@ -330,6 +330,7 @@ Wants=${data_mount_unit}
 
 [Service]
 Type=simple
+ExecStartPre=+${INSTALL_DIR}/scripts/ensure-persist.sh ${INSTALL_DIR}
 ExecStart=${INSTALL_DIR}/build/dubsiren
 WorkingDirectory=${INSTALL_DIR}
 Restart=on-failure
