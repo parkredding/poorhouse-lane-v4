@@ -32,6 +32,7 @@
 //   Rise / Off / Fall — sweeps pitch on trigger release
 //   Filter always darkens on release (DS71-style), independent of switch
 //   Preset loads set pitch env; physical switch overrides until next load
+//   Triple-tap to Fall = toggle LFO-pitch link (LFO rate follows envelope)
 //   Shift + triple-tap to Fall = toggle super drip reverb (heavy dub spring)
 
 #include <cstdio>
@@ -92,6 +93,8 @@ static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
 
 // Super drip reverb (default on; secret: hold Shift + triple-tap fall to toggle)
 static std::atomic<bool>  g_super_drip{true};
+// LFO-pitch-envelope link (default on; secret: triple-tap pitch switch to fall to toggle)
+static std::atomic<bool>  g_lfo_pitch_link{true};
 static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay time
 static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (freq-scaled)
 
@@ -998,6 +1001,7 @@ int main(int argc, char *argv[])
         float rev_mix   = g_reverb_mix.load(rlx);
         float rel_t     = g_release_time.load(rlx);
         int   pe_mode   = g_pitch_env.load(rlx);
+        bool  lfo_link  = g_lfo_pitch_link.load(rlx);
         float sweep_dir = g_sweep_dir.load(rlx);
 
         // Recompute release rate and pitch-envelope factors from release time.
@@ -1048,8 +1052,8 @@ int main(int argc, char *argv[])
             if (pe_active)
                 sweep_phase = std::min(sweep_phase + sweep_inc, 1.0f);
 
-            // LFO rate
-            lfo.setRate(lfo_r);
+            // LFO rate optionally tracks pitch envelope (secret mode)
+            lfo.setRate(lfo_link ? lfo_r * pitch_env_mult : lfo_r);
 
             // LFO → exponential pitch modulation (pitch only, not filter)
             float lfo_out = lfo.tick();
@@ -1340,14 +1344,26 @@ int main(int argc, char *argv[])
         static const char *lbl[] = {"FALL", "OFF", "RISE"};
         printf("  PITCH-ENV  %s\n", lbl[pos + 1]);
 
-        // Secret mode: Shift + triple-tap to FALL toggles super drip reverb
-        if (pos == -1 && g_shift.load()) {
-            static MultiClickDetector det{3, 700, 800};
-            if (det.click()) {
-                bool sd = !g_super_drip.load();
-                g_super_drip.store(sd);
-                printf("  >>> SUPER DRIP REVERB %s\n",
-                       sd ? "ON" : "OFF");
+        // Secret modes on triple-tap to FALL:
+        //   Shift held  → super drip reverb (heavy dub spring)
+        //   Shift free  → LFO-pitch-envelope link
+        if (pos == -1) {
+            if (g_shift.load()) {
+                static MultiClickDetector det{3, 700, 800};
+                if (det.click()) {
+                    bool sd = !g_super_drip.load();
+                    g_super_drip.store(sd);
+                    printf("  >>> SUPER DRIP REVERB %s\n",
+                           sd ? "ON" : "OFF");
+                }
+            } else {
+                static MultiClickDetector det{3, 700, 800};
+                if (det.click()) {
+                    bool lk = !g_lfo_pitch_link.load();
+                    g_lfo_pitch_link.store(lk);
+                    printf("  >>> LFO-PITCH LINK %s\n",
+                           lk ? "ON" : "OFF");
+                }
             }
         }
     };
