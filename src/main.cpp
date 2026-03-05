@@ -440,7 +440,7 @@ static const char* preset_file_path()
         // mount if it exists — this is the real read-write disk.
         bool use_persist = false;
         char persist[PATH_MAX - PERSIST_ROOM];
-        if (strlen(base) + 13 < sizeof(persist)) {
+        if (strlen(base) + sizeof("/mnt/persist") < sizeof(persist)) {
             snprintf(persist, sizeof(persist), "/mnt/persist%s", base);
             struct stat st;
             use_persist = (stat(persist, &st) == 0 && S_ISDIR(st.st_mode));
