@@ -318,6 +318,13 @@ create_data_dirs() {
 install_service() {
     info "Installing systemd service..."
 
+    # Install the persistent-storage helper to a root-owned location so that
+    # the unprivileged service user cannot modify a script that runs as root.
+    install -D -m 755 -o root -g root \
+        "${SCRIPT_DIR}/scripts/ensure-persist.sh" \
+        /usr/local/lib/dubsiren/ensure-persist.sh
+    success "ensure-persist.sh installed to /usr/local/lib/dubsiren/"
+
     local data_mount_unit
     data_mount_unit="$(systemd-escape --path "${INSTALL_DIR}/data").mount"
 
@@ -330,7 +337,7 @@ Wants=${data_mount_unit}
 
 [Service]
 Type=simple
-ExecStartPre=+${INSTALL_DIR}/scripts/ensure-persist.sh ${INSTALL_DIR}
+ExecStartPre=+/usr/local/lib/dubsiren/ensure-persist.sh ${INSTALL_DIR}
 ExecStart=${INSTALL_DIR}/build/dubsiren
 WorkingDirectory=${INSTALL_DIR}
 Restart=on-failure

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ensure-persist.sh — Ensure persistent storage is available for dubsiren
 #
-# Called as ExecStartPre= in the dubsiren systemd service.  Tries multiple
+# Installed to /usr/local/lib/dubsiren/ (root-owned) by setup.sh.
+# Called as ExecStartPre=+ in the dubsiren systemd service.  Tries multiple
 # strategies to make INSTALL_DIR/data a durable, writable mount.  Exits 0
 # even on total failure so the siren still starts (the C++ code handles
 # volatile storage gracefully with warnings).
@@ -35,6 +36,15 @@ is_overlay_root() {
     awk '$2 == "/" && $3 == "overlay" { found=1 } END { exit !found }' /proc/mounts
 }
 
+# --- Helper: mkdir that rejects symlinks (prevents symlink-to-/etc attacks) --
+safe_mkdir() {
+    if [[ -L "$1" ]]; then
+        warn "Security: $1 is a symlink — refusing to mount"
+        return 1
+    fi
+    mkdir -p "$1"
+}
+
 # --- Strategy 1: Already mounted? -------------------------------------------
 if is_mount_point "${DATA_DIR}"; then
     log "Data dir already mounted at ${DATA_DIR} — done."
@@ -56,10 +66,8 @@ ROOT_FSTYPE=""
 
 # Look for the ro mount of the root device that the overlay uses as lower layer
 while IFS=' ' read -r dev mp fstype _rest; do
-    # raspi-config overlay typically mounts root ro at /overlay/lower or similar
-    if [[ "$fstype" != "overlay" && "$fstype" != "tmpfs" && "$fstype" != "devtmpfs" && \
-          "$fstype" != "proc" && "$fstype" != "sysfs" && "$fstype" != "devpts" && \
-          "$fstype" != "cgroup" && "$fstype" != "cgroup2" && "$fstype" != "fuse"* && \
+    # Skip virtual/pseudo filesystems; match only real block devices
+    if [[ ! "$fstype" =~ ^(overlay|tmpfs|devtmpfs|proc|sysfs|devpts|cgroup2?|fuse) && \
           "$dev" == /dev/* ]]; then
         # Prefer the mount that looks like the root partition
         if [[ "$dev" == *mmcblk* || "$dev" == *nvme* || "$dev" == *sd* ]]; then
@@ -93,21 +101,23 @@ if [[ -n "$ROOT_DEV" ]]; then
 
     # Now try to bind-mount the data directory
     if is_mount_point "${PERSIST_MNT}" && [[ -d "${PERSIST_MNT}${DATA_DIR}" ]]; then
-        mkdir -p "${DATA_DIR}"
-        if mount --bind "${PERSIST_MNT}${DATA_DIR}" "${DATA_DIR}"; then
-            log "Bind-mounted ${PERSIST_MNT}${DATA_DIR} → ${DATA_DIR} — persistent storage ready."
-            exit 0
+        if safe_mkdir "${DATA_DIR}"; then
+            if mount --bind "${PERSIST_MNT}${DATA_DIR}" "${DATA_DIR}"; then
+                log "Bind-mounted ${PERSIST_MNT}${DATA_DIR} → ${DATA_DIR} — persistent storage ready."
+                exit 0
+            fi
+            warn "Bind mount failed."
         fi
-        warn "Bind mount failed."
     elif is_mount_point "${PERSIST_MNT}"; then
         # Data dir doesn't exist on persist mount yet — create it
         mkdir -p "${PERSIST_MNT}${DATA_DIR}/mp3s" "${PERSIST_MNT}${DATA_DIR}/presets"
-        mkdir -p "${DATA_DIR}"
-        if mount --bind "${PERSIST_MNT}${DATA_DIR}" "${DATA_DIR}"; then
-            log "Created and bind-mounted ${PERSIST_MNT}${DATA_DIR} → ${DATA_DIR} — persistent storage ready."
-            exit 0
+        if safe_mkdir "${DATA_DIR}"; then
+            if mount --bind "${PERSIST_MNT}${DATA_DIR}" "${DATA_DIR}"; then
+                log "Created and bind-mounted ${PERSIST_MNT}${DATA_DIR} → ${DATA_DIR} — persistent storage ready."
+                exit 0
+            fi
+            warn "Bind mount failed after creating directories."
         fi
-        warn "Bind mount failed after creating directories."
     fi
 fi
 
@@ -142,19 +152,19 @@ fi
 if [[ -n "$LOWER_PATH" && -d "${LOWER_PATH}${DATA_DIR}" ]]; then
     log "Found overlay lower layer at ${LOWER_PATH}"
 
-    # The lower layer is typically ro.  Try remounting it rw first.
-    mount -o remount,rw "${LOWER_PATH}" 2>/dev/null || true
-
-    mkdir -p "${DATA_DIR}"
-    if mount --bind "${LOWER_PATH}${DATA_DIR}" "${DATA_DIR}"; then
-        # Check if the bind mount is actually writable
-        if touch "${DATA_DIR}/.persist-test" 2>/dev/null; then
-            rm -f "${DATA_DIR}/.persist-test"
-            log "Bind-mounted from overlay lower layer — persistent storage ready."
-            exit 0
-        else
-            warn "Lower-layer bind mount is read-only — presets won't persist."
-            umount "${DATA_DIR}" 2>/dev/null || true
+    # Do NOT remount the lower layer rw — that would undermine overlay FS
+    # protection.  Bind-mount as-is and test if it happens to be writable.
+    if safe_mkdir "${DATA_DIR}"; then
+        if mount --bind "${LOWER_PATH}${DATA_DIR}" "${DATA_DIR}"; then
+            # Check if the bind mount is actually writable
+            if touch "${DATA_DIR}/.persist-test" 2>/dev/null; then
+                rm -f "${DATA_DIR}/.persist-test"
+                log "Bind-mounted from overlay lower layer — persistent storage ready."
+                exit 0
+            else
+                warn "Lower-layer bind mount is read-only — presets won't persist."
+                umount "${DATA_DIR}" 2>/dev/null || true
+            fi
         fi
     fi
 fi
