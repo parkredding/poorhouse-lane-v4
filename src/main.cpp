@@ -740,6 +740,14 @@ static void switch_bank(BankMode mode)
     }
 }
 
+// ─── Toggle bank: switch to target, or back to USER if already there ─
+
+static void toggle_bank(BankMode target)
+{
+    auto current = static_cast<BankMode>(g_bank_mode.load());
+    switch_bank(current == target ? BankMode::USER : target);
+}
+
 // ─── Cycle to next preset in current bank ────────────────────────────
 
 // ─── Save current state to user bank slot ─────────────────────────────
@@ -1293,10 +1301,7 @@ int main(int argc, char *argv[])
                             now - g_shift_first_click).count();
                     g_shift_clicks = 0;
                     if (span < 500) {
-                        if (static_cast<BankMode>(g_bank_mode.load()) == BankMode::EXPERIMENTAL)
-                            switch_bank(BankMode::USER);
-                        else
-                            switch_bank(BankMode::EXPERIMENTAL);
+                        toggle_bank(BankMode::EXPERIMENTAL);
                     }
                 } else if (g_shift_clicks == 2) {
                     // Pending double-click (may become triple)
@@ -1448,10 +1453,7 @@ int main(int argc, char *argv[])
             if (elapsed > 350) {
                 g_shift_dblclick_pending.store(false);
                 g_shift_clicks = 0;
-                if (static_cast<BankMode>(g_bank_mode.load()) == BankMode::STANDARD)
-                    switch_bank(BankMode::USER);
-                else
-                    switch_bank(BankMode::STANDARD);
+                toggle_bank(BankMode::STANDARD);
             }
         }
     }
