@@ -418,11 +418,12 @@ static const char* preset_file_path()
 
     // Resolve install dir from executable path:
     //   /home/<user>/dubsiren/build/dubsiren  →  /home/<user>/dubsiren
-    // The data/ directory under install dir is bind-mounted from the real
-    // disk when overlayFS is active, so writes here survive power loss.
-    // Buffer leaves room for the longest suffix ("/data/presets/user_presets.txt")
-    static constexpr size_t SUFFIX_MAX = 48;
-    char base[PATH_MAX - SUFFIX_MAX];
+    // base buffer leaves room for appending suffixes when no persist mount.
+    // persist buffer leaves room for "/mnt/persist" + base, and the result
+    // must still fit suffixes up to 30 chars in path[PATH_MAX].
+    static constexpr size_t BASE_ROOM = 48;           // room for suffixes
+    static constexpr size_t PERSIST_ROOM = 31;        // 30-char suffix + NUL
+    char base[PATH_MAX - BASE_ROOM];
     ssize_t len = readlink("/proc/self/exe", base, sizeof(base) - 1);
     if (len > 0 && len < (ssize_t)sizeof(base) - 1) {
         base[len] = '\0';
@@ -432,14 +433,30 @@ static const char* preset_file_path()
         slash = strrchr(base, '/');               // strip "build"
         if (slash) *slash = '\0';
 
-        snprintf(path, sizeof(path), "%s/data", base);
+        // When overlayFS is active, the bind-mount at <base>/data may not
+        // be available (race, mount failure, running outside systemd).
+        // Writes to the overlay look fine but vanish on power loss.
+        // Bypass the overlay entirely by writing straight to the persist
+        // mount if it exists — this is the real read-write disk.
+        bool use_persist = false;
+        char persist[PATH_MAX - PERSIST_ROOM];
+        if (strlen(base) + 13 < sizeof(persist)) {
+            snprintf(persist, sizeof(persist), "/mnt/persist%s", base);
+            struct stat st;
+            use_persist = (stat(persist, &st) == 0 && S_ISDIR(st.st_mode));
+        }
+
+        const char* root = use_persist ? persist : base;
+
+        snprintf(path, sizeof(path), "%s/data", root);
         if (mkdir(path, 0755) != 0 && errno != EEXIST)
             fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
-        snprintf(path, sizeof(path), "%s/data/presets", base);
+        snprintf(path, sizeof(path), "%s/data/presets", root);
         if (mkdir(path, 0755) != 0 && errno != EEXIST)
             fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
-        snprintf(path, sizeof(path), "%s/data/presets/user_presets.txt", base);
-        printf("  Preset file: %s\n", path);
+        snprintf(path, sizeof(path), "%s/data/presets/user_presets.txt", root);
+        printf("  Preset file: %s%s\n", path,
+               use_persist ? " (persist mount)" : "");
         return path;
     }
 
@@ -518,7 +535,11 @@ static void save_user_presets()
     fflush(f);
     fsync(fileno(f));
     fclose(f);
-    rename(tmp, path);
+    if (rename(tmp, path) != 0) {
+        fprintf(stderr, "  !!! Failed to rename preset file: %s → %s (%s)\n",
+                tmp, path, strerror(errno));
+        return;
+    }
 
     // Sync the directory so the rename is durable across power loss
     char dir[512];
