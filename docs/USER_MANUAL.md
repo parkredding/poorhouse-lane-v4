@@ -1,6 +1,6 @@
 # Dub Siren — User Manual
 
-A Raspberry Pi-powered dub siren synthesizer inspired by the Benidub DS71.
+A Raspberry Pi-powered dub siren synthesizer.
 
 ---
 
@@ -13,7 +13,7 @@ A Raspberry Pi-powered dub siren synthesizer inspired by the Benidub DS71.
 5. [Presets](#presets)
 6. [Knob Reference](#knob-reference)
 7. [LFO Waveforms](#lfo-waveforms)
-8. [Pitch Envelope Switch](#pitch-envelope-switch)
+8. [Pitch Envelope Toggle](#pitch-envelope-toggle-position-6)
 9. [Secret Combinations](#secret-combinations)
 10. [Signal Flow](#signal-flow)
 11. [Tips & Techniques](#tips--techniques)
@@ -35,31 +35,29 @@ Everything runs on a Raspberry Pi Zero 2W at 48 kHz / 24-bit.
 ## Controls at a Glance
 
 The device has **three buttons**, **five rotary encoders** (knobs), and a
-**three-position toggle switch**.
+**three-position pitch envelope toggle** (position 6, located under Knob 3).
 
 ```
 ┌──────────────────────────────────────────┐
 │                                          │
 │   [Knob 1]  [Knob 2]  [Knob 3]          │
 │                                          │
-│   [Knob 4]  [Knob 5]                     │
+│   [Knob 4]  [Knob 5]  ┌─ Rise ─┐        │
+│                        │  Off   │ (6)    │
+│                        └─ Fall ─┘        │
 │                                          │
-│   (TRIGGER)  (SHIFT)  (PRESET)           │
-│                                          │
-│         ┌─ Rise ─┐                       │
-│   Pitch │  Off   │  (3-position switch)  │
-│         └─ Fall ─┘                       │
+│   (PRESET)   (BANK)   (TRIGGER)          │
 │                                          │
 └──────────────────────────────────────────┘
 ```
 
 | Control | What It Does |
 |---------|-------------|
-| **Trigger** button | Hold to make sound. Release to let it ring out. |
-| **Shift** button | Hold to access the second layer of knob parameters. |
-| **Preset** button | Tap to change presets. Hold Shift + tap to change LFO shape. |
-| **Pitch switch** | Three positions: Rise / Off / Fall — controls how pitch bends on release. |
-| **Knobs 1–5** | Rotary encoders that control different parameters depending on whether Shift is held. |
+| **Preset** button (left) | Tap to change presets. Hold Bank + tap to change LFO shape. |
+| **Bank** button (center) | Hold to access the second layer of knob parameters. Double/triple-click to switch banks. |
+| **Trigger** button (right) | Hold to make sound. Release to let it ring out. |
+| **Pitch toggle** (pos. 6) | Three positions: Rise / Off / Fall — controls how pitch bends on release. |
+| **Knobs 1–5** | Rotary encoders that control different parameters depending on whether Bank is held. |
 
 ---
 
@@ -85,14 +83,13 @@ Your own saved sounds. Starts with copies of the factory presets that you can
 tweak and overwrite.
 
 **How to access:** This is where you start. If you've switched away,
-double-click Shift to return.
+double-click Bank to return.
 
 ### Standard Bank (factory presets)
 
-Four classic dub siren sounds inspired by the Benidub DS71. These cannot be
-overwritten.
+Four classic dub siren sounds. These cannot be overwritten.
 
-**How to access:** Double-click the Shift button (two quick clicks within
+**How to access:** Double-click the Bank button (two quick clicks within
 half a second).
 
 | # | Name | Character |
@@ -106,7 +103,7 @@ half a second).
 
 Four wild presets that push the synth to its limits.
 
-**How to access:** Triple-click the Shift button (three quick clicks within
+**How to access:** Triple-click the Bank button (three quick clicks within
 half a second).
 
 | # | Name | Character |
@@ -142,13 +139,13 @@ reverb, pitch envelope position, and Super Drip on/off.
 
 ## Knob Reference
 
-Each of the five rotary encoders controls two parameters — one when Shift is
-**not held** (Layer A), and one when Shift **is held** (Layer B).
+Each of the five rotary encoders controls two parameters — one when Bank is
+**not held** (Layer A), and one when Bank **is held** (Layer B).
 
 Spin a knob slowly for fine control. Spin fast for rapid sweeps (up to 4×
 acceleration).
 
-### Layer A — Shift NOT held
+### Layer A — Bank NOT held
 
 | Knob | Parameter | Range | What It Does |
 |------|-----------|-------|-------------|
@@ -158,7 +155,7 @@ acceleration).
 | 4 | **Delay Time** | 1 ms – 1 second | Time between delay repeats. Short = slapback. Long = spacious echoes. |
 | 5 | **Delay Feedback** | 0 – 95% | How many times the echo repeats. High values build up — careful near 90%+. |
 
-### Layer B — Shift HELD
+### Layer B — Bank HELD
 
 | Knob | Parameter | Range | What It Does |
 |------|-----------|-------|-------------|
@@ -173,7 +170,7 @@ acceleration).
 ## LFO Waveforms
 
 The LFO (Low Frequency Oscillator) shapes how the pitch wobbles over time.
-Cycle through waveforms by holding **Shift + tapping Preset**.
+Cycle through waveforms by holding **Bank + tapping Preset**.
 
 | # | Shape | Character |
 |---|-------|-----------|
@@ -190,10 +187,10 @@ The cycle wraps: after Exp Fall, it returns to Sine.
 
 ---
 
-## Pitch Envelope Switch
+## Pitch Envelope Toggle (Position 6)
 
-The three-position toggle switch controls what happens to the pitch when you
-**release** the Trigger button:
+The three-position toggle (located under Knob 3) controls what happens to the
+pitch when you **release** the Trigger button:
 
 | Position | Effect |
 |----------|--------|
@@ -215,7 +212,7 @@ slides on release, the LFO speed follows along. You can unlink them.
 
 **How to activate:**
 > Flip the pitch switch to the **Fall** position three times quickly
-> (triple-tap within 700 ms). Do **not** hold Shift.
+> (triple-tap within 700 ms). Do **not** hold Bank.
 
 - **Linked (default):** LFO rate scales with the pitch envelope during release,
   creating complex intertwined modulation.
@@ -227,7 +224,7 @@ A heavy spring-tank reverb mode inspired by classic dub mixing desks. Enabled
 by default on boot.
 
 **How to activate:**
-> **Hold Shift** and flip the pitch switch to the **Fall** position three
+> **Hold Bank** and flip the pitch switch to the **Fall** position three
 > times quickly (triple-tap within 700 ms).
 
 - **On (default):** Enhanced reverb with extra feedback and compression.
@@ -238,8 +235,8 @@ by default on boot.
 
 | Secret | How | Default |
 |--------|-----|---------|
-| LFO-Pitch Link | Triple-tap Fall (no Shift) | ON |
-| Super Drip Reverb | Shift + Triple-tap Fall | ON |
+| LFO-Pitch Link | Triple-tap Fall (no Bank) | ON |
+| Super Drip Reverb | Bank + Triple-tap Fall | ON |
 
 ---
 
@@ -308,19 +305,19 @@ by default on boot.
 - Pitch switch to **Fall** for downward lasers or **Rise** for upward ones.
 
 ### Rhythmic Stutter
-- Set LFO to **Square** (Shift + tap Preset until Square).
+- Set LFO to **Square** (Bank + tap Preset until Square).
 - Crank LFO Rate (Knob 2) to 8–14 Hz.
-- Set LFO Depth (Shift + Knob 1) to 80%+.
+- Set LFO Depth (Bank + Knob 1) to 80%+.
 - Hold Trigger for machine-gun bursts.
 
 ### Sub-Bass Drops
 - Turn Base Frequency (Knob 1) down to 50–120 Hz.
 - Pitch switch to **Fall**.
-- Set Release Time (Shift + Knob 2) to 2–3 seconds.
+- Set Release Time (Bank + Knob 2) to 2–3 seconds.
 - Hold and release Trigger for massive drops.
 
 ### Self-Oscillating Filter
-- Turn Filter Resonance (Shift + Knob 3) above 85%.
+- Turn Filter Resonance (Bank + Knob 3) above 85%.
 - Sweep Filter Cutoff (Knob 3) slowly.
 - The filter becomes its own oscillator — pure singing tones.
 
@@ -331,12 +328,12 @@ by default on boot.
 - Pull feedback back down to rein it in.
 
 ### Dub Mixdown Style
-- Enable Super Drip reverb (Shift + triple-tap Fall) for heavy spring tank.
+- Enable Super Drip reverb (Bank + triple-tap Fall) for heavy spring tank.
 - Use short Trigger taps with long release and high reverb mix.
 - Ride the delay feedback knob in real time for dub-style echo throws.
 
 ### Chaos Mode
-- Switch to Experimental Bank (triple-click Shift).
+- Switch to Experimental Bank (triple-click Bank).
 - Load Insect Swarm or Glitch Storm.
 - Everything is extreme — small knob changes make big differences.
 
