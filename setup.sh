@@ -451,8 +451,8 @@ EOF
         cat > "/etc/systemd/system/${persist_unit}" << EOF
 [Unit]
 Description=Writable mount of root device for persistent data
-DefaultDependencies=no
-After=local-fs.target
+After=local-fs-pre.target
+Before=local-fs.target
 
 [Mount]
 What=${root_dev}
@@ -475,7 +475,7 @@ Requires=${persist_unit}
 What=/mnt/persist${INSTALL_DIR}/data
 Where=${INSTALL_DIR}/data
 Type=none
-Options=bind
+Options=bind,nofail
 
 [Install]
 WantedBy=local-fs.target
@@ -495,16 +495,6 @@ EOF
     if command -v raspi-config &>/dev/null; then
         systemctl enable "${persist_unit}" "${data_unit}"
         success "Writable data directory configured at ${INSTALL_DIR}/data/"
-
-        # Strengthen mount dependency: dubsiren must not start without
-        # persistent storage, otherwise saved presets silently go to the
-        # volatile overlay and are lost on power cycle.
-        mkdir -p /etc/systemd/system/dubsiren.service.d
-        cat > /etc/systemd/system/dubsiren.service.d/kiosk-mounts.conf << EOF
-[Unit]
-Requires=${data_unit}
-EOF
-        success "Kiosk mount dependency added (Requires=${data_unit})."
 
         raspi-config nonint enable_overlayfs
         BOOT_CHANGED=true
