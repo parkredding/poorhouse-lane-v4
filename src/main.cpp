@@ -1267,8 +1267,8 @@ int main(int argc, char *argv[])
             break;
         case 1: {
             // Shift → bank select
-            //   Double-click: switch to standard preset bank
-            //   Triple-click: switch to experimental preset bank
+            //   Double-click: toggle standard ↔ user preset bank
+            //   Triple-click: toggle experimental ↔ user preset bank
             g_shift.store(pressed);
 
             if (pressed) {
@@ -1293,7 +1293,10 @@ int main(int argc, char *argv[])
                             now - g_shift_first_click).count();
                     g_shift_clicks = 0;
                     if (span < 500) {
-                        switch_bank(BankMode::EXPERIMENTAL);
+                        if (static_cast<BankMode>(g_bank_mode.load()) == BankMode::EXPERIMENTAL)
+                            switch_bank(BankMode::USER);
+                        else
+                            switch_bank(BankMode::EXPERIMENTAL);
                     }
                 } else if (g_shift_clicks == 2) {
                     // Pending double-click (may become triple)
@@ -1445,7 +1448,10 @@ int main(int argc, char *argv[])
             if (elapsed > 350) {
                 g_shift_dblclick_pending.store(false);
                 g_shift_clicks = 0;
-                switch_bank(BankMode::STANDARD);
+                if (static_cast<BankMode>(g_bank_mode.load()) == BankMode::STANDARD)
+                    switch_bank(BankMode::USER);
+                else
+                    switch_bank(BankMode::STANDARD);
             }
         }
     }
