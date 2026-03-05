@@ -420,10 +420,16 @@ static bool is_overlay_root()
     if (!f) return false;
     char line[512];
     while (fgets(line, sizeof(line), f)) {
-        // Look for a mount whose mount-point is exactly " / "
-        // and whose filesystem type contains "overlay"
-        const char* mp = strstr(line, " / ");
-        if (mp && strstr(mp, "overlay")) { fclose(f); return true; }
+        // /proc/mounts format: device mount_point fs_type options ...
+        // Parse fields explicitly to avoid false positives from
+        // "overlay" appearing in mount options of a non-overlay root.
+        char device[256], mount_point[256], fs_type[256];
+        if (sscanf(line, "%255s %255s %255s", device, mount_point, fs_type) == 3) {
+            if (strcmp(mount_point, "/") == 0 && strcmp(fs_type, "overlay") == 0) {
+                fclose(f);
+                return true;
+            }
+        }
     }
     fclose(f);
     return false;
