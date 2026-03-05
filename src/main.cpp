@@ -409,12 +409,59 @@ static std::chrono::steady_clock::time_point g_shift_dblclick_time{};
 static int g_shift_clicks = 0;
 static std::chrono::steady_clock::time_point g_shift_first_click{};
 
+// ─── Overlay / mount-point helpers ───────────────────────────────────
+
+// True when the root filesystem is overlayFS (kiosk / read-only mode).
+// Writes to the overlay go to a RAM-backed upper layer and vanish on
+// power loss, so we must detect this and route presets elsewhere.
+static bool is_overlay_root()
+{
+    FILE* f = fopen("/proc/mounts", "r");
+    if (!f) return false;
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        // /proc/mounts format: device mount_point fs_type options ...
+        // Parse fields explicitly to avoid false positives from
+        // "overlay" appearing in mount options of a non-overlay root.
+        char device[256], mount_point[256], fs_type[256];
+        if (sscanf(line, "%255s %255s %255s", device, mount_point, fs_type) == 3) {
+            if (strcmp(mount_point, "/") == 0 && strcmp(fs_type, "overlay") == 0) {
+                fclose(f);
+                return true;
+            }
+        }
+    }
+    fclose(f);
+    return false;
+}
+
+// True when `path` is a mount point (device differs from its parent).
+// Used to detect an active bind-mount at <install_dir>/data.
+static bool is_mount_point(const char* dir_path)
+{
+    struct stat st, parent_st;
+    if (stat(dir_path, &st) != 0) return false;
+
+    char parent[PATH_MAX];
+    snprintf(parent, sizeof(parent), "%s/..", dir_path);
+    if (stat(parent, &parent_st) != 0) return false;
+
+    return st.st_dev != parent_st.st_dev;
+}
+
+// Flag set when preset storage is known to be volatile (overlay RAM).
+static bool g_volatile_presets = false;
+
 // ─── Preset file path ────────────────────────────────────────────────
 
 static const char* preset_file_path()
 {
     static char path[PATH_MAX] = {};
     if (path[0]) return path;
+
+    const bool overlay = is_overlay_root();
+    if (overlay)
+        printf("  Overlay FS detected — looking for persistent storage\n");
 
     // Resolve install dir from executable path:
     //   /home/<user>/dubsiren/build/dubsiren  →  /home/<user>/dubsiren
@@ -444,9 +491,58 @@ static const char* preset_file_path()
             snprintf(persist, sizeof(persist), "/mnt/persist%s", base);
             struct stat st;
             use_persist = (stat(persist, &st) == 0 && S_ISDIR(st.st_mode));
+
+            // On overlay FS the persist mount is critical.  If it isn't
+            // visible yet (boot race / slow mount) retry a few times.
+            if (!use_persist && overlay) {
+                for (int attempt = 1; attempt <= 3 && !use_persist; attempt++) {
+                    fprintf(stderr,
+                        "  !!! Persist mount not ready — retry %d/3 ...\n",
+                        attempt);
+                    sleep(1);
+                    use_persist = (stat(persist, &st) == 0
+                                   && S_ISDIR(st.st_mode));
+                }
+            }
         }
 
-        const char* root = use_persist ? persist : base;
+        // Determine the storage root.
+        // Priority: 1) /mnt/persist  2) bind-mount at base/data  3) base
+        const char* root = nullptr;
+        const char* storage_label = nullptr;
+
+        if (use_persist) {
+            root = persist;
+            storage_label = "persist mount — durable";
+        } else if (overlay) {
+            // Persist mount unavailable.  Check whether the systemd
+            // bind-mount at <base>/data is active — if so, writes
+            // through it still reach the real disk.
+            char data_dir[PATH_MAX];
+            snprintf(data_dir, sizeof(data_dir), "%s/data", base);
+            if (is_mount_point(data_dir)) {
+                root = base;
+                storage_label = "bind-mount — durable";
+            } else {
+                // No persistent storage available.  Writes will go to
+                // the overlay RAM layer and be LOST on power cycle.
+                root = base;
+                storage_label = "VOLATILE (overlay RAM) — WILL NOT PERSIST";
+                g_volatile_presets = true;
+                fprintf(stderr,
+                    "\n"
+                    "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+                    "  !!!  WARNING: No persistent storage available  !!!\n"
+                    "  !!!  User presets will be LOST on power cycle  !!!\n"
+                    "  !!!  Check mnt-persist.mount / data bind mount !!!\n"
+                    "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+                    "\n");
+            }
+        } else {
+            // Not on overlay FS — regular read-write filesystem
+            root = base;
+            storage_label = "local filesystem — durable";
+        }
 
         snprintf(path, sizeof(path), "%s/data", root);
         if (mkdir(path, 0755) != 0 && errno != EEXIST)
@@ -455,8 +551,8 @@ static const char* preset_file_path()
         if (mkdir(path, 0755) != 0 && errno != EEXIST)
             fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
         snprintf(path, sizeof(path), "%s/data/presets/user_presets.txt", root);
-        printf("  Preset file: %s%s\n", path,
-               use_persist ? " (persist mount)" : "");
+        printf("  Preset file: %s\n", path);
+        printf("  Storage:     %s\n", storage_label);
         return path;
     }
 
@@ -474,7 +570,14 @@ static const char* preset_file_path()
     if (mkdir(path, 0755) != 0 && errno != EEXIST)
         fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
     snprintf(path, sizeof(path), "%s/.config/dubsiren/user_presets.txt", home);
-    printf("  Preset file: %s (HOME fallback)\n", path);
+
+    if (overlay) {
+        g_volatile_presets = true;
+        fprintf(stderr,
+            "  !!! HOME fallback on overlay FS — presets WILL NOT PERSIST\n");
+    }
+    printf("  Preset file: %s (HOME fallback%s)\n", path,
+           overlay ? " — VOLATILE" : "");
     return path;
 }
 
@@ -549,6 +652,12 @@ static void save_user_presets()
         *slash = '\0';
         int dfd = open(dir, O_RDONLY);
         if (dfd >= 0) { fsync(dfd); close(dfd); }
+    }
+
+    if (g_volatile_presets) {
+        fprintf(stderr,
+            "  !!! WARNING: Preset saved to volatile storage — "
+            "will be lost on power cycle!\n");
     }
 }
 

@@ -496,6 +496,16 @@ EOF
         systemctl enable "${persist_unit}" "${data_unit}"
         success "Writable data directory configured at ${INSTALL_DIR}/data/"
 
+        # Strengthen mount dependency: dubsiren must not start without
+        # persistent storage, otherwise saved presets silently go to the
+        # volatile overlay and are lost on power cycle.
+        mkdir -p /etc/systemd/system/dubsiren.service.d
+        cat > /etc/systemd/system/dubsiren.service.d/kiosk-mounts.conf << EOF
+[Unit]
+Requires=${data_unit}
+EOF
+        success "Kiosk mount dependency added (Requires=${data_unit})."
+
         raspi-config nonint enable_overlayfs
         BOOT_CHANGED=true
         success "Read-only overlay filesystem enabled."
