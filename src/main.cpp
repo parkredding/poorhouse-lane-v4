@@ -15,15 +15,15 @@
 //
 // Buttons:
 //   Trigger  (GPIO 4)   Gate volume envelope; resets LFO phase
-//   Shift    (GPIO 15)  Hold for Bank B; double-click = toggle factory/user bank
-//                        triple-click = pitch-delay-LFO link
+//   Shift    (GPIO 15)  Hold for Bank B; double-click = standard bank
+//                        triple-click = experimental bank
 //   Preset   (GPIO 5)   Cycle dub siren preset; Shift+Preset = cycle LFO shape
 //                        Long-press (3s) = save to user bank
 //
-// Presets (GPIO 5, Bank A):
-//   Factory:  1. Lickshot  2. Earthshaker  3. Slow Wail  4. Machine Gun
-//             5. Roots  6. Droppa  7. Deep Roller  8. Laser Sweep
-//   User:     8 saveable slots (long-press Preset to save, double-click to switch bank)
+// Preset banks (4 presets each):
+//   User:         Boot default — 4 saveable slots (long-press Preset to save)
+//   Standard:     Double-click Shift — factory presets
+//   Experimental: Triple-click Shift — extreme/crazy presets
 //
 // LFO shapes (Shift+GPIO 5):
 //   Sine → Triangle → Square → RampUp → RampDown → S&H → ExpRise → ExpFall
@@ -31,7 +31,7 @@
 // Pitch envelope switch (GPIO 9/10):
 //   Rise / Off / Fall — sweeps pitch on trigger release
 //   Filter always darkens on release (DS71-style), independent of switch
-//   Triple-tap to Fall = toggle LFO-pitch link (LFO rate follows envelope)
+//   Preset loads set pitch env; physical switch overrides until next load
 //   Shift + triple-tap to Fall = toggle super drip reverb (heavy dub spring)
 
 #include <cstdio>
@@ -90,14 +90,10 @@ static std::atomic<bool>  g_gate{false};
 static std::atomic<bool>  g_shift{false};
 static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
 
-// Pitch-delay-LFO link (secret mode: triple-click Shift to toggle)
-static std::atomic<bool>  g_delay_link{false};
-// LFO-pitch-envelope link (default on; secret: triple-tap pitch switch to fall to toggle)
-static std::atomic<bool>  g_lfo_pitch_link{true};
 // Super drip reverb (default on; secret: hold Shift + triple-tap fall to toggle)
 static std::atomic<bool>  g_super_drip{true};
-static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay (may be freq-scaled)
-static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (may be freq-scaled)
+static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay time
+static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (freq-scaled)
 
 // ─── Per-parameter step sizes (base, before acceleration) ───────────
 //
@@ -122,8 +118,6 @@ static constexpr float FILTER_RESO_STEP = 0.03f;               // 3 % (fine near
 static constexpr float DELAY_MIX_STEP  = 0.05f;                // 5 % per click
 static constexpr float REVERB_MIX_STEP = 0.05f;                // 5 % per click
 
-// Pitch-delay link mode
-static constexpr float FREQ_STEP_LINKED = 1.165f;              // ~minor-third jumps
 static constexpr float REF_FREQ         = 440.0f;              // neutral scaling point
 
 static void update_link_eff();           // forward declaration
@@ -154,9 +148,10 @@ struct DubPreset {
     float       reverb_mix;     // reverb wet/dry (0–1)
     float       release_time;   // envelope release (seconds)
     float       sweep_dir;      // filter sweep on release: -1=Down, 0=Flat, +1=Up
+    int         pitch_env;      // pitch envelope: -1=Fall, 0=Off, +1=Rise
 };
 
-static constexpr int NUM_PRESETS = 5;
+static constexpr int NUM_PRESETS = 4;
 
 static const DubPreset PRESETS[NUM_PRESETS] = {
     //  ── 1. Slow Wail ──────────────────────────────────────────────
@@ -179,6 +174,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.45f,          // reverb_mix  (spring wash)
         2.000f,         // release_time  (long 2-second fade — boot signature)
         -1.0f,          // sweep_dir  (Down — canonical dub waaah on release)
+        -1,             // pitch_env  (Fall — pitch drops on release)
     },
     //  ── 2. Machine Gun ────────────────────────────────────────────
     //  Rapid-fire stutter.  Square LFO chops the pitch and filter
@@ -200,6 +196,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.30f,          // reverb_mix  (room around the bursts)
         0.500f,         // release_time  (longer tail — stutter fades through filter)
         -1.0f,          // sweep_dir  (Down — filter closes as stutter fades out)
+        0,              // pitch_env  (Off — let the stutter do the work)
     },
     //  ── 3. Lickshot ───────────────────────────────────────────────
     //  The classic laser-gun sound.  Square wave with fast triangle
@@ -221,6 +218,7 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.35f,          // reverb_mix  (spring tank)
         0.350f,         // release_time  (medium tail — filter sweep audible)
         -1.0f,          // sweep_dir  (Down — filter darkens into delay on release)
+        -1,             // pitch_env  (Fall — laser drops on release)
     },
     //  ── 4. Droppa ───────────────────────────────────────────────────
     //  Descending siren wail.  Ramp-down LFO pulls pitch and filter
@@ -242,36 +240,109 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
         0.40f,          // reverb_mix  (deep spring wash)
         0.800f,         // release_time  (longer tail — drop fades into darkness)
         -1.0f,          // sweep_dir  (Down — filter falls with the pitch, completes the drop)
-    },
-    //  ── 5. Laser Sweep ────────────────────────────────────────────
-    //  Rising laser blast.  Ramp-up LFO sweeps pitch and filter
-    //  upward — each cycle growls low then zaps bright.  Resonant
-    //  filter adds squelch, quick release with upward sweep leaves
-    //  a bright splash that scatters through the delay.
-    {
-        "Laser Sweep",
-        1,              // Square
-        3,              // LFO: RampUp
-        900.0f,         // freq  (lower start for wider sweep)
-        5.0f,           // lfo_rate  (medium sweep)
-        0.80f,          // lfo_depth  (wide pitch + filter range)
-        3000.0f,        // filter_cutoff  (opens up dramatically)
-        0.50f,          // filter_reso  (heavy squelch on rise)
-        0.300f,         // delay_time  (echo trails)
-        0.60f,          // delay_feedback  (cascading zaps)
-        0.40f,          // delay_mix  (prominent echo)
-        0.35f,          // reverb_mix  (spring splash)
-        0.400f,         // release_time  (medium tail — bright sweep into delay)
-        +1.0f,          // sweep_dir  (Up — filter opens on release, the "whale" tail)
+        -1,             // pitch_env  (Fall — completes the descending drop)
     },
 };
 
-static std::atomic<int> g_preset{0};    // current preset index (0–4)
+// ─── Experimental Presets ────────────────────────────────────────────
+//
+// Wild, extreme parameter combinations that push the synth to its
+// limits.  Accessible via triple-tap of the Shift (bank) button.
 
-static void apply_preset(int idx)
+static constexpr int NUM_EXPERIMENTAL = 4;
+
+static const DubPreset EXPERIMENTAL[NUM_EXPERIMENTAL] = {
+    //  ── 1. Insect Swarm ───────────────────────────────────────────
+    //  Ultra-fast S&H LFO creates chaotic random pitch jumps.  High
+    //  resonance near self-oscillation, heavy feedback delay creates
+    //  cascading metallic insect-like buzzing.
+    {
+        "Insect Swarm",
+        1,              // Square
+        5,              // LFO: S&H (sample & hold — random steps)
+        2000.0f,        // freq  (high, piercing)
+        18.0f,          // lfo_rate  (near-max — frantic random jumps)
+        0.95f,          // lfo_depth  (extreme range)
+        6000.0f,        // filter_cutoff  (bright, lets harmonics through)
+        0.85f,          // filter_reso  (near self-oscillation — screaming)
+        0.050f,         // delay_time  (very short — comb filter territory)
+        0.90f,          // delay_feedback  (near runaway — metallic buildup)
+        0.70f,          // delay_mix  (heavy wet signal)
+        0.60f,          // reverb_mix  (washy chaos)
+        0.150f,         // release_time  (short — tight bursts)
+        +1.0f,          // sweep_dir  (Up — filter opens into bright noise)
+        +1,             // pitch_env  (Rise — pitch shoots up on release)
+    },
+    //  ── 2. Depth Charge ───────────────────────────────────────────
+    //  Sub-bass sine wave with exponential fall LFO.  Extreme depth
+    //  pulls pitch down into seismic territory.  Long delay with max
+    //  feedback creates booming underwater explosions.
+    {
+        "Depth Charge",
+        0,              // Sine
+        7,              // LFO: ExpFall
+        120.0f,         // freq  (low bass)
+        0.5f,           // lfo_rate  (slow — ponderous drops)
+        1.00f,          // lfo_depth  (full range — massive pitch sweep)
+        800.0f,         // filter_cutoff  (very dark, subterranean)
+        0.70f,          // filter_reso  (boomy resonance)
+        0.800f,         // delay_time  (long — cavernous echoes)
+        0.92f,          // delay_feedback  (near-infinite — rolling thunder)
+        0.80f,          // delay_mix  (mostly wet — underwater)
+        0.85f,          // reverb_mix  (massive space)
+        3.000f,         // release_time  (very long decay)
+        -1.0f,          // sweep_dir  (Down — sinks into the deep)
+        -1,             // pitch_env  (Fall — descends into the abyss)
+    },
+    //  ── 3. Glitch Storm ───────────────────────────────────────────
+    //  Triangle wave with exponential rise LFO at high rate.  Rapid
+    //  upward pitch sweeps with short delay creates stuttering,
+    //  glitchy digital-sounding mayhem.  Filter resonance near max.
+    {
+        "Glitch Storm",
+        3,              // Triangle
+        6,              // LFO: ExpRise
+        600.0f,         // freq  (mid — room to sweep both ways)
+        15.0f,          // lfo_rate  (fast — frantic)
+        0.90f,          // lfo_depth  (extreme pitch range)
+        12000.0f,       // filter_cutoff  (bright — all harmonics)
+        0.90f,          // filter_reso  (screaming, near self-osc)
+        0.120f,         // delay_time  (short — stuttering)
+        0.85f,          // delay_feedback  (heavy — self-reinforcing glitches)
+        0.65f,          // delay_mix  (prominent echo mayhem)
+        0.20f,          // reverb_mix  (tight — keeps glitches defined)
+        0.100f,         // release_time  (very short — percussive hits)
+        +1.0f,          // sweep_dir  (Up — filter opens into brightness)
+        0,              // pitch_env  (Off — let the LFO do the chaos)
+    },
+    //  ── 4. Foghorn From Hell ──────────────────────────────────────
+    //  Sawtooth at very low frequency with slow ramp-up LFO.  Rich
+    //  harmonics through resonant filter with maximum reverb and
+    //  heavy delay feedback — a monstrous droning foghorn that fills
+    //  the entire space.
+    {
+        "Foghorn From Hell",
+        2,              // Saw
+        3,              // LFO: RampUp
+        55.0f,          // freq  (very low — sub A1)
+        0.3f,           // lfo_rate  (very slow — ominous creep)
+        0.85f,          // lfo_depth  (wide — enormous pitch range)
+        1200.0f,        // filter_cutoff  (low — dark and thick)
+        0.80f,          // filter_reso  (resonant growl)
+        0.600f,         // delay_time  (long — massive echo)
+        0.88f,          // delay_feedback  (near-infinite — droning buildup)
+        0.75f,          // delay_mix  (heavy wet — wall of sound)
+        0.90f,          // reverb_mix  (cathedral of doom)
+        4.000f,         // release_time  (very long — hangs in the air)
+        -1.0f,          // sweep_dir  (Down — darkens into oblivion)
+        -1,             // pitch_env  (Fall — drops into the void)
+    },
+};
+
+static std::atomic<int> g_preset{0};    // current preset index (0–3)
+
+static void apply_dub_preset(const DubPreset& p)
 {
-    const DubPreset& p = PRESETS[idx % NUM_PRESETS];
-
     g_waveform.store(p.waveform);
     g_lfo_waveform.store(p.lfo_wave);
     g_freq.store(p.freq);
@@ -285,13 +356,24 @@ static void apply_preset(int idx)
     g_reverb_mix.store(p.reverb_mix);
     g_release_time.store(p.release_time);
     g_sweep_dir.store(p.sweep_dir);
+    g_pitch_env.store(p.pitch_env);
 
     update_link_eff();
 }
 
+static void apply_preset(int idx)
+{
+    apply_dub_preset(PRESETS[idx % NUM_PRESETS]);
+}
+
+static void apply_experimental(int idx)
+{
+    apply_dub_preset(EXPERIMENTAL[idx % NUM_EXPERIMENTAL]);
+}
+
 // ─── User preset bank ────────────────────────────────────────────────
 
-static constexpr int NUM_USER_PRESETS = 8;
+static constexpr int NUM_USER_PRESETS = 4;
 
 struct UserPreset {
     bool saved;             // true = has user data, false = factory copy
@@ -308,13 +390,15 @@ struct UserPreset {
     float reverb_mix;
     float release_time;
     float sweep_dir;
-    bool  delay_link;
-    bool  lfo_pitch_link;
+    int   pitch_env;        // -1=Fall, 0=Off, +1=Rise
     bool  super_drip;
 };
 
 static UserPreset g_user_presets[NUM_USER_PRESETS];
-static std::atomic<bool> g_user_bank{false};  // false=factory, true=user
+
+// Bank mode: USER (boot default), STANDARD (factory), EXPERIMENTAL
+enum class BankMode { USER, STANDARD, EXPERIMENTAL };
+static std::atomic<int> g_bank_mode{static_cast<int>(BankMode::USER)};
 
 // Pending double-click state for bank toggle on Shift button
 static std::atomic<bool> g_shift_dblclick_pending{false};
@@ -393,8 +477,7 @@ static UserPreset snapshot_current()
     u.reverb_mix    = g_reverb_mix.load();
     u.release_time  = g_release_time.load();
     u.sweep_dir     = g_sweep_dir.load();
-    u.delay_link    = g_delay_link.load();
-    u.lfo_pitch_link= g_lfo_pitch_link.load();
+    u.pitch_env     = g_pitch_env.load();
     u.super_drip    = g_super_drip.load();
     return u;
 }
@@ -415,18 +498,17 @@ static void save_user_presets()
         return;
     }
 
-    fprintf(f, "DUBSIREN_PRESETS_V1\n");
+    fprintf(f, "DUBSIREN_PRESETS_V2\n");
     for (int i = 0; i < NUM_USER_PRESETS; i++) {
         const UserPreset& u = g_user_presets[i];
-        fprintf(f, "%d %d %d %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %d %d %d\n",
+        fprintf(f, "%d %d %d %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %d %d\n",
                 u.saved ? 1 : 0,
                 u.waveform, u.lfo_wave,
                 u.freq, u.lfo_rate, u.lfo_depth,
                 u.filter_cutoff, u.filter_reso,
                 u.delay_time, u.delay_feedback, u.delay_mix,
                 u.reverb_mix, u.release_time, u.sweep_dir,
-                u.delay_link ? 1 : 0,
-                u.lfo_pitch_link ? 1 : 0,
+                u.pitch_env,
                 u.super_drip ? 1 : 0);
     }
 
@@ -453,44 +535,84 @@ static void load_user_presets()
     if (!f) return;  // no saved presets — keep factory defaults
 
     char header[64];
-    if (!fgets(header, sizeof(header), f) ||
-        strncmp(header, "DUBSIREN_PRESETS_V1", 19) != 0) {
+    if (!fgets(header, sizeof(header), f)) {
+        fprintf(stderr, "  !!! Empty preset file — ignoring\n");
+        fclose(f);
+        return;
+    }
+
+    bool v2 = (strncmp(header, "DUBSIREN_PRESETS_V2", 19) == 0);
+    bool v1 = (strncmp(header, "DUBSIREN_PRESETS_V1", 19) == 0);
+    if (!v1 && !v2) {
         fprintf(stderr, "  !!! Invalid preset file — ignoring\n");
         fclose(f);
         return;
     }
 
-    for (int i = 0; i < NUM_USER_PRESETS; i++) {
-        UserPreset& u = g_user_presets[i];
-        int saved, dl, lpl, sd;
-        int n = fscanf(f, "%d %d %d %f %f %f %f %f %f %f %f %f %f %f %d %d %d",
-                       &saved,
-                       &u.waveform, &u.lfo_wave,
-                       &u.freq, &u.lfo_rate, &u.lfo_depth,
-                       &u.filter_cutoff, &u.filter_reso,
-                       &u.delay_time, &u.delay_feedback, &u.delay_mix,
-                       &u.reverb_mix, &u.release_time, &u.sweep_dir,
-                       &dl, &lpl, &sd);
-        if (n == 17) {
-            // Validate enum indices to prevent out-of-bounds access
-            if (u.waveform < 0 || u.waveform >= static_cast<int>(Waveform::COUNT) ||
-                u.lfo_wave < 0 || u.lfo_wave >= static_cast<int>(LfoWave::COUNT) ||
-                u.sweep_dir < -1 || u.sweep_dir > 1) {
-                fprintf(stderr, "  !!! Preset %d has invalid values — skipping\n", i);
-                u.saved = false;
-                continue;
+    // V1 had 8 slots, V2 has 4 — only load what fits
+    int slots_in_file = v1 ? 8 : NUM_USER_PRESETS;
+
+    for (int i = 0; i < slots_in_file; i++) {
+        // V1 files have 8 presets but we only have 4 slots now
+        bool skip = (i >= NUM_USER_PRESETS);
+        UserPreset tmp;
+        UserPreset& u = skip ? tmp : g_user_presets[i];
+
+        if (v2) {
+            int saved, pe, sd;
+            int n = fscanf(f, "%d %d %d %f %f %f %f %f %f %f %f %f %f %f %d %d",
+                           &saved,
+                           &u.waveform, &u.lfo_wave,
+                           &u.freq, &u.lfo_rate, &u.lfo_depth,
+                           &u.filter_cutoff, &u.filter_reso,
+                           &u.delay_time, &u.delay_feedback, &u.delay_mix,
+                           &u.reverb_mix, &u.release_time, &u.sweep_dir,
+                           &pe, &sd);
+            if (n == 16) {
+                if (u.waveform < 0 || u.waveform >= static_cast<int>(Waveform::COUNT) ||
+                    u.lfo_wave < 0 || u.lfo_wave >= static_cast<int>(LfoWave::COUNT) ||
+                    u.sweep_dir < -1 || u.sweep_dir > 1 ||
+                    pe < -1 || pe > 1) {
+                    fprintf(stderr, "  !!! Preset %d has invalid values — skipping\n", i);
+                    u.saved = false;
+                    continue;
+                }
+                u.saved      = (saved != 0);
+                u.pitch_env  = pe;
+                u.super_drip = (sd != 0);
+            } else {
+                break;
             }
-            u.saved         = (saved != 0);
-            u.delay_link    = (dl != 0);
-            u.lfo_pitch_link= (lpl != 0);
-            u.super_drip    = (sd != 0);
         } else {
-            break;  // corrupt file — stop reading
+            // V1 format: 17 fields (includes delay_link, lfo_pitch_link)
+            int saved, dl, lpl, sd;
+            int n = fscanf(f, "%d %d %d %f %f %f %f %f %f %f %f %f %f %f %d %d %d",
+                           &saved,
+                           &u.waveform, &u.lfo_wave,
+                           &u.freq, &u.lfo_rate, &u.lfo_depth,
+                           &u.filter_cutoff, &u.filter_reso,
+                           &u.delay_time, &u.delay_feedback, &u.delay_mix,
+                           &u.reverb_mix, &u.release_time, &u.sweep_dir,
+                           &dl, &lpl, &sd);
+            if (n == 17) {
+                if (u.waveform < 0 || u.waveform >= static_cast<int>(Waveform::COUNT) ||
+                    u.lfo_wave < 0 || u.lfo_wave >= static_cast<int>(LfoWave::COUNT) ||
+                    u.sweep_dir < -1 || u.sweep_dir > 1) {
+                    fprintf(stderr, "  !!! Preset %d has invalid values — skipping\n", i);
+                    u.saved = false;
+                    continue;
+                }
+                u.saved      = (saved != 0);
+                u.pitch_env  = 0;  // V1 didn't store pitch_env, default off
+                u.super_drip = (sd != 0);
+            } else {
+                break;
+            }
         }
     }
 
     fclose(f);
-    printf("  User presets loaded from %s\n", path);
+    printf("  User presets loaded from %s (%s)\n", path, v2 ? "V2" : "V1→V2 migration");
 }
 
 static void init_user_presets()
@@ -513,8 +635,7 @@ static void init_user_presets()
         u.reverb_mix    = f.reverb_mix;
         u.release_time  = f.release_time;
         u.sweep_dir     = f.sweep_dir;
-        u.delay_link    = false;
-        u.lfo_pitch_link= true;
+        u.pitch_env     = f.pitch_env;
         u.super_drip    = true;
     }
 
@@ -570,28 +691,49 @@ static void apply_user_preset(const UserPreset& u)
     g_reverb_mix.store(u.reverb_mix);
     g_release_time.store(u.release_time);
     g_sweep_dir.store(u.sweep_dir);
-    g_delay_link.store(u.delay_link);
-    g_lfo_pitch_link.store(u.lfo_pitch_link);
+    g_pitch_env.store(u.pitch_env);
     g_super_drip.store(u.super_drip);
 
     update_link_eff();
 }
 
-// ─── Toggle factory/user bank ─────────────────────────────────────────
+// ─── Bank name helper ─────────────────────────────────────────────────
 
-static void toggle_bank()
+static const char* bank_name(BankMode m)
 {
-    bool ub = !g_user_bank.load();
-    g_user_bank.store(ub);
+    switch (m) {
+    case BankMode::USER:         return "USER";
+    case BankMode::STANDARD:     return "STANDARD";
+    case BankMode::EXPERIMENTAL: return "EXPERIMENTAL";
+    }
+    return "?";
+}
+
+// ─── Switch to a specific bank ────────────────────────────────────────
+
+static void switch_bank(BankMode mode)
+{
+    g_bank_mode.store(static_cast<int>(mode));
     int idx = g_preset.load();
-    if (ub) {
+    switch (mode) {
+    case BankMode::USER:
+        // Clamp index to user preset count
+        if (idx >= NUM_USER_PRESETS) { idx = 0; g_preset.store(idx); }
         apply_user_preset(g_user_presets[idx]);
         printf("  BANK: USER  slot %d%s\n",
                idx + 1,
                g_user_presets[idx].saved ? "" : "  (factory copy)");
-    } else {
+        break;
+    case BankMode::STANDARD:
+        if (idx >= NUM_PRESETS) { idx = 0; g_preset.store(idx); }
         apply_preset(idx);
-        printf("  BANK: FACTORY  \"%s\"\n", PRESETS[idx].name);
+        printf("  BANK: STANDARD  \"%s\"\n", PRESETS[idx].name);
+        break;
+    case BankMode::EXPERIMENTAL:
+        if (idx >= NUM_EXPERIMENTAL) { idx = 0; g_preset.store(idx); }
+        apply_experimental(idx);
+        printf("  BANK: EXPERIMENTAL  \"%s\"\n", EXPERIMENTAL[idx].name);
+        break;
     }
 }
 
@@ -599,10 +741,15 @@ static void toggle_bank()
 
 static void cycle_preset()
 {
-    int idx = (g_preset.load() + 1) % NUM_PRESETS;
+    auto mode = static_cast<BankMode>(g_bank_mode.load());
+    int count = (mode == BankMode::USER)         ? NUM_USER_PRESETS
+              : (mode == BankMode::STANDARD)     ? NUM_PRESETS
+              :                                    NUM_EXPERIMENTAL;
+    int idx = (g_preset.load() + 1) % count;
     g_preset.store(idx);
 
-    if (g_user_bank.load()) {
+    switch (mode) {
+    case BankMode::USER:
         apply_user_preset(g_user_presets[idx]);
         printf("  USER %d%s  %s LFO:%s %.1fHz@%.0f%%  "
                "Dly:%.0fms FB%.0f%% Mix%.0f%%  Rev:%.0f%%\n",
@@ -616,7 +763,8 @@ static void cycle_preset()
                g_user_presets[idx].delay_feedback * 100.0f,
                g_user_presets[idx].delay_mix * 100.0f,
                g_user_presets[idx].reverb_mix * 100.0f);
-    } else {
+        break;
+    case BankMode::STANDARD: {
         apply_preset(idx);
         const DubPreset& p = PRESETS[idx];
         printf("  PRESET %d  \"%s\"\n", idx + 1, p.name);
@@ -630,6 +778,24 @@ static void cycle_preset()
                p.delay_feedback * 100.0f,
                p.delay_mix * 100.0f,
                p.reverb_mix * 100.0f);
+        break;
+    }
+    case BankMode::EXPERIMENTAL: {
+        apply_experimental(idx);
+        const DubPreset& p = EXPERIMENTAL[idx];
+        printf("  EXP %d  \"%s\"\n", idx + 1, p.name);
+        printf("    %s  LFO:%s %.1fHz@%.0f%%  "
+               "Dly:%.0fms FB%.0f%% Mix%.0f%%  "
+               "Rev:%.0f%%\n",
+               waveform_name(p.waveform),
+               lfo_wave_name(p.lfo_wave),
+               p.lfo_rate, p.lfo_depth * 100.0f,
+               p.delay_time * 1000.0f,
+               p.delay_feedback * 100.0f,
+               p.delay_mix * 100.0f,
+               p.reverb_mix * 100.0f);
+        break;
+    }
     }
 }
 
@@ -727,16 +893,13 @@ struct MultiClickDetector {
     }
 };
 
-// ─── Pitch-delay-LFO link helper ────────────────────────────────────
+// ─── LFO-pitch scaling helper ────────────────────────────────────────
 //
 // Recomputes the effective delay time and LFO rate from their base
 // values and the current frequency.  Called from the control layer
-// whenever freq, delay time, LFO rate, or linked mode changes.
+// whenever freq, delay time, or LFO rate changes.
 //
-// When linked:
-//   delay  ∝ 1/freq  (shorter delays at higher pitches)
-// Always:
-//   LFO    ∝  freq   (faster modulation at higher pitches)
+// LFO rate always tracks pitch (faster modulation at higher pitches).
 
 static void update_link_eff()
 {
@@ -749,11 +912,6 @@ static void update_link_eff()
     r = r * ratio;
     r = std::clamp(r, 0.1f, 20.0f);
 
-    // Delay time only tracks pitch in linked mode
-    if (g_delay_link.load()) {
-        t = t * (1.0f / ratio);
-        t = std::clamp(t, 0.01f, 1.0f);
-    }
     g_delay_time_eff.store(t);
     g_lfo_rate_eff.store(r);
 }
@@ -840,8 +998,6 @@ int main(int argc, char *argv[])
         float rev_mix   = g_reverb_mix.load(rlx);
         float rel_t     = g_release_time.load(rlx);
         int   pe_mode   = g_pitch_env.load(rlx);
-        bool  linked    = g_delay_link.load(rlx);
-        bool  lfo_link  = g_lfo_pitch_link.load(rlx);
         float sweep_dir = g_sweep_dir.load(rlx);
 
         // Recompute release rate and pitch-envelope factors from release time.
@@ -861,7 +1017,7 @@ int main(int argc, char *argv[])
         delay.setTime(dly_t);
         delay.setFeedback(dly_fb);
         delay.setMix(dly_mix);
-        delay.setRepitchRate(linked ? 0.6f : 0.3f);
+        delay.setRepitchRate(0.3f);
         reverb.setSize(REVERB_SIZE);
         reverb.setMix(rev_mix);
         reverb.setSuperDrip(g_super_drip.load(rlx));
@@ -892,8 +1048,8 @@ int main(int argc, char *argv[])
             if (pe_active)
                 sweep_phase = std::min(sweep_phase + sweep_inc, 1.0f);
 
-            // LFO rate optionally tracks pitch envelope (secret mode)
-            lfo.setRate(lfo_link ? lfo_r * pitch_env_mult : lfo_r);
+            // LFO rate
+            lfo.setRate(lfo_r);
 
             // LFO → exponential pitch modulation (pitch only, not filter)
             float lfo_out = lfo.tick();
@@ -969,25 +1125,17 @@ int main(int argc, char *argv[])
         if (!shift) {
             // ── Bank A ─────────────────────────────────────────────
             switch (id) {
-            case 0: {   // Freq — semitone base (or linked step)
-                bool lk = g_delay_link.load();
-                float base = lk ? FREQ_STEP_LINKED : FREQ_STEP;
+            case 0: {   // Freq — semitone base
                 // Halve acceleration for cleaner pitch sweeps (1×–2.5×)
                 float pitch_accel = 1.0f + (accel - 1.0f) * 0.5f;
-                float step = std::pow(base, pitch_accel);
+                float step = std::pow(FREQ_STEP, pitch_accel);
                 float f = g_freq.load();
                 f *= (dir > 0) ? step : (1.0f / step);
                 f = std::clamp(f, 30.0f, 8000.0f);
                 g_freq.store(f);
                 update_link_eff();
-                if (lk) {
-                    printf("  [A] FREQ     %.1f Hz  (dly %.0f ms  lfo %.1f Hz)\n",
-                           f, g_delay_time_eff.load() * 1000.0f,
-                           g_lfo_rate_eff.load());
-                } else {
-                    printf("  [A] FREQ     %.1f Hz  (lfo %.1f Hz)\n",
-                           f, g_lfo_rate_eff.load());
-                }
+                printf("  [A] FREQ     %.1f Hz  (lfo %.1f Hz)\n",
+                       f, g_lfo_rate_eff.load());
                 break;
             }
             case 1: {   // LFO Rate — 12 % base, log accel
@@ -1017,13 +1165,7 @@ int main(int argc, char *argv[])
                 t = std::clamp(t, 0.001f, 1.0f);
                 g_delay_time.store(t);
                 update_link_eff();
-                if (g_delay_link.load()) {
-                    printf("  [A] DLY TIME %.0f ms  (eff %.0f ms)\n",
-                           t * 1000.0f,
-                           g_delay_time_eff.load() * 1000.0f);
-                } else {
-                    printf("  [A] DLY TIME %.0f ms\n", t * 1000.0f);
-                }
+                printf("  [A] DLY TIME %.0f ms\n", t * 1000.0f);
                 break;
             }
             case 4: {   // Delay Feedback — 3 % base (careful near runaway)
@@ -1096,8 +1238,8 @@ int main(int argc, char *argv[])
             break;
         case 1: {
             // Shift → bank select
-            //   Double-click: toggle factory/user bank
-            //   Triple-click: toggle pitch-delay-LFO link
+            //   Double-click: switch to standard preset bank
+            //   Triple-click: switch to experimental preset bank
             g_shift.store(pressed);
 
             if (pressed) {
@@ -1115,24 +1257,14 @@ int main(int argc, char *argv[])
                 g_shift_clicks++;
 
                 if (g_shift_clicks >= 3) {
-                    // Triple-click: toggle link (cancels pending double)
+                    // Triple-click: switch to experimental bank
                     g_shift_dblclick_pending.store(false);
                     auto span = std::chrono::duration_cast<
                         std::chrono::milliseconds>(
                             now - g_shift_first_click).count();
                     g_shift_clicks = 0;
                     if (span < 500) {
-                        bool lk = !g_delay_link.load();
-                        g_delay_link.store(lk);
-                        update_link_eff();
-                        if (lk) {
-                            printf("  >>> PITCH-DELAY-LFO LINK ON"
-                                   "  (dly %.0f ms  lfo %.1f Hz)\n",
-                                   g_delay_time_eff.load() * 1000.0f,
-                                   g_lfo_rate_eff.load());
-                        } else {
-                            printf("  >>> PITCH-DELAY-LFO LINK OFF\n");
-                        }
+                        switch_bank(BankMode::EXPERIMENTAL);
                     }
                 } else if (g_shift_clicks == 2) {
                     // Pending double-click (may become triple)
@@ -1175,11 +1307,16 @@ int main(int argc, char *argv[])
                     if (hold_ms >= 3000) {
                         // ── Long press: save to user bank ──
                         int idx = g_preset.load();
+                        if (idx >= NUM_USER_PRESETS) idx = 0;
                         g_user_presets[idx] = snapshot_current();
                         save_user_presets();
 
                         // Switch to user bank if not already
-                        if (!g_user_bank.load()) g_user_bank.store(true);
+                        auto bm = static_cast<BankMode>(g_bank_mode.load());
+                        if (bm != BankMode::USER) {
+                            g_preset.store(idx);
+                            g_bank_mode.store(static_cast<int>(BankMode::USER));
+                        }
 
                         printf("  >>> SAVED to USER %d  "
                                "(Freq:%.0fHz %s LFO:%s)\n",
@@ -1203,26 +1340,14 @@ int main(int argc, char *argv[])
         static const char *lbl[] = {"FALL", "OFF", "RISE"};
         printf("  PITCH-ENV  %s\n", lbl[pos + 1]);
 
-        // Secret modes on triple-tap to FALL:
-        //   Shift held  → super drip reverb (heavy dub spring)
-        //   Shift free  → LFO-pitch-envelope link
-        if (pos == -1) {
-            if (g_shift.load()) {
-                static MultiClickDetector det{3, 700, 800};
-                if (det.click()) {
-                    bool sd = !g_super_drip.load();
-                    g_super_drip.store(sd);
-                    printf("  >>> SUPER DRIP REVERB %s\n",
-                           sd ? "ON" : "OFF");
-                }
-            } else {
-                static MultiClickDetector det{3, 700, 800};
-                if (det.click()) {
-                    bool lk = !g_lfo_pitch_link.load();
-                    g_lfo_pitch_link.store(lk);
-                    printf("  >>> LFO-PITCH LINK %s\n",
-                           lk ? "ON" : "OFF");
-                }
+        // Secret mode: Shift + triple-tap to FALL toggles super drip reverb
+        if (pos == -1 && g_shift.load()) {
+            static MultiClickDetector det{3, 700, 800};
+            if (det.click()) {
+                bool sd = !g_super_drip.load();
+                g_super_drip.store(sd);
+                printf("  >>> SUPER DRIP REVERB %s\n",
+                       sd ? "ON" : "OFF");
             }
         }
     };
@@ -1231,9 +1356,14 @@ int main(int argc, char *argv[])
 
     cb.on_save_preset = []() {
         int idx = g_preset.load();
+        if (idx >= NUM_USER_PRESETS) idx = 0;
         g_user_presets[idx] = snapshot_current();
         save_user_presets();
-        if (!g_user_bank.load()) g_user_bank.store(true);
+        auto bm = static_cast<BankMode>(g_bank_mode.load());
+        if (bm != BankMode::USER) {
+            g_preset.store(idx);
+            g_bank_mode.store(static_cast<int>(BankMode::USER));
+        }
         printf("  >>> SAVED to USER %d  (Freq:%.0fHz %s LFO:%s)\n",
                idx + 1,
                g_freq.load(),
@@ -1241,7 +1371,18 @@ int main(int argc, char *argv[])
                lfo_wave_name(g_lfo_waveform.load()));
     };
 
-    cb.on_toggle_bank = []() { toggle_bank(); };
+    cb.on_toggle_bank = []() {
+        // Keyboard shortcut cycles: USER → STANDARD → EXPERIMENTAL → USER
+        auto cur = static_cast<BankMode>(g_bank_mode.load());
+        BankMode next;
+        switch (cur) {
+        case BankMode::USER:         next = BankMode::STANDARD;     break;
+        case BankMode::STANDARD:     next = BankMode::EXPERIMENTAL; break;
+        case BankMode::EXPERIMENTAL: next = BankMode::USER;         break;
+        default:                     next = BankMode::USER;         break;
+        }
+        switch_bank(next);
+    };
 
     // ── Initialise GPIO / simulate ──────────────────────────────────
 
@@ -1255,12 +1396,14 @@ int main(int argc, char *argv[])
     // Initialise user presets (factory defaults + saved overrides)
     init_user_presets();
 
-    // Apply the first preset so all defaults are consistent
-    apply_preset(0);
+    // Boot into user bank (identical to standard on first boot)
+    apply_user_preset(g_user_presets[0]);
 
     {
-        const DubPreset& p = PRESETS[g_preset.load()];
-        printf("\nPreset %d: \"%s\"\n", g_preset.load() + 1, p.name);
+        int idx = g_preset.load();
+        const UserPreset& u = g_user_presets[idx];
+        printf("\nBank: USER  Preset %d%s\n",
+               idx + 1, u.saved ? "" : " (factory copy)");
         printf("  Freq: %.0f Hz  Wave: %s\n",
                g_freq.load(), waveform_name(g_waveform.load()));
         printf("  LFO: %.1f Hz @ %.0f%% [%s]  Filter: %.0f Hz / %.0f%%\n",
@@ -1274,6 +1417,8 @@ int main(int argc, char *argv[])
         printf("  Release: %.0f ms  Reverb: Mix %.0f%%\n",
                g_release_time.load() * 1000.0f,
                g_reverb_mix.load() * 100.0f);
+        static const char *pe_lbl[] = {"Fall", "Off", "Rise"};
+        printf("  Pitch Env: %s\n", pe_lbl[g_pitch_env.load() + 1]);
     }
     printf("\nListening for events (Ctrl-C to quit) ...\n\n");
 
@@ -1291,7 +1436,7 @@ int main(int argc, char *argv[])
             if (elapsed > 350) {
                 g_shift_dblclick_pending.store(false);
                 g_shift_clicks = 0;
-                toggle_bank();
+                switch_bank(BankMode::STANDARD);
             }
         }
     }
