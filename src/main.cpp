@@ -489,6 +489,19 @@ static const char* preset_file_path()
         char persist[PATH_MAX - PERSIST_ROOM];
         if (strlen(base) + sizeof("/mnt/persist") < sizeof(persist)) {
             snprintf(persist, sizeof(persist), "/mnt/persist%s", base);
+
+            // Ensure the directory tree exists on the persist mount
+            // BEFORE checking stat().  Without this, a mounted /mnt/persist
+            // that lacks the install-dir subtree would cause stat() to fail
+            // and presets would silently fall through to volatile overlay RAM.
+            if (overlay) {
+                char pd[PATH_MAX];
+                snprintf(pd, sizeof(pd), "%s/data", persist);
+                mkdir(pd, 0755);          // ignore EEXIST
+                snprintf(pd, sizeof(pd), "%s/data/presets", persist);
+                mkdir(pd, 0755);          // ignore EEXIST
+            }
+
             struct stat st;
             use_persist = (stat(persist, &st) == 0 && S_ISDIR(st.st_mode));
 
@@ -502,6 +515,12 @@ static const char* preset_file_path()
                     sleep(1);
                     use_persist = (stat(persist, &st) == 0
                                    && S_ISDIR(st.st_mode));
+                }
+                if (!use_persist) {
+                    fprintf(stderr,
+                        "  !!! /mnt/persist not available — ensure-persist.sh may not have run.\n"
+                        "  !!! To set up manually:  sudo /usr/local/lib/dubsiren/ensure-persist.sh %s\n",
+                        base);
                 }
             }
         }
@@ -676,6 +695,34 @@ static UserPreset snapshot_current()
     return u;
 }
 
+// Verify that the preset file was written correctly (read-back check)
+static bool verify_preset_file(const char* path)
+{
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        fprintf(stderr, "  !!! Verify FAILED: cannot reopen %s: %s\n",
+                path, strerror(errno));
+        return false;
+    }
+    char header[64];
+    if (!fgets(header, sizeof(header), f) ||
+        strncmp(header, "DUBSIREN_PRESETS_V2", 19) != 0) {
+        fprintf(stderr, "  !!! Verify FAILED: bad header in %s\n", path);
+        fclose(f);
+        return false;
+    }
+    int lines = 0;
+    char line[512];
+    while (fgets(line, sizeof(line), f)) lines++;
+    fclose(f);
+    if (lines != NUM_USER_PRESETS) {
+        fprintf(stderr, "  !!! Verify FAILED: expected %d presets, got %d in %s\n",
+                NUM_USER_PRESETS, lines, path);
+        return false;
+    }
+    return true;
+}
+
 // ─── Save / load user presets to disk ────────────────────────────────
 
 static void save_user_presets()
@@ -683,7 +730,7 @@ static void save_user_presets()
     const char* path = preset_file_path();
 
     // Write to temp file, then rename for power-safety
-    char tmp[520];
+    char tmp[PATH_MAX];
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
 
     FILE* f = fopen(tmp, "w");
@@ -716,7 +763,7 @@ static void save_user_presets()
     }
 
     // Sync the directory so the rename is durable across power loss
-    char dir[512];
+    char dir[PATH_MAX];
     snprintf(dir, sizeof(dir), "%s", path);
     char* slash = strrchr(dir, '/');
     if (slash) {
@@ -724,6 +771,11 @@ static void save_user_presets()
         int dfd = open(dir, O_RDONLY);
         if (dfd >= 0) { fsync(dfd); close(dfd); }
     }
+
+    printf("  Presets written to %s\n", path);
+
+    if (!verify_preset_file(path))
+        fprintf(stderr, "  !!! WARNING: Preset file verification failed!\n");
 
     if (g_volatile_presets) {
         fprintf(stderr,
@@ -749,7 +801,10 @@ static void load_user_presets()
 {
     const char* path = preset_file_path();
     FILE* f = fopen(path, "r");
-    if (!f) return;  // no saved presets — keep factory defaults
+    if (!f) {
+        printf("  No saved presets at %s — using factory defaults\n", path);
+        return;
+    }
 
     char header[64];
     if (!fgets(header, sizeof(header), f)) {
@@ -816,7 +871,11 @@ static void load_user_presets()
     }
 
     fclose(f);
-    printf("  User presets loaded from %s (%s)\n", path, v2 ? "V2" : "V1→V2 migration");
+    int loaded_count = 0;
+    for (int j = 0; j < NUM_USER_PRESETS; j++)
+        if (g_user_presets[j].saved) loaded_count++;
+    printf("  User presets loaded from %s (%s, %d/%d slots populated)\n",
+           path, v2 ? "V2" : "V1→V2 migration", loaded_count, NUM_USER_PRESETS);
 }
 
 static void init_user_presets()
