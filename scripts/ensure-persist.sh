@@ -74,8 +74,34 @@ fix_data_ownership() {
 
 # --- Strategy 1: Already mounted? -------------------------------------------
 if is_mount_point "${DATA_DIR}"; then
-    log "Data dir already mounted at ${DATA_DIR} — done."
-    exit 0
+    # Check if the mount is actually writable
+    if touch "${DATA_DIR}/.rw-test" 2>/dev/null; then
+        rm -f "${DATA_DIR}/.rw-test"
+        log "Data dir already mounted (rw) at ${DATA_DIR} — done."
+        exit 0
+    fi
+
+    # Data dir is mounted but read-only.  The overlayroot package forces the
+    # root block device ro, so both /mnt/persist and the bind mount inherit ro.
+    # Remount /mnt/persist rw first, then remount the bind mount.
+    log "Data dir mounted at ${DATA_DIR} but read-only — fixing..."
+
+    if is_mount_point "${PERSIST_MNT}"; then
+        if mount -o remount,rw "${PERSIST_MNT}" 2>/dev/null; then
+            log "Remounted ${PERSIST_MNT} as read-write."
+        else
+            warn "Failed to remount ${PERSIST_MNT} rw."
+        fi
+    fi
+
+    if mount -o remount,rw "${DATA_DIR}" 2>/dev/null; then
+        log "Remounted ${DATA_DIR} as read-write — persistent storage ready."
+        exit 0
+    fi
+
+    # Remount failed — unmount the ro bind and fall through to try again
+    warn "Could not remount ${DATA_DIR} rw — unmounting to retry..."
+    umount "${DATA_DIR}" 2>/dev/null || true
 fi
 
 # If root is not overlay, no special handling needed — data dir is on rw disk
