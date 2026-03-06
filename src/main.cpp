@@ -377,6 +377,8 @@ static void apply_experimental(int idx)
 // ─── User preset bank ────────────────────────────────────────────────
 
 static constexpr int NUM_USER_PRESETS = 4;
+static constexpr char PRESET_V2_HEADER[] = "DUBSIREN_PRESETS_V2";
+static constexpr char PRESET_V1_HEADER[] = "DUBSIREN_PRESETS_V1";
 
 struct UserPreset {
     bool saved;             // true = has user data, false = factory copy
@@ -497,9 +499,11 @@ static const char* preset_file_path()
             if (overlay) {
                 char pd[PATH_MAX];
                 snprintf(pd, sizeof(pd), "%s/data", persist);
-                mkdir(pd, 0755);          // ignore EEXIST
+                if (mkdir(pd, 0755) != 0 && errno != EEXIST)
+                    fprintf(stderr, "  !!! Failed to create directory %s: %s\n", pd, strerror(errno));
                 snprintf(pd, sizeof(pd), "%s/data/presets", persist);
-                mkdir(pd, 0755);          // ignore EEXIST
+                if (mkdir(pd, 0755) != 0 && errno != EEXIST)
+                    fprintf(stderr, "  !!! Failed to create directory %s: %s\n", pd, strerror(errno));
             }
 
             struct stat st;
@@ -706,7 +710,7 @@ static bool verify_preset_file(const char* path)
     }
     char header[64];
     if (!fgets(header, sizeof(header), f) ||
-        strncmp(header, "DUBSIREN_PRESETS_V2", 19) != 0) {
+        strncmp(header, PRESET_V2_HEADER, sizeof(PRESET_V2_HEADER) - 1) != 0) {
         fprintf(stderr, "  !!! Verify FAILED: bad header in %s\n", path);
         fclose(f);
         return false;
@@ -739,7 +743,7 @@ static void save_user_presets()
         return;
     }
 
-    fprintf(f, "DUBSIREN_PRESETS_V2\n");
+    fprintf(f, "%s\n", PRESET_V2_HEADER);
     for (int i = 0; i < NUM_USER_PRESETS; i++) {
         const UserPreset& u = g_user_presets[i];
         fprintf(f, "%d %d %d %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %d %d\n",
@@ -813,8 +817,8 @@ static void load_user_presets()
         return;
     }
 
-    bool v2 = (strncmp(header, "DUBSIREN_PRESETS_V2", 19) == 0);
-    bool v1 = (strncmp(header, "DUBSIREN_PRESETS_V1", 19) == 0);
+    bool v2 = (strncmp(header, PRESET_V2_HEADER, sizeof(PRESET_V2_HEADER) - 1) == 0);
+    bool v1 = (strncmp(header, PRESET_V1_HEADER, sizeof(PRESET_V1_HEADER) - 1) == 0);
     if (!v1 && !v2) {
         fprintf(stderr, "  !!! Invalid preset file — ignoring\n");
         fclose(f);
