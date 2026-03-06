@@ -191,6 +191,18 @@ if [[ -n "$ROOT_DEV" ]]; then
     # Try to mount it rw at /mnt/persist (may already be mounted by systemd unit)
     if is_mount_point "${PERSIST_MNT}"; then
         log "Persist mount already active at ${PERSIST_MNT}."
+        # The systemd unit or overlayroot may have mounted it read-only.
+        # Remount rw so we can actually write presets.
+        if ! touch "${PERSIST_MNT}/.rw-test" 2>/dev/null; then
+            log "Persist mount is read-only — remounting rw..."
+            if mount -o remount,rw "${PERSIST_MNT}" 2>/dev/null; then
+                log "Remounted ${PERSIST_MNT} as read-write."
+            else
+                warn "Failed to remount ${PERSIST_MNT} rw."
+            fi
+        else
+            rm -f "${PERSIST_MNT}/.rw-test"
+        fi
     else
         mkdir -p "${PERSIST_MNT}"
         for attempt in 1 2 3; do
