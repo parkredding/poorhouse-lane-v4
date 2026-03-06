@@ -507,22 +507,26 @@ static const char* preset_file_path()
         }
 
         // Determine the storage root.
-        // Priority: 1) /mnt/persist  2) bind-mount at base/data  3) base
+        // Priority: 1) bind-mount at base/data  2) /mnt/persist  3) base
+        // The bind-mount is preferred because ensure-persist.sh sets it up
+        // with correct ownership.  The persist mount is a fallback that
+        // writes directly to the real disk.
         const char* root = nullptr;
         const char* storage_label = nullptr;
 
-        if (use_persist) {
-            root = persist;
-            storage_label = "persist mount — durable";
-        } else if (overlay) {
-            // Persist mount unavailable.  Check whether the systemd
-            // bind-mount at <base>/data is active — if so, writes
-            // through it still reach the real disk.
+        if (overlay) {
+            // Check the systemd bind-mount at <base>/data first — this
+            // is what ensure-persist.sh sets up with correct permissions.
             char data_dir[PATH_MAX];
             snprintf(data_dir, sizeof(data_dir), "%s/data", base);
             if (is_mount_point(data_dir)) {
                 root = base;
                 storage_label = "bind-mount — durable";
+            } else if (use_persist) {
+                // Bind mount unavailable, but persist mount exists.
+                // Fall back to writing directly to the persist mount.
+                root = persist;
+                storage_label = "persist mount — durable";
             } else {
                 // No persistent storage available.  Writes will go to
                 // the overlay RAM layer and be LOST on power cycle.
@@ -544,12 +548,79 @@ static const char* preset_file_path()
             storage_label = "local filesystem — durable";
         }
 
+        // Create required directories
         snprintf(path, sizeof(path), "%s/data", root);
         if (mkdir(path, 0755) != 0 && errno != EEXIST)
             fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
         snprintf(path, sizeof(path), "%s/data/presets", root);
         if (mkdir(path, 0755) != 0 && errno != EEXIST)
             fprintf(stderr, "  !!! Failed to create directory: %s\n", path);
+
+        // Write-test: verify the selected path is actually writable.
+        // If not (permission issues), fall through to the next option.
+        // Uses mkstemp to avoid predictable filenames.
+        auto write_test = [](const char* dir) -> bool {
+            char tmpl[PATH_MAX];
+            snprintf(tmpl, sizeof(tmpl), "%s/.write-test-XXXXXX", dir);
+            int fd = mkstemp(tmpl);
+            if (fd >= 0) {
+                close(fd);
+                unlink(tmpl);
+                return true;
+            }
+            return false;
+        };
+
+        if (overlay && !g_volatile_presets) {
+            char presets_dir[PATH_MAX];
+            snprintf(presets_dir, sizeof(presets_dir),
+                     "%s/data/presets", root);
+            if (!write_test(presets_dir)) {
+                fprintf(stderr,
+                    "  !!! Write test FAILED for %s: %s\n"
+                    "  !!! Trying next storage option...\n",
+                    root, strerror(errno));
+
+                // Try the other durable option
+                if (root == base && use_persist) {
+                    root = persist;
+                    storage_label = "persist mount — durable (fallback)";
+                } else if (root == persist) {
+                    char data_dir2[PATH_MAX];
+                    snprintf(data_dir2, sizeof(data_dir2), "%s/data", base);
+                    if (is_mount_point(data_dir2)) {
+                        root = base;
+                        storage_label = "bind-mount — durable (fallback)";
+                    }
+                }
+
+                // Ensure dirs exist for the fallback root (idempotent)
+                snprintf(path, sizeof(path), "%s/data", root);
+                mkdir(path, 0755);
+                snprintf(path, sizeof(path), "%s/data/presets", root);
+                mkdir(path, 0755);
+
+                snprintf(presets_dir, sizeof(presets_dir),
+                         "%s/data/presets", root);
+                if (!write_test(presets_dir)) {
+                    fprintf(stderr,
+                        "  !!! Write test FAILED for fallback too: %s\n",
+                        strerror(errno));
+                    root = base;
+                    storage_label =
+                        "VOLATILE (overlay RAM) — WILL NOT PERSIST";
+                    g_volatile_presets = true;
+                    fprintf(stderr,
+                        "\n"
+                        "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+                        "  !!!  WARNING: No writable storage available    !!!\n"
+                        "  !!!  User presets will be LOST on power cycle  !!!\n"
+                        "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+                        "\n");
+                }
+            }
+        }
+
         snprintf(path, sizeof(path), "%s/data/presets/user_presets.txt", root);
         printf("  Preset file: %s\n", path);
         printf("  Storage:     %s\n", storage_label);
