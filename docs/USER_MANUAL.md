@@ -261,13 +261,13 @@ by default on boot.
                    └─────┬─────┘
                          │
                    ┌─────▼─────┐
-                   │  Volume   │  (5 ms attack, variable release)
-                   │ Envelope  │
+                   │  Filter   │  (Moog 4-pole low-pass)
+                   │ + Envelope│  (sweeps on release)
                    └─────┬─────┘
                          │
                    ┌─────▼─────┐
-                   │  Filter   │  (Moog 4-pole low-pass)
-                   │ + Envelope│  (sweeps on release)
+                   │  Volume   │  (5 ms attack, variable release)
+                   │ Envelope  │
                    └─────┬─────┘
                          │
                    ┌─────▼─────┐
