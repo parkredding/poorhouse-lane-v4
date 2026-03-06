@@ -67,7 +67,7 @@ fix_data_ownership() {
         log "Set ownership of ${persist_data} to ${dir_owner}"
     else
         # Last resort: make world-writable so the app can write regardless
-        chmod -R a+rwX "$persist_data" 2>/dev/null || true
+        chmod -R a+rwX "$persist_data" || true
         warn "Could not determine app user — made ${persist_data} world-writable"
     fi
 }
@@ -119,17 +119,7 @@ fi
 # --- Detection 2: overlay lowerdir= mount option ---------------------------
 # The overlay mount knows its own lower layer.  Find the device behind it.
 if [[ -z "$ROOT_DEV" ]]; then
-    LOWER_MP=$(awk '$2 == "/" && $3 == "overlay" {
-        n = split($4, opts, ",")
-        for (i = 1; i <= n; i++) {
-            if (opts[i] ~ /^lowerdir=/) {
-                sub(/^lowerdir=/, "", opts[i])
-                split(opts[i], parts, ":")
-                print parts[1]
-                exit
-            }
-        }
-    }' /proc/mounts)
+    LOWER_MP=$(grep ' / overlay ' /proc/mounts | sed -n 's/.*lowerdir=\([^,:]*\).*/\1/p' | head -1)
     if [[ -n "$LOWER_MP" && -d "$LOWER_MP" ]]; then
         ROOT_DEV=$(findmnt -n -o SOURCE "$LOWER_MP" 2>/dev/null | head -1)
         if [[ -n "$ROOT_DEV" && -b "$ROOT_DEV" ]]; then

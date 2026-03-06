@@ -558,15 +558,24 @@ static const char* preset_file_path()
 
         // Write-test: verify the selected path is actually writable.
         // If not (permission issues), fall through to the next option.
+        // Uses mkstemp to avoid predictable filenames.
+        auto write_test = [](const char* dir) -> bool {
+            char tmpl[PATH_MAX];
+            snprintf(tmpl, sizeof(tmpl), "%s/.write-test-XXXXXX", dir);
+            int fd = mkstemp(tmpl);
+            if (fd >= 0) {
+                close(fd);
+                unlink(tmpl);
+                return true;
+            }
+            return false;
+        };
+
         if (overlay && !g_volatile_presets) {
-            char test_file[PATH_MAX];
-            snprintf(test_file, sizeof(test_file),
-                     "%s/data/presets/.write-test-%d", root, getpid());
-            FILE* tf = fopen(test_file, "w");
-            if (tf) {
-                fclose(tf);
-                unlink(test_file);
-            } else {
+            char presets_dir[PATH_MAX];
+            snprintf(presets_dir, sizeof(presets_dir),
+                     "%s/data/presets", root);
+            if (!write_test(presets_dir)) {
                 fprintf(stderr,
                     "  !!! Write test FAILED for %s: %s\n"
                     "  !!! Trying next storage option...\n",
@@ -574,11 +583,9 @@ static const char* preset_file_path()
 
                 // Try the other durable option
                 if (root == base && use_persist) {
-                    // Bind-mount failed, try persist mount
                     root = persist;
                     storage_label = "persist mount — durable (fallback)";
                 } else if (root == persist) {
-                    // Persist mount failed, try bind-mount
                     char data_dir2[PATH_MAX];
                     snprintf(data_dir2, sizeof(data_dir2), "%s/data", base);
                     if (is_mount_point(data_dir2)) {
@@ -587,21 +594,15 @@ static const char* preset_file_path()
                     }
                 }
 
-                // Re-create dirs for new root and re-test
-                if (root != base || !use_persist) {
-                    // (may already exist, that's ok)
-                    snprintf(path, sizeof(path), "%s/data", root);
-                    mkdir(path, 0755);
-                    snprintf(path, sizeof(path), "%s/data/presets", root);
-                    mkdir(path, 0755);
-                }
-                snprintf(test_file, sizeof(test_file),
-                         "%s/data/presets/.write-test-%d", root, getpid());
-                tf = fopen(test_file, "w");
-                if (tf) {
-                    fclose(tf);
-                    unlink(test_file);
-                } else {
+                // Ensure dirs exist for the fallback root (idempotent)
+                snprintf(path, sizeof(path), "%s/data", root);
+                mkdir(path, 0755);
+                snprintf(path, sizeof(path), "%s/data/presets", root);
+                mkdir(path, 0755);
+
+                snprintf(presets_dir, sizeof(presets_dir),
+                         "%s/data/presets", root);
+                if (!write_test(presets_dir)) {
                     fprintf(stderr,
                         "  !!! Write test FAILED for fallback too: %s\n",
                         strerror(errno));
