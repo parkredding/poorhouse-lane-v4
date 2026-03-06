@@ -35,8 +35,16 @@ fi
 
 echo "Overlay FS detected — deploying to persistent storage..."
 
-# --- Ensure /mnt/persist is mounted ----------------------------------------
-if ! is_mount_point "$PERSIST_MNT"; then
+# --- Ensure /mnt/persist is mounted rw -------------------------------------
+if is_mount_point "$PERSIST_MNT"; then
+    # May be mounted ro by overlayroot — remount rw if needed
+    if ! touch "${PERSIST_MNT}/.rw-test" 2>/dev/null; then
+        echo "Persist mount is read-only — remounting rw..."
+        mount -o remount,rw "$PERSIST_MNT"
+    else
+        rm -f "${PERSIST_MNT}/.rw-test"
+    fi
+elif ! is_mount_point "$PERSIST_MNT"; then
     CMDLINE_ROOT=$(sed -n 's/.*\broot=\(\S\+\).*/\1/p' /proc/cmdline)
     ROOT_DEV=""
     case "$CMDLINE_ROOT" in
