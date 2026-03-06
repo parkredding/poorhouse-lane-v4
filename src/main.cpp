@@ -50,6 +50,7 @@
 #include <fcntl.h>
 #include <cerrno>
 #include <climits>
+#include <sys/vfs.h>
 
 #include "gpio_hw.h"
 #include "oscillator.h"
@@ -452,6 +453,12 @@ static bool is_mount_point(const char* dir_path)
 // Flag set when preset storage is known to be volatile (overlay RAM).
 static bool g_volatile_presets = false;
 
+// Secondary preset path for redundant writes on overlay FS.
+// When the primary path uses the bind-mount, this is the direct persist path
+// (or vice versa).  Both point to the same physical file when the bind-mount
+// is healthy, but provide a fallback if one path is actually volatile.
+static char g_secondary_preset_path[PATH_MAX] = {};
+
 // ─── Preset file path ────────────────────────────────────────────────
 
 static const char* preset_file_path()
@@ -624,6 +631,29 @@ static const char* preset_file_path()
         snprintf(path, sizeof(path), "%s/data/presets/user_presets.txt", root);
         printf("  Preset file: %s\n", path);
         printf("  Storage:     %s\n", storage_label);
+
+        // Set up secondary path for redundant writes on overlay FS.
+        // If primary uses bind-mount (root==base), secondary is the direct
+        // persist path.  If primary uses persist (root==persist), secondary
+        // is the base path (through bind-mount).
+        if (overlay && !g_volatile_presets) {
+            const char* alt_root = nullptr;
+            if (root == base && use_persist)
+                alt_root = persist;   // primary=bind-mount, secondary=persist
+            else if (root == persist)
+                alt_root = base;      // primary=persist, secondary=bind-mount
+            if (alt_root) {
+                char alt_dir[PATH_MAX];
+                snprintf(alt_dir, sizeof(alt_dir), "%s/data", alt_root);
+                mkdir(alt_dir, 0755);  // best-effort
+                snprintf(alt_dir, sizeof(alt_dir), "%s/data/presets", alt_root);
+                mkdir(alt_dir, 0755);  // best-effort
+                snprintf(g_secondary_preset_path, sizeof(g_secondary_preset_path),
+                         "%s/data/presets/user_presets.txt", alt_root);
+                printf("  Secondary:   %s\n", g_secondary_preset_path);
+            }
+        }
+
         return path;
     }
 
@@ -678,21 +708,17 @@ static UserPreset snapshot_current()
 
 // ─── Save / load user presets to disk ────────────────────────────────
 
-static void save_user_presets()
+// Write presets to a specific path with atomic rename and fsync.
+// Returns true on success.
+static bool write_presets_to(const char* path)
 {
-    const char* path = preset_file_path();
-
-    // Write to temp file, then rename for power-safety
     char tmp[520];
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
 
     FILE* f = fopen(tmp, "w");
-    if (!f) {
-        fprintf(stderr, "  !!! Failed to save presets: %s\n", tmp);
-        return;
-    }
+    if (!f) return false;
 
-    fprintf(f, "DUBSIREN_PRESETS_V2\n");
+    fprintf(f, "DUBSIREN_PRESETS_V2 active=%d\n", g_preset.load());
     for (int i = 0; i < NUM_USER_PRESETS; i++) {
         const UserPreset& u = g_user_presets[i];
         fprintf(f, "%d %d %d %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %d %d\n",
@@ -710,9 +736,8 @@ static void save_user_presets()
     fsync(fileno(f));
     fclose(f);
     if (rename(tmp, path) != 0) {
-        fprintf(stderr, "  !!! Failed to rename preset file: %s → %s (%s)\n",
-                tmp, path, strerror(errno));
-        return;
+        unlink(tmp);
+        return false;
     }
 
     // Sync the directory so the rename is durable across power loss
@@ -723,6 +748,42 @@ static void save_user_presets()
         *slash = '\0';
         int dfd = open(dir, O_RDONLY);
         if (dfd >= 0) { fsync(dfd); close(dfd); }
+    }
+    return true;
+}
+
+static void save_user_presets()
+{
+    const char* path = preset_file_path();
+
+    if (!write_presets_to(path)) {
+        fprintf(stderr, "  !!! Failed to save presets: %s (%s)\n",
+                path, strerror(errno));
+    } else {
+        // Verify the file landed on persistent storage, not tmpfs/overlay
+        struct statfs sfs;
+        if (statfs(path, &sfs) == 0) {
+            // TMPFS_MAGIC=0x01021994, OVERLAYFS_SUPER_MAGIC=0x794c7630
+            if (sfs.f_type == 0x01021994 || sfs.f_type == 0x794c7630) {
+                if (!g_volatile_presets) {
+                    g_volatile_presets = true;
+                    fprintf(stderr,
+                        "  !!! WARNING: Preset file is on volatile "
+                        "filesystem (0x%lx) — will not survive power cycle\n",
+                        (unsigned long)sfs.f_type);
+                }
+            }
+        }
+    }
+
+    // Redundant write to secondary path (overlay FS fallback).
+    // If the primary path is actually volatile (bind-mount not working),
+    // this write goes directly to the persist mount (or vice versa).
+    if (g_secondary_preset_path[0]) {
+        if (!write_presets_to(g_secondary_preset_path)) {
+            fprintf(stderr, "  !!! Secondary save failed: %s (%s)\n",
+                    g_secondary_preset_path, strerror(errno));
+        }
     }
 
     if (g_volatile_presets) {
@@ -745,17 +806,25 @@ static bool validate_preset(const UserPreset& u, int pitch_env, int index)
     return true;
 }
 
-static void load_user_presets()
+// Returns the persisted active preset index (0 if not found)
+static int load_user_presets()
 {
     const char* path = preset_file_path();
     FILE* f = fopen(path, "r");
-    if (!f) return;  // no saved presets — keep factory defaults
+    if (!f && g_secondary_preset_path[0]) {
+        // Primary file missing — try secondary (redundant persist path)
+        f = fopen(g_secondary_preset_path, "r");
+        if (f)
+            printf("  Loaded presets from secondary path: %s\n",
+                   g_secondary_preset_path);
+    }
+    if (!f) return 0;  // no saved presets — keep factory defaults
 
     char header[64];
     if (!fgets(header, sizeof(header), f)) {
         fprintf(stderr, "  !!! Empty preset file — ignoring\n");
         fclose(f);
-        return;
+        return 0;
     }
 
     bool v2 = (strncmp(header, "DUBSIREN_PRESETS_V2", 19) == 0);
@@ -763,7 +832,18 @@ static void load_user_presets()
     if (!v1 && !v2) {
         fprintf(stderr, "  !!! Invalid preset file — ignoring\n");
         fclose(f);
-        return;
+        return 0;
+    }
+
+    // Parse optional active preset index from V2 header
+    int active_preset = 0;
+    if (v2) {
+        const char* ap = strstr(header, "active=");
+        if (ap) {
+            int val = atoi(ap + 7);
+            if (val >= 0 && val < NUM_USER_PRESETS)
+                active_preset = val;
+        }
     }
 
     // V1 had 8 slots, V2 has 4 — only load what fits
@@ -816,10 +896,13 @@ static void load_user_presets()
     }
 
     fclose(f);
-    printf("  User presets loaded from %s (%s)\n", path, v2 ? "V2" : "V1→V2 migration");
+    printf("  User presets loaded from %s (%s, active=%d)\n",
+           path, v2 ? "V2" : "V1→V2 migration", active_preset);
+    return active_preset;
 }
 
-static void init_user_presets()
+// Returns the persisted active preset index (0 if not found)
+static int init_user_presets()
 {
     // Start with factory defaults in all user slots
     for (int i = 0; i < NUM_USER_PRESETS; i++) {
@@ -875,7 +958,7 @@ static void init_user_presets()
     }
 
     // Override with saved data from disk
-    load_user_presets();
+    return load_user_presets();
 }
 
 // ─── Apply user preset ──────────────────────────────────────────────
@@ -967,11 +1050,16 @@ static void save_current_to_user_bank()
         g_bank_mode.store(static_cast<int>(BankMode::USER));
     }
 
-    printf("  >>> SAVED to USER %d  (Freq:%.0fHz %s LFO:%s)\n",
-           idx + 1,
-           g_freq.load(),
-           waveform_name(g_waveform.load()),
-           lfo_wave_name(g_lfo_waveform.load()));
+    if (g_volatile_presets) {
+        printf("  >>> SAVED to USER %d  *** VOLATILE — will not survive power cycle ***\n",
+               idx + 1);
+    } else {
+        printf("  >>> SAVED to USER %d  (Freq:%.0fHz %s LFO:%s)\n",
+               idx + 1,
+               g_freq.load(),
+               waveform_name(g_waveform.load()),
+               lfo_wave_name(g_lfo_waveform.load()));
+    }
 }
 
 // ─── Cycle to next preset in current bank ────────────────────────────
@@ -988,6 +1076,7 @@ static void cycle_preset()
     switch (mode) {
     case BankMode::USER:
         apply_user_preset(g_user_presets[idx]);
+        save_user_presets();  // persist active slot index
         printf("  USER %d%s  %s LFO:%s %.1fHz@%.0f%%  "
                "Dly:%.0fms FB%.0f%% Mix%.0f%%  Rev:%.0f%%\n",
                idx + 1,
@@ -1612,10 +1701,11 @@ int main(int argc, char *argv[])
     }
 
     // Initialise user presets (factory defaults + saved overrides)
-    init_user_presets();
+    int boot_preset = init_user_presets();
+    g_preset.store(boot_preset);
 
-    // Boot into user bank (identical to standard on first boot)
-    apply_user_preset(g_user_presets[0]);
+    // Boot into user bank at last-active slot
+    apply_user_preset(g_user_presets[boot_preset]);
 
     {
         int idx = g_preset.load();
