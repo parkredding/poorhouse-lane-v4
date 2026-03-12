@@ -31,6 +31,7 @@ A single-voice synthesizer for live dub and reggae sound-system use. Produces cl
     ║    Tap: Next     Hold: Layer B   Hold: Sound ON              ║
     ║    preset        Dbl: User bank  Release: Fade               ║
     ║    Hold 3s: Save Tri: Exp bank                               ║
+    ║     (left)        (middle)         (right)                   ║
     ║                                                              ║
     ╚══════════════════════════════════════════════════════════════╝
 ```
@@ -88,23 +89,23 @@ Trigger Button ──── gate on/off
 
 ---
 
-## Buttons
+## Buttons (left to right)
 
-### TRIGGER
+### PRESET (left)
 
-Hold to produce sound. Release to let it fade out (fade duration set by Release Time). The LFO phase resets each time you press it, so the siren sweep starts from the same point every time.
+- **Tap** to cycle through presets in the current bank (0 &rarr; 1 &rarr; 2 &rarr; 3 &rarr; 0).
+- **Hold Bank + Tap Preset** to cycle the LFO waveform.
+- **Hold for 3 seconds** to save the current sound to the active User preset slot.
 
-### BANK / SHIFT
+### BANK / SHIFT (middle)
 
 - **Hold** while turning any knob to access the Layer B parameter for that knob (see table below).
 - **Double-click** to toggle between User and Standard preset banks.
 - **Triple-click** to toggle between User and Experimental preset banks.
 
-### PRESET
+### TRIGGER (right)
 
-- **Tap** to cycle through presets in the current bank (0 &rarr; 1 &rarr; 2 &rarr; 3 &rarr; 0).
-- **Hold Bank + Tap Preset** to cycle the LFO waveform.
-- **Hold for 3 seconds** to save the current sound to the active User preset slot.
+Hold to produce sound. Release to let it fade out (fade duration set by Release Time). The LFO phase resets each time you press it, so the siren sweep starts from the same point every time.
 
 ---
 
