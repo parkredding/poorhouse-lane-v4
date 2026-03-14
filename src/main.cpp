@@ -59,6 +59,7 @@
 #include "delay.h"
 #include "reverb.h"
 #include "dsp_utils.h"
+#include "led_driver.h"
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -97,6 +98,8 @@ static std::atomic<bool>  g_super_drip{true};
 static std::atomic<bool>  g_lfo_pitch_link{true};
 static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay time
 static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (freq-scaled)
+static std::atomic<float> g_lfo_out{0.0f};          // LFO output [-1,+1] for LED
+static std::atomic<bool>  g_led_save_blink{false};  // trigger save-confirmation blink
 
 // ─── Per-parameter step sizes (base, before acceleration) ───────────
 //
@@ -1030,6 +1033,8 @@ static void save_current_to_user_bank()
         g_bank_mode.store(static_cast<int>(BankMode::USER));
     }
 
+    g_led_save_blink.store(true);
+
     printf("  >>> SAVED to USER %d  (Freq:%.0fHz %s LFO:%s)\n",
            idx + 1,
            g_freq.load(),
@@ -1389,6 +1394,9 @@ int main(int argc, char *argv[])
             // warm saturation when pushed (resonance, feedback, etc.)
             s = dsp::fast_tanh(s * 1.2f) * (1.0f / 1.1f);
 
+            // Export LFO value for LED pulsing (read by main thread)
+            g_lfo_out.store(lfo_out, std::memory_order_relaxed);
+
             buf[i] = s;
         }
     };
@@ -1674,6 +1682,10 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    // ── Initialise LED ─────────────────────────────────────────────
+    LedDriver led;
+    led.init(12, 1);   // GPIO 12 (PWM0 alt), 1 APA106
+
     // Initialise user presets (factory defaults + saved overrides)
     init_user_presets();
 
@@ -1707,6 +1719,14 @@ int main(int argc, char *argv[])
     while (g_running) {
         hw.poll();
 
+        // LED: triple white blink on preset save, otherwise normal update
+        if (g_led_save_blink.exchange(false))
+            led.blinkSave();
+        else
+            led.update(g_lfo_waveform.load(), g_lfo_out.load(),
+                       g_lfo_depth.load(), g_gate.load(),
+                       g_freq.load());
+
         // Resolve pending shift double-click (fires 350 ms after
         // 2nd press if no 3rd click arrives for triple-click)
         if (g_shift_dblclick_pending.load()) {
@@ -1723,6 +1743,7 @@ int main(int argc, char *argv[])
     }
 
     printf("\nShutting down.\n");
+    led.shutdown();
     audio.shutdown();
     hw.shutdown();
     return 0;
