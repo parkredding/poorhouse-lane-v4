@@ -8,6 +8,7 @@
 #include "led_driver.h"
 #include <cstdio>
 #include <algorithm>
+#include <iterator>
 #include <thread>
 #include <chrono>
 
@@ -32,7 +33,7 @@ static constexpr uint32_t WAVEFORM_COLORS[] = {
     0x9B111E,   // ExpRise     — Garnet
     0x5A4FCF,   // ExpFall     — Tanzanite
 };
-static constexpr int NUM_COLORS = 8;
+static constexpr int NUM_COLORS = static_cast<int>(std::size(WAVEFORM_COLORS));
 
 // Brightness levels (0.0–1.0)
 static constexpr float BASE_DIM    = 0.08f;  // trigger not pressed
@@ -53,8 +54,6 @@ static constexpr float BASE_BRIGHT = 0.25f;  // trigger pressed
 
 static constexpr float FREQ_MIN = 30.0f;
 static constexpr float FREQ_MAX = 8000.0f;
-static constexpr float LOG_FREQ_MIN = 3.4012f;   // log2(30) ≈ 4.91 — actually let's use natural log
-// Using log2 for even spread: log2(30)≈4.91, log2(8000)≈12.97
 
 static uint32_t desaturate(uint32_t color, float amount)
 {
@@ -97,6 +96,13 @@ struct LedDriver::Impl {
     ws2811_t ledstring{};
     int      num_leds = 0;
     bool     initialised = false;
+
+    // Set all LEDs to the same colour and render
+    void setAllLeds(uint32_t color) {
+        for (int i = 0; i < num_leds; i++)
+            ledstring.channel[0].leds[i] = color;
+        ws2811_render(&ledstring);
+    }
 };
 
 LedDriver::LedDriver()  : pimpl_(std::make_unique<Impl>()) {}
@@ -134,13 +140,12 @@ bool LedDriver::init(int gpio_pin, int num_leds)
     return true;
 }
 
-void LedDriver::update(int waveform_index, float lfo_output,
+void LedDriver::update(LfoWave waveform, float lfo_output,
                         float lfo_depth, bool gate, float freq)
 {
     if (!pimpl_->initialised) return;
 
-    // Clamp waveform index
-    int idx = std::clamp(waveform_index, 0, NUM_COLORS - 1);
+    int idx = std::clamp(static_cast<int>(waveform), 0, NUM_COLORS - 1);
     uint32_t color = WAVEFORM_COLORS[idx];
 
     // Pitch → desaturation (log-scaled)
@@ -155,34 +160,20 @@ void LedDriver::update(int waveform_index, float lfo_output,
     float mod    = lfo_u * lfo_depth;
     float bright = base + mod * (1.0f - base);
 
-    uint32_t pixel = apply_brightness(color, bright);
-
-    // Set all LEDs to the same colour
-    for (int i = 0; i < pimpl_->num_leds; i++)
-        pimpl_->ledstring.channel[0].leds[i] = pixel;
-
-    ws2811_render(&pimpl_->ledstring);
+    pimpl_->setAllLeds(apply_brightness(color, bright));
 }
 
 void LedDriver::blinkSave()
 {
     if (!pimpl_->initialised) return;
 
-    // White at 25% brightness
     uint32_t white = apply_brightness(0xFFFFFF, BASE_BRIGHT);
 
     // 3 blinks: 80 ms on, 80 ms off
     for (int blink = 0; blink < 3; blink++) {
-        // On — white
-        for (int i = 0; i < pimpl_->num_leds; i++)
-            pimpl_->ledstring.channel[0].leds[i] = white;
-        ws2811_render(&pimpl_->ledstring);
+        pimpl_->setAllLeds(white);
         std::this_thread::sleep_for(std::chrono::milliseconds(80));
-
-        // Off
-        for (int i = 0; i < pimpl_->num_leds; i++)
-            pimpl_->ledstring.channel[0].leds[i] = 0;
-        ws2811_render(&pimpl_->ledstring);
+        pimpl_->setAllLeds(0);
         if (blink < 2)
             std::this_thread::sleep_for(std::chrono::milliseconds(80));
     }
@@ -191,11 +182,7 @@ void LedDriver::blinkSave()
 void LedDriver::shutdown()
 {
     if (pimpl_ && pimpl_->initialised) {
-        // Turn off LEDs
-        for (int i = 0; i < pimpl_->num_leds; i++)
-            pimpl_->ledstring.channel[0].leds[i] = 0;
-        ws2811_render(&pimpl_->ledstring);
-
+        pimpl_->setAllLeds(0);
         ws2811_fini(&pimpl_->ledstring);
         pimpl_->initialised = false;
         printf("LED: shutdown\n");
@@ -217,7 +204,7 @@ bool LedDriver::init(int, int)
     return false;
 }
 
-void LedDriver::update(int, float, float, bool, float) {}
+void LedDriver::update(LfoWave, float, float, bool, float) {}
 void LedDriver::blinkSave() {}
 void LedDriver::shutdown() {}
 

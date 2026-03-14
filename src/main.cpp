@@ -1684,7 +1684,8 @@ int main(int argc, char *argv[])
 
     // ── Initialise LED ─────────────────────────────────────────────
     LedDriver led;
-    led.init(12, 1);   // GPIO 12 (PWM0 alt), 1 APA106
+    if (!led.init(12, 1))   // GPIO 12 (PWM0 alt), 1 APA106
+        fprintf(stderr, "Warning: LED driver failed to initialise — LED disabled.\n");
 
     // Initialise user presets (factory defaults + saved overrides)
     init_user_presets();
@@ -1723,9 +1724,9 @@ int main(int argc, char *argv[])
         if (g_led_save_blink.exchange(false))
             led.blinkSave();
         else
-            led.update(g_lfo_waveform.load(), g_lfo_out.load(),
-                       g_lfo_depth.load(), g_gate.load(),
-                       g_freq.load());
+            led.update(static_cast<LfoWave>(g_lfo_waveform.load()),
+                       g_lfo_out.load(), g_lfo_depth.load(),
+                       g_gate.load(), g_freq.load());
 
         // Resolve pending shift double-click (fires 350 ms after
         // 2nd press if no 3rd click arrives for triple-click)
