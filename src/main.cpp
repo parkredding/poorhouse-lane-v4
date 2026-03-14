@@ -63,6 +63,8 @@
 #include "reverb_schroeder.h"
 #include "delay_digital.h"
 #include "dsp_utils.h"
+#include "ap_mode.h"
+#include "web_server.h"
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -1346,6 +1348,391 @@ static void update_link_eff()
 
 // ─── main ───────────────────────────────────────────────────────────
 
+// ─── 3-button AP mode detection state ────────────────────────────────
+//
+// Trigger + Shift + Preset held simultaneously for 3 seconds enters
+// AP mode.  1.5 seconds in, a rising tone provides audio feedback.
+
+static std::atomic<bool> g_btn_trigger{false};
+static std::atomic<bool> g_btn_shift{false};
+static std::atomic<bool> g_btn_preset{false};
+
+static bool g_combo_active = false;
+static std::chrono::steady_clock::time_point g_combo_start{};
+static bool g_combo_feedback_given = false;
+
+// Forward declarations for AP mode
+static void enter_ap_mode(AudioEngine& audio);
+static void exit_ap_mode(AudioEngine& audio);
+
+static void check_ap_combo(AudioEngine& audio)
+{
+    bool all = g_btn_trigger.load() && g_btn_shift.load() && g_btn_preset.load();
+
+    if (all && !g_combo_active) {
+        g_combo_active = true;
+        g_combo_start = std::chrono::steady_clock::now();
+        g_combo_feedback_given = false;
+    } else if (!all) {
+        g_combo_active = false;
+        return;
+    }
+
+    if (!g_combo_active) return;
+
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - g_combo_start).count();
+
+    if (elapsed >= 1500 && !g_combo_feedback_given) {
+        g_combo_feedback_given = true;
+        printf("  >>> AP MODE: Keep holding (%.1fs)...\n",
+               (3000 - elapsed) / 1000.0f);
+    }
+
+    if (elapsed >= 3000) {
+        g_combo_active = false;
+        if (g_ap_mode.load()) {
+            exit_ap_mode(audio);
+        } else {
+            enter_ap_mode(audio);
+        }
+    }
+}
+
+// ─── AP mode entry / exit ───────────────────────────────────────────
+
+static void enter_ap_mode(AudioEngine& audio)
+{
+    if (g_ap_mode.load()) return;
+
+    printf("\n>>> ENTERING AP CONFIG MODE <<<\n\n");
+
+    // Stop audio
+    audio.stop();
+    g_ap_mode.store(true);
+
+    // Start the access point
+    if (!ap_mode::start_ap()) {
+        fprintf(stderr, "!!! Failed to start AP mode\n");
+        g_ap_mode.store(false);
+        audio.start();
+        return;
+    }
+
+    // Set up web server callbacks
+    web_server::Callbacks cb;
+
+    cb.get_all_presets = []() -> std::string {
+        std::string json = "{\"user\":[";
+        for (int i = 0; i < NUM_USER_PRESETS; i++) {
+            const auto& u = g_user_presets[i];
+            if (i > 0) json += ",";
+            json += "{\"name\":\"" + std::string(u.name) + "\","
+                    "\"slot\":" + std::to_string(i) + ","
+                    "\"saved\":" + (u.saved ? "true" : "false") + ","
+                    "\"waveform\":" + std::to_string(u.waveform) + ","
+                    "\"freq\":" + std::to_string(u.freq) + "}";
+        }
+        json += "],\"standard\":[";
+        for (int i = 0; i < NUM_PRESETS; i++) {
+            if (i > 0) json += ",";
+            json += "{\"name\":\"" + std::string(PRESETS[i].name) + "\","
+                    "\"index\":" + std::to_string(i) + ","
+                    "\"category\":\"" + std::string(PRESETS[i].category) + "\"}";
+        }
+        json += "],\"experimental\":[";
+        for (int i = 0; i < NUM_EXPERIMENTAL; i++) {
+            if (i > 0) json += ",";
+            json += "{\"name\":\"" + std::string(EXPERIMENTAL[i].name) + "\","
+                    "\"index\":" + std::to_string(i) + ","
+                    "\"category\":\"" + std::string(EXPERIMENTAL[i].category) + "\"}";
+        }
+        json += "],\"library\":[";
+        for (int i = 0; i < NUM_LIBRARY_PRESETS; i++) {
+            if (i > 0) json += ",";
+            json += "{\"name\":\"" + std::string(PRESET_LIBRARY[i].name) + "\","
+                    "\"index\":" + std::to_string(i) + ","
+                    "\"category\":\"" + std::string(PRESET_LIBRARY[i].category) + "\"}";
+        }
+        json += "]}";
+        return json;
+    };
+
+    cb.get_preset_state = []() -> std::string {
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+            "{\"freq\":%.1f,\"waveform\":%d,\"lfo_rate\":%.2f,\"lfo_depth\":%.2f,"
+            "\"filter_cutoff\":%.0f,\"filter_reso\":%.2f,"
+            "\"delay_time\":%.3f,\"delay_feedback\":%.2f,\"delay_mix\":%.2f,"
+            "\"reverb_mix\":%.2f,\"release_time\":%.3f,"
+            "\"reverb_type\":%d,\"delay_type\":%d,"
+            "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
+            "\"fx_chain\":%d}",
+            g_freq.load(), g_waveform.load(),
+            g_lfo_rate.load(), g_lfo_depth.load(),
+            g_filter_cutoff.load(), g_filter_reso.load(),
+            g_delay_time.load(), g_delay_feedback.load(), g_delay_mix.load(),
+            g_reverb_mix.load(), g_release_time.load(),
+            g_reverb_type.load(), g_delay_type.load(),
+            g_tape_wobble.load(), g_tape_flutter.load(),
+            g_fx_chain.load());
+        return std::string(buf);
+    };
+
+    cb.apply_preset = [](const std::string& category, int index) -> bool {
+        if (category == "standard" && index >= 0 && index < NUM_PRESETS) {
+            apply_dub_preset(PRESETS[index]);
+            return true;
+        } else if (category == "experimental" && index >= 0 && index < NUM_EXPERIMENTAL) {
+            apply_dub_preset(EXPERIMENTAL[index]);
+            return true;
+        } else if (category == "library" && index >= 0 && index < NUM_LIBRARY_PRESETS) {
+            apply_dub_preset(PRESET_LIBRARY[index]);
+            return true;
+        } else if (category == "user" && index >= 0 && index < NUM_USER_PRESETS) {
+            apply_user_preset(g_user_presets[index]);
+            return true;
+        }
+        return false;
+    };
+
+    cb.save_to_slot = [](int slot, const std::string& name) -> bool {
+        if (slot < 0 || slot >= NUM_USER_PRESETS) return false;
+        g_user_presets[slot] = snapshot_current();
+        snprintf(g_user_presets[slot].name, sizeof(g_user_presets[slot].name),
+                 "%s", name.c_str());
+        save_user_presets();
+        return true;
+    };
+
+    cb.get_siren_options = []() -> std::string {
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+            "{\"reverb_type\":%d,\"delay_type\":%d,"
+            "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
+            "\"fx_chain\":%d,"
+            "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
+            "\"sweep_dir\":%.0f}",
+            g_reverb_type.load(), g_delay_type.load(),
+            g_tape_wobble.load(), g_tape_flutter.load(),
+            g_fx_chain.load(),
+            g_lfo_pitch_link.load() ? "true" : "false",
+            g_super_drip.load() ? "true" : "false",
+            g_sweep_dir.load());
+        return std::string(buf);
+    };
+
+    cb.set_siren_options = [](const std::string& body) -> bool {
+        // Simple key=value parsing from form data
+        auto get_val = [&](const std::string& key) -> std::string {
+            auto pos = body.find(key + "=");
+            if (pos == std::string::npos) return "";
+            auto start = pos + key.size() + 1;
+            auto end = body.find('&', start);
+            if (end == std::string::npos) end = body.size();
+            return body.substr(start, end - start);
+        };
+
+        auto rv = get_val("reverb_type");
+        if (!rv.empty()) g_reverb_type.store(std::stoi(rv));
+        auto dv = get_val("delay_type");
+        if (!dv.empty()) g_delay_type.store(std::stoi(dv));
+        auto wv = get_val("tape_wobble");
+        if (!wv.empty()) g_tape_wobble.store(std::stof(wv));
+        auto fv = get_val("tape_flutter");
+        if (!fv.empty()) g_tape_flutter.store(std::stof(fv));
+        auto fc = get_val("fx_chain");
+        if (!fc.empty()) g_fx_chain.store(std::stoi(fc));
+        auto lp = get_val("lfo_pitch_link");
+        if (!lp.empty()) g_lfo_pitch_link.store(lp == "1" || lp == "true");
+        auto sd = get_val("super_drip");
+        if (!sd.empty()) g_super_drip.store(sd == "1" || sd == "true");
+        auto sw = get_val("sweep_dir");
+        if (!sw.empty()) g_sweep_dir.store(std::stof(sw));
+
+        return true;
+    };
+
+    cb.wifi_scan = []() -> std::string {
+        // Run iwlist scan and parse results
+        FILE* pipe = popen("sudo iwlist wlan0 scan 2>/dev/null | "
+                           "grep -E 'ESSID:|Signal level' | "
+                           "paste - - | head -20", "r");
+        if (!pipe) return "{\"networks\":[]}";
+
+        std::string json = "{\"networks\":[";
+        char line[512];
+        bool first = true;
+        while (fgets(line, sizeof(line), pipe)) {
+            // Parse ESSID and signal from combined line
+            char* essid = strstr(line, "ESSID:\"");
+            char* signal = strstr(line, "Signal level=");
+            if (essid && signal) {
+                essid += 7;  // skip 'ESSID:"'
+                char* end = strchr(essid, '"');
+                if (end) *end = '\0';
+
+                signal += 13;  // skip 'Signal level='
+                int level = atoi(signal);
+
+                if (!first) json += ",";
+                first = false;
+                json += "{\"ssid\":\"" + std::string(essid) + "\","
+                        "\"signal\":" + std::to_string(level) + "}";
+            }
+        }
+        pclose(pipe);
+        json += "]}";
+        return json;
+    };
+
+    cb.wifi_connect = [](const std::string& ssid, const std::string& password) -> bool {
+        // Save WiFi credentials to wpa_supplicant.conf
+        // This will be used on next boot or when AP mode exits
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd),
+            "sudo sh -c 'wpa_passphrase \"%s\" \"%s\" >> /etc/wpa_supplicant/wpa_supplicant.conf'",
+            ssid.c_str(), password.c_str());
+        return system(cmd) == 0;
+    };
+
+    cb.wifi_status = []() -> std::string {
+        FILE* pipe = popen("iwgetid -r 2>/dev/null", "r");
+        std::string ssid;
+        if (pipe) {
+            char buf[128];
+            if (fgets(buf, sizeof(buf), pipe)) {
+                ssid = buf;
+                while (!ssid.empty() && (ssid.back() == '\n' || ssid.back() == '\r'))
+                    ssid.pop_back();
+            }
+            pclose(pipe);
+        }
+        return "{\"connected\":" + std::string(ssid.empty() ? "false" : "true") +
+               ",\"ssid\":\"" + ssid + "\"}";
+    };
+
+    cb.update_check = []() -> std::string {
+        int ret = system("cd /home/pi/dubsiren && git fetch origin main 2>/dev/null");
+        if (ret != 0)
+            return "{\"available\":false,\"error\":\"fetch failed\"}";
+
+        FILE* pipe = popen("cd /home/pi/dubsiren && "
+                           "git log HEAD..origin/main --oneline 2>/dev/null", "r");
+        if (!pipe)
+            return "{\"available\":false,\"error\":\"git error\"}";
+
+        std::string commits;
+        char line[256];
+        int count = 0;
+        while (fgets(line, sizeof(line), pipe)) {
+            count++;
+            commits += std::string(line);
+        }
+        pclose(pipe);
+
+        return "{\"available\":" + std::string(count > 0 ? "true" : "false") +
+               ",\"count\":" + std::to_string(count) + "}";
+    };
+
+    cb.update_install = []() -> bool {
+        int ret = system("cd /home/pi/dubsiren && "
+                         "git pull origin main && "
+                         "cd build && cmake .. && make -j$(nproc) && "
+                         "sudo ../scripts/deploy-to-persist.sh 2>&1");
+        return ret == 0;
+    };
+
+    cb.update_status = []() -> std::string {
+        return "{\"status\":\"idle\"}";
+    };
+
+    cb.backup_create = []() -> std::string {
+        std::string json = "{\"version\":\"DUBSIREN_BACKUP_V1\",\"presets\":[";
+        for (int i = 0; i < NUM_USER_PRESETS; i++) {
+            const auto& u = g_user_presets[i];
+            if (i > 0) json += ",";
+            char buf[512];
+            snprintf(buf, sizeof(buf),
+                "{\"name\":\"%s\",\"saved\":%s,\"waveform\":%d,\"lfo_wave\":%d,"
+                "\"freq\":%.6f,\"lfo_rate\":%.6f,\"lfo_depth\":%.6f,"
+                "\"filter_cutoff\":%.6f,\"filter_reso\":%.6f,"
+                "\"delay_time\":%.6f,\"delay_feedback\":%.6f,\"delay_mix\":%.6f,"
+                "\"reverb_mix\":%.6f,\"release_time\":%.6f,\"sweep_dir\":%.6f,"
+                "\"pitch_env\":%d,\"super_drip\":%s,"
+                "\"reverb_type\":%d,\"delay_type\":%d,"
+                "\"tape_wobble\":%.6f,\"tape_flutter\":%.6f}",
+                u.name, u.saved ? "true" : "false",
+                u.waveform, u.lfo_wave,
+                u.freq, u.lfo_rate, u.lfo_depth,
+                u.filter_cutoff, u.filter_reso,
+                u.delay_time, u.delay_feedback, u.delay_mix,
+                u.reverb_mix, u.release_time, u.sweep_dir,
+                u.pitch_env, u.super_drip ? "true" : "false",
+                u.reverb_type, u.delay_type,
+                u.tape_wobble, u.tape_flutter);
+            json += buf;
+        }
+        json += "],\"config\":{";
+        char cfg[256];
+        snprintf(cfg, sizeof(cfg),
+            "\"reverb_type\":%d,\"delay_type\":%d,"
+            "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
+            "\"fx_chain\":%d,"
+            "\"lfo_pitch_link\":%s,\"super_drip\":%s",
+            g_reverb_type.load(), g_delay_type.load(),
+            g_tape_wobble.load(), g_tape_flutter.load(),
+            g_fx_chain.load(),
+            g_lfo_pitch_link.load() ? "true" : "false",
+            g_super_drip.load() ? "true" : "false");
+        json += cfg;
+        json += "}}";
+        return json;
+    };
+
+    cb.backup_restore = [](const std::string&) -> bool {
+        // TODO: parse JSON and restore state
+        return false;
+    };
+
+    static AudioEngine* s_audio_ptr = nullptr;
+    s_audio_ptr = &audio;
+    cb.exit_ap = []() {
+        if (s_audio_ptr) exit_ap_mode(*s_audio_ptr);
+    };
+
+    // Start web server on port 80
+    if (!web_server::start(80, cb)) {
+        fprintf(stderr, "!!! Failed to start web server\n");
+        ap_mode::stop_ap();
+        g_ap_mode.store(false);
+        audio.start();
+        return;
+    }
+
+    printf(">>> AP MODE ACTIVE — Connect to '%s' WiFi <<<\n",
+           ap_mode::get_ssid().c_str());
+    printf(">>> Open http://%s/ in your browser <<<\n\n",
+           ap_mode::get_ip());
+}
+
+static void exit_ap_mode(AudioEngine& audio)
+{
+    if (!g_ap_mode.load()) return;
+
+    printf("\n>>> EXITING AP CONFIG MODE <<<\n\n");
+
+    web_server::stop();
+    ap_mode::stop_ap();
+    g_ap_mode.store(false);
+
+    // Resume audio
+    audio.start();
+    printf(">>> SIREN MODE RESTORED <<<\n\n");
+}
+
+// ─── main ───────────────────────────────────────────────────────────
+
 int main(int argc, char *argv[])
 {
     std::string device = "hw:0,0";
@@ -1722,6 +2109,16 @@ int main(int argc, char *argv[])
     cb.on_button = [](int id, bool pressed) {
         static const char *btn_name[] = {"Trigger", "Shift", "Preset"};
 
+        // Track button states for 3-button AP mode combo
+        switch (id) {
+        case 0: g_btn_trigger.store(pressed); break;
+        case 1: g_btn_shift.store(pressed); break;
+        case 2: g_btn_preset.store(pressed); break;
+        }
+
+        // Skip normal button handling when in AP mode
+        if (g_ap_mode.load()) return;
+
         switch (id) {
         case 0:
             // Trigger → gate
@@ -1899,9 +2296,12 @@ int main(int argc, char *argv[])
     while (g_running) {
         hw.poll();
 
+        // Check for 3-button AP mode combo
+        check_ap_combo(audio);
+
         // Resolve pending shift double-click (fires 350 ms after
         // 2nd press if no 3rd click arrives for triple-click)
-        if (g_shift_dblclick_pending.load()) {
+        if (!g_ap_mode.load() && g_shift_dblclick_pending.load()) {
             auto elapsed = std::chrono::duration_cast<
                 std::chrono::milliseconds>(
                     std::chrono::steady_clock::now()
@@ -1912,6 +2312,12 @@ int main(int argc, char *argv[])
                 toggle_bank(BankMode::STANDARD);
             }
         }
+    }
+
+    // Clean up AP mode if active
+    if (g_ap_mode.load()) {
+        web_server::stop();
+        ap_mode::stop_ap();
     }
 
     printf("\nShutting down.\n");

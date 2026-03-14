@@ -16,6 +16,7 @@ pkg_check_modules(ALSA alsa)
 pkg_check_modules(GPIOD libgpiod>=2.0)
 
 set(SOURCES
+    src/ap_mode.cpp
     src/audio_engine.cpp
     src/delay.cpp
     src/delay_digital.cpp
@@ -28,12 +29,15 @@ set(SOURCES
     src/reverb_plate.cpp
     src/reverb_hall.cpp
     src/reverb_schroeder.cpp
+    src/web_server.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
+    ${CMAKE_SOURCE_DIR}/src
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
