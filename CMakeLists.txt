@@ -20,6 +20,7 @@ set(SOURCES
     src/delay.cpp
     src/filter.cpp
     src/gpio_hw.cpp
+    src/led_driver.cpp
     src/lfo.cpp
     src/main.cpp
     src/oscillator.cpp
@@ -54,7 +55,7 @@ else()
     message(STATUS "libgpiod not found — GPIO disabled, --simulate forced")
 endif()
 
-# ── Optional: ws2811 (LED — not used until a later milestone) ───────
+# ── Optional: ws2811 (APA106 LED — LFO waveform indicator) ─────────
 find_library(WS2811_LIB ws2811)
 if(WS2811_LIB)
     target_compile_definitions(${PROJECT_NAME} PRIVATE HAS_WS2811=1)
