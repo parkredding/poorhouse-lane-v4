@@ -18,12 +18,16 @@ pkg_check_modules(GPIOD libgpiod>=2.0)
 set(SOURCES
     src/audio_engine.cpp
     src/delay.cpp
+    src/delay_digital.cpp
     src/filter.cpp
     src/gpio_hw.cpp
     src/lfo.cpp
     src/main.cpp
     src/oscillator.cpp
     src/reverb.cpp
+    src/reverb_plate.cpp
+    src/reverb_hall.cpp
+    src/reverb_schroeder.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
