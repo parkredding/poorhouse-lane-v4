@@ -183,7 +183,14 @@ install_deps() {
         git \
         libasound2-dev \
         libgpiod-dev \
-        gpiod
+        gpiod \
+        hostapd \
+        dnsmasq
+    # Disable hostapd/dnsmasq at boot — AP mode starts them on demand
+    systemctl disable hostapd 2>/dev/null || true
+    systemctl stop hostapd 2>/dev/null || true
+    systemctl disable dnsmasq 2>/dev/null || true
+    systemctl stop dnsmasq 2>/dev/null || true
     success "Dependencies installed."
 }
 
@@ -310,8 +317,9 @@ ALSA_EOF
 create_data_dirs() {
     mkdir -p "${INSTALL_DIR}/data/mp3s"
     mkdir -p "${INSTALL_DIR}/data/presets"
+    mkdir -p "${INSTALL_DIR}/data/config"
     chown -R "${REAL_USER}:${REAL_USER}" "${INSTALL_DIR}/data"
-    success "Data directories created at ${INSTALL_DIR}/data/{mp3s,presets}"
+    success "Data directories created at ${INSTALL_DIR}/data/{mp3s,presets,config}"
 }
 
 # --- install_service() -------------------------------------------------------
@@ -554,6 +562,7 @@ print_summary() {
     echo "  Data folder:  ${INSTALL_DIR}/data/"
     echo "    MP3s:       ${INSTALL_DIR}/data/mp3s/"
     echo "    Presets:    ${INSTALL_DIR}/data/presets/"
+    echo "    Config:     ${INSTALL_DIR}/data/config/"
     echo ""
 
     if [[ "$ENABLE_AUTOSTART" == true ]]; then

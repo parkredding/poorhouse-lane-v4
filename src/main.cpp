@@ -739,6 +739,155 @@ static const char* preset_file_path()
     return path;
 }
 
+// ─── Config file path (derived from preset path) ─────────────────────
+// The preset path is e.g. .../data/presets/user_presets.txt
+// We go up two dirs to get .../data, then append config/siren_config.txt
+
+static const char* config_file_path()
+{
+    static char cfg_path[PATH_MAX] = {};
+    if (cfg_path[0]) return cfg_path;
+
+    const char* ppath = preset_file_path();
+    // Copy and strip "/presets/user_presets.txt" to get the data dir
+    char data_dir[PATH_MAX];
+    snprintf(data_dir, sizeof(data_dir), "%s", ppath);
+    char* slash = strrchr(data_dir, '/');   // strip "user_presets.txt"
+    if (slash) *slash = '\0';
+    slash = strrchr(data_dir, '/');          // strip "presets"
+    if (slash) *slash = '\0';
+
+    // Create config directory — data_dir is already well under PATH_MAX
+    // since it's derived from preset_file_path() with components stripped
+    size_t dlen = strlen(data_dir);
+    if (dlen + 25 >= PATH_MAX) {  // "/config/siren_config.txt" = 24 chars + NUL
+        fprintf(stderr, "  !!! Config path too long\n");
+        snprintf(cfg_path, sizeof(cfg_path), "/tmp/siren_config.txt");
+        return cfg_path;
+    }
+    char config_dir[PATH_MAX];
+    snprintf(config_dir, sizeof(config_dir), "%.*s/config",
+             (int)(sizeof(config_dir) - 8), data_dir);
+    if (mkdir(config_dir, 0755) != 0 && errno != EEXIST)
+        fprintf(stderr, "  !!! Failed to create directory: %s\n", config_dir);
+
+    snprintf(cfg_path, sizeof(cfg_path), "%.*s/siren_config.txt",
+             (int)(sizeof(cfg_path) - 18), config_dir);
+    printf("  Config file: %s\n", cfg_path);
+    return cfg_path;
+}
+
+// ─── Save / Load siren configuration ─────────────────────────────────
+
+static constexpr const char* CONFIG_V1_HEADER = "DUBSIREN_CONFIG_V1";
+
+static void save_siren_config()
+{
+    const char* path = config_file_path();
+
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+
+    FILE* f = fopen(tmp, "w");
+    if (!f) {
+        fprintf(stderr, "  !!! Failed to save config: %s\n", tmp);
+        return;
+    }
+
+    fprintf(f, "%s\n", CONFIG_V1_HEADER);
+    fprintf(f, "reverb_type=%d\n",    g_reverb_type.load());
+    fprintf(f, "delay_type=%d\n",     g_delay_type.load());
+    fprintf(f, "tape_wobble=%.6f\n",  g_tape_wobble.load());
+    fprintf(f, "tape_flutter=%.6f\n", g_tape_flutter.load());
+    fprintf(f, "fx_chain=%d\n",       g_fx_chain.load());
+    fprintf(f, "lfo_pitch_link=%d\n", g_lfo_pitch_link.load() ? 1 : 0);
+    fprintf(f, "super_drip=%d\n",     g_super_drip.load() ? 1 : 0);
+    fprintf(f, "sweep_dir=%.6f\n",    g_sweep_dir.load());
+
+    fflush(f);
+    fsync(fileno(f));
+    fclose(f);
+
+    if (rename(tmp, path) != 0) {
+        fprintf(stderr, "  !!! Failed to rename config file: %s → %s (%s)\n",
+                tmp, path, strerror(errno));
+        return;
+    }
+
+    // Sync directory for durability
+    char dir[PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s", path);
+    char* sl = strrchr(dir, '/');
+    if (sl) {
+        *sl = '\0';
+        int dfd = open(dir, O_RDONLY);
+        if (dfd >= 0) { fsync(dfd); close(dfd); }
+    }
+
+    printf("  Config written to %s\n", path);
+}
+
+static void load_siren_config()
+{
+    const char* path = config_file_path();
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        printf("  No saved config at %s — using defaults\n", path);
+        return;
+    }
+
+    char header[64];
+    if (!fgets(header, sizeof(header), f)) {
+        fprintf(stderr, "  !!! Empty config file — ignoring\n");
+        fclose(f);
+        return;
+    }
+    // Strip newline
+    size_t hlen = strlen(header);
+    while (hlen > 0 && (header[hlen-1] == '\n' || header[hlen-1] == '\r'))
+        header[--hlen] = '\0';
+
+    if (strcmp(header, CONFIG_V1_HEADER) != 0) {
+        fprintf(stderr, "  !!! Unknown config header '%s' — ignoring\n", header);
+        fclose(f);
+        return;
+    }
+
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        // Strip newline
+        size_t ll = strlen(line);
+        while (ll > 0 && (line[ll-1] == '\n' || line[ll-1] == '\r'))
+            line[--ll] = '\0';
+
+        char* eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        const char* key = line;
+        const char* val = eq + 1;
+
+        if (strcmp(key, "reverb_type") == 0)
+            g_reverb_type.store(atoi(val));
+        else if (strcmp(key, "delay_type") == 0)
+            g_delay_type.store(atoi(val));
+        else if (strcmp(key, "tape_wobble") == 0)
+            g_tape_wobble.store(static_cast<float>(atof(val)));
+        else if (strcmp(key, "tape_flutter") == 0)
+            g_tape_flutter.store(static_cast<float>(atof(val)));
+        else if (strcmp(key, "fx_chain") == 0)
+            g_fx_chain.store(atoi(val));
+        else if (strcmp(key, "lfo_pitch_link") == 0)
+            g_lfo_pitch_link.store(atoi(val) != 0);
+        else if (strcmp(key, "super_drip") == 0)
+            g_super_drip.store(atoi(val) != 0);
+        else if (strcmp(key, "sweep_dir") == 0)
+            g_sweep_dir.store(static_cast<float>(atof(val)));
+    }
+
+    fclose(f);
+    printf("  Config loaded from %s\n", path);
+}
+
 // ─── Snapshot current state into a UserPreset ────────────────────────
 
 static UserPreset snapshot_current()
@@ -1550,6 +1699,7 @@ static void enter_ap_mode(AudioEngine& audio)
         auto sw = get_val("sweep_dir");
         if (!sw.empty()) g_sweep_dir.store(std::stof(sw));
 
+        save_siren_config();
         return true;
     };
 
@@ -1690,9 +1840,107 @@ static void enter_ap_mode(AudioEngine& audio)
         return json;
     };
 
-    cb.backup_restore = [](const std::string&) -> bool {
-        // TODO: parse JSON and restore state
-        return false;
+    cb.backup_restore = [](const std::string& json) -> bool {
+        // Minimal JSON helpers
+        auto json_int = [&](const std::string& src, const char* key) -> int {
+            std::string needle = std::string("\"") + key + "\":";
+            auto pos = src.find(needle);
+            if (pos == std::string::npos) return -999;
+            return atoi(src.c_str() + pos + needle.size());
+        };
+        auto json_float = [&](const std::string& src, const char* key) -> float {
+            std::string needle = std::string("\"") + key + "\":";
+            auto pos = src.find(needle);
+            if (pos == std::string::npos) return -999.0f;
+            return static_cast<float>(atof(src.c_str() + pos + needle.size()));
+        };
+        auto json_bool = [&](const std::string& src, const char* key) -> bool {
+            std::string needle = std::string("\"") + key + "\":";
+            auto pos = src.find(needle);
+            if (pos == std::string::npos) return false;
+            auto vs = pos + needle.size();
+            while (vs < src.size() && src[vs] == ' ') vs++;
+            return src[vs] == 't';
+        };
+
+        // Verify backup version
+        if (json.find("\"DUBSIREN_BACKUP_V1\"") == std::string::npos) {
+            fprintf(stderr, "  !!! Invalid backup format\n");
+            return false;
+        }
+
+        // Restore config section
+        auto cfg_start = json.find("\"config\":{");
+        if (cfg_start != std::string::npos) {
+            auto cfg_end = json.find('}', cfg_start + 10);
+            if (cfg_end != std::string::npos) {
+                std::string cfg = json.substr(cfg_start, cfg_end - cfg_start + 1);
+                int rv = json_int(cfg, "reverb_type");
+                if (rv != -999) g_reverb_type.store(rv);
+                int dv = json_int(cfg, "delay_type");
+                if (dv != -999) g_delay_type.store(dv);
+                float tw = json_float(cfg, "tape_wobble");
+                if (tw != -999.0f) g_tape_wobble.store(tw);
+                float tf = json_float(cfg, "tape_flutter");
+                if (tf != -999.0f) g_tape_flutter.store(tf);
+                int fc = json_int(cfg, "fx_chain");
+                if (fc != -999) g_fx_chain.store(fc);
+                g_lfo_pitch_link.store(json_bool(cfg, "lfo_pitch_link"));
+                g_super_drip.store(json_bool(cfg, "super_drip"));
+            }
+        }
+
+        // Restore presets
+        auto presets_pos = json.find("\"presets\":[");
+        if (presets_pos != std::string::npos) {
+            size_t pos = presets_pos + 11;
+            for (int i = 0; i < NUM_USER_PRESETS && pos < json.size(); i++) {
+                auto obj_start = json.find('{', pos);
+                if (obj_start == std::string::npos) break;
+                auto obj_end = json.find('}', obj_start);
+                if (obj_end == std::string::npos) break;
+                std::string obj = json.substr(obj_start, obj_end - obj_start + 1);
+
+                // Extract name
+                auto name_pos = obj.find("\"name\":\"");
+                if (name_pos != std::string::npos) {
+                    auto ns = name_pos + 8;
+                    auto ne = obj.find('"', ns);
+                    if (ne != std::string::npos)
+                        snprintf(g_user_presets[i].name,
+                                 sizeof(g_user_presets[i].name),
+                                 "%s", obj.substr(ns, ne - ns).c_str());
+                }
+
+                g_user_presets[i].saved          = json_bool(obj, "saved");
+                g_user_presets[i].waveform       = json_int(obj, "waveform");
+                g_user_presets[i].lfo_wave       = json_int(obj, "lfo_wave");
+                g_user_presets[i].freq           = json_float(obj, "freq");
+                g_user_presets[i].lfo_rate       = json_float(obj, "lfo_rate");
+                g_user_presets[i].lfo_depth      = json_float(obj, "lfo_depth");
+                g_user_presets[i].filter_cutoff  = json_float(obj, "filter_cutoff");
+                g_user_presets[i].filter_reso    = json_float(obj, "filter_reso");
+                g_user_presets[i].delay_time     = json_float(obj, "delay_time");
+                g_user_presets[i].delay_feedback = json_float(obj, "delay_feedback");
+                g_user_presets[i].delay_mix      = json_float(obj, "delay_mix");
+                g_user_presets[i].reverb_mix     = json_float(obj, "reverb_mix");
+                g_user_presets[i].release_time   = json_float(obj, "release_time");
+                g_user_presets[i].sweep_dir      = json_float(obj, "sweep_dir");
+                g_user_presets[i].pitch_env      = json_int(obj, "pitch_env");
+                g_user_presets[i].super_drip     = json_bool(obj, "super_drip");
+                g_user_presets[i].reverb_type    = json_int(obj, "reverb_type");
+                g_user_presets[i].delay_type     = json_int(obj, "delay_type");
+                g_user_presets[i].tape_wobble    = json_float(obj, "tape_wobble");
+                g_user_presets[i].tape_flutter   = json_float(obj, "tape_flutter");
+
+                pos = obj_end + 1;
+            }
+        }
+
+        save_siren_config();
+        save_user_presets();
+        printf("  Backup restored successfully\n");
+        return true;
     };
 
     static AudioEngine* s_audio_ptr = nullptr;
@@ -2262,6 +2510,9 @@ int main(int argc, char *argv[])
         audio.shutdown();
         return 1;
     }
+
+    // Load persistent siren configuration (reverb type, delay type, etc.)
+    load_siren_config();
 
     // Initialise user presets (factory defaults + saved overrides)
     init_user_presets();
