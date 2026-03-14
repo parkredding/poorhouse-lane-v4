@@ -58,6 +58,10 @@
 #include "filter.h"
 #include "delay.h"
 #include "reverb.h"
+#include "reverb_plate.h"
+#include "reverb_hall.h"
+#include "reverb_schroeder.h"
+#include "delay_digital.h"
 #include "dsp_utils.h"
 
 static volatile sig_atomic_t g_running = 1;
@@ -97,6 +101,20 @@ static std::atomic<bool>  g_super_drip{true};
 static std::atomic<bool>  g_lfo_pitch_link{true};
 static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay time
 static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (freq-scaled)
+
+// Reverb/delay type selection (configurable via AP mode web UI)
+static std::atomic<int>   g_reverb_type{0};     // 0=Spring, 1=Plate, 2=Hall, 3=Schroeder
+static std::atomic<int>   g_delay_type{0};      // 0=Tape, 1=Digital
+static std::atomic<float> g_tape_wobble{1.0f};  // tape delay wobble amount (0–1)
+static std::atomic<float> g_tape_flutter{1.0f}; // tape delay flutter amount (0–1)
+
+// Effects chain order (configurable via AP mode web UI)
+// 0=Filt→Dly→Rev  1=Filt→Rev→Dly  2=Dly→Filt→Rev
+// 3=Dly→Rev→Filt  4=Rev→Filt→Dly  5=Rev→Dly→Filt
+static std::atomic<int>   g_fx_chain{0};
+
+// AP mode flag
+static std::atomic<bool>  g_ap_mode{false};
 
 // ─── Per-parameter step sizes (base, before acceleration) ───────────
 //
@@ -152,98 +170,35 @@ struct DubPreset {
     float       release_time;   // envelope release (seconds)
     float       sweep_dir;      // filter sweep on release: -1=Down, 0=Flat, +1=Up
     int         pitch_env;      // pitch envelope: -1=Fall, 0=Off, +1=Rise
+    int         reverb_type;    // 0=Spring, 1=Plate, 2=Hall, 3=Schroeder
+    int         delay_type;     // 0=Tape, 1=Digital
+    float       tape_wobble;    // tape wobble amount (0–1)
+    float       tape_flutter;   // tape flutter amount (0–1)
+    const char* category;       // preset category for web UI grouping
 };
 
 static constexpr int NUM_PRESETS = 4;
 
 static const DubPreset PRESETS[NUM_PRESETS] = {
-    //  ── 1. Slow Wail ──────────────────────────────────────────────
-    //  Classic slow siren wail — also the boot sound.  Sine LFO at
-    //  low rate for a long, smooth sweep.  Sawtooth oscillator for a
-    //  richer harmonic spectrum.  Long 2-second release lets the sound
-    //  fade out slowly with filter sweeping down.
     {
-        "Slow Wail",
-        2,              // Saw
-        0,              // LFO: Sine
-        550.0f,         // freq  (warm mid, not too high)
-        0.1f,           // lfo_rate  (very slow, 10-second sweep)
-        1.00f,          // lfo_depth  (full 100% sweep)
-        2500.0f,        // filter_cutoff  (warm, sweep audible)
-        0.35f,          // filter_reso  (gentle wah)
-        0.400f,         // delay_time  (dub echo spacing)
-        0.60f,          // delay_feedback  (long trails)
-        0.40f,          // delay_mix  (present echo)
-        0.45f,          // reverb_mix  (spring wash)
-        2.000f,         // release_time  (long 2-second fade — boot signature)
-        -1.0f,          // sweep_dir  (Down — canonical dub waaah on release)
-        -1,             // pitch_env  (Fall — pitch drops on release)
+        "Slow Wail", 2, 0, 550.0f, 0.1f, 1.00f, 2500.0f, 0.35f,
+        0.400f, 0.60f, 0.40f, 0.45f, 2.000f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Standard"
     },
-    //  ── 2. Machine Gun ────────────────────────────────────────────
-    //  Rapid-fire stutter.  Square LFO chops the pitch and filter
-    //  between high-bright and low-dark for aggressive on/off bursts.
-    //  Tight delay stutter, longer release lets the stuttered echoes
-    //  ring out with filter sweep closing them down.
     {
-        "Machine Gun",
-        1,              // Square
-        2,              // LFO: Square
-        1000.0f,        // freq  (punchy mid-high)
-        14.0f,          // lfo_rate  (rapid fire)
-        0.85f,          // lfo_depth  (extreme for hard cuts)
-        4000.0f,        // filter_cutoff  (filter chops with pitch)
-        0.30f,          // filter_reso  (adds bite to each burst)
-        0.180f,         // delay_time  (tight stutter echo)
-        0.60f,          // delay_feedback  (self-reinforcing bursts)
-        0.40f,          // delay_mix  (heavy stutter)
-        0.30f,          // reverb_mix  (room around the bursts)
-        0.500f,         // release_time  (longer tail — stutter fades through filter)
-        -1.0f,          // sweep_dir  (Down — filter closes as stutter fades out)
-        0,              // pitch_env  (Off — let the stutter do the work)
+        "Machine Gun", 1, 2, 1000.0f, 14.0f, 0.85f, 4000.0f, 0.30f,
+        0.180f, 0.60f, 0.40f, 0.30f, 0.500f, -1.0f, 0,
+        0, 0, 1.0f, 1.0f, "Standard"
     },
-    //  ── 3. Lickshot ───────────────────────────────────────────────
-    //  The classic laser-gun sound.  Square wave with fast triangle
-    //  LFO sweeping pitch and filter together.  Lower cutoff lets the
-    //  filter sweep open and close audibly.  Punchy attack, spring
-    //  reverb and tape echo for sound-system depth.
     {
-        "Lickshot",
-        1,              // Square
-        1,              // LFO: Triangle
-        800.0f,         // freq  (mid tone)
-        8.0f,           // lfo_rate  (fast sweep)
-        0.80f,          // lfo_depth  (deep — drives filter sweep hard)
-        3500.0f,        // filter_cutoff  (low enough for audible sweep)
-        0.40f,          // filter_reso  (squelchy bite on each sweep)
-        0.300f,         // delay_time  (dub echo)
-        0.55f,          // delay_feedback  (long repeats)
-        0.40f,          // delay_mix  (prominent echo)
-        0.35f,          // reverb_mix  (spring tank)
-        0.350f,         // release_time  (medium tail — filter sweep audible)
-        -1.0f,          // sweep_dir  (Down — filter darkens into delay on release)
-        -1,             // pitch_env  (Fall — laser drops on release)
+        "Lickshot", 1, 1, 800.0f, 8.0f, 0.80f, 3500.0f, 0.40f,
+        0.300f, 0.55f, 0.40f, 0.35f, 0.350f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Standard"
     },
-    //  ── 4. Droppa ───────────────────────────────────────────────────
-    //  Descending siren wail.  Ramp-down LFO pulls pitch and filter
-    //  down together — each cycle starts bright and falls into a
-    //  fat, dark growl.  Longer release with fast filter sweep gives
-    //  a dramatic darkening tail as the drop fades.
     {
-        "Droppa",
-        1,              // Square
-        4,              // LFO: RampDown
-        1000.0f,        // freq  (starts high, drops)
-        4.0f,           // lfo_rate  (medium sweep speed)
-        0.75f,          // lfo_depth  (wide falling range)
-        3000.0f,        // filter_cutoff  (drops into darkness)
-        0.45f,          // filter_reso  (squelchy wah on descent)
-        0.375f,         // delay_time  (dub echo)
-        0.65f,          // delay_feedback  (long cascading trails)
-        0.45f,          // delay_mix  (heavy dub echo)
-        0.40f,          // reverb_mix  (deep spring wash)
-        0.800f,         // release_time  (longer tail — drop fades into darkness)
-        -1.0f,          // sweep_dir  (Down — filter falls with the pitch, completes the drop)
-        -1,             // pitch_env  (Fall — completes the descending drop)
+        "Droppa", 1, 4, 1000.0f, 4.0f, 0.75f, 3000.0f, 0.45f,
+        0.375f, 0.65f, 0.45f, 0.40f, 0.800f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Standard"
     },
 };
 
@@ -255,90 +210,187 @@ static const DubPreset PRESETS[NUM_PRESETS] = {
 static constexpr int NUM_EXPERIMENTAL = 4;
 
 static const DubPreset EXPERIMENTAL[NUM_EXPERIMENTAL] = {
-    //  ── 1. Insect Swarm ───────────────────────────────────────────
-    //  Ultra-fast S&H LFO creates chaotic random pitch jumps.  High
-    //  resonance near self-oscillation, heavy feedback delay creates
-    //  cascading metallic insect-like buzzing.
     {
-        "Insect Swarm",
-        1,              // Square
-        5,              // LFO: S&H (sample & hold — random steps)
-        2000.0f,        // freq  (high, piercing)
-        18.0f,          // lfo_rate  (near-max — frantic random jumps)
-        0.95f,          // lfo_depth  (extreme range)
-        6000.0f,        // filter_cutoff  (bright, lets harmonics through)
-        0.85f,          // filter_reso  (near self-oscillation — screaming)
-        0.050f,         // delay_time  (very short — comb filter territory)
-        0.90f,          // delay_feedback  (near runaway — metallic buildup)
-        0.70f,          // delay_mix  (heavy wet signal)
-        0.60f,          // reverb_mix  (washy chaos)
-        0.150f,         // release_time  (short — tight bursts)
-        +1.0f,          // sweep_dir  (Up — filter opens into bright noise)
-        +1,             // pitch_env  (Rise — pitch shoots up on release)
+        "Insect Swarm", 1, 5, 2000.0f, 18.0f, 0.95f, 6000.0f, 0.85f,
+        0.050f, 0.90f, 0.70f, 0.60f, 0.150f, +1.0f, +1,
+        0, 0, 1.0f, 1.0f, "Experimental"
     },
-    //  ── 2. Depth Charge ───────────────────────────────────────────
-    //  Sub-bass sine wave with exponential fall LFO.  Extreme depth
-    //  pulls pitch down into seismic territory.  Long delay with max
-    //  feedback creates booming underwater explosions.
     {
-        "Depth Charge",
-        0,              // Sine
-        7,              // LFO: ExpFall
-        120.0f,         // freq  (low bass)
-        0.5f,           // lfo_rate  (slow — ponderous drops)
-        1.00f,          // lfo_depth  (full range — massive pitch sweep)
-        800.0f,         // filter_cutoff  (very dark, subterranean)
-        0.70f,          // filter_reso  (boomy resonance)
-        0.800f,         // delay_time  (long — cavernous echoes)
-        0.92f,          // delay_feedback  (near-infinite — rolling thunder)
-        0.80f,          // delay_mix  (mostly wet — underwater)
-        0.85f,          // reverb_mix  (massive space)
-        3.000f,         // release_time  (very long decay)
-        -1.0f,          // sweep_dir  (Down — sinks into the deep)
-        -1,             // pitch_env  (Fall — descends into the abyss)
+        "Depth Charge", 0, 7, 120.0f, 0.5f, 1.00f, 800.0f, 0.70f,
+        0.800f, 0.92f, 0.80f, 0.85f, 3.000f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Experimental"
     },
-    //  ── 3. Glitch Storm ───────────────────────────────────────────
-    //  Triangle wave with exponential rise LFO at high rate.  Rapid
-    //  upward pitch sweeps with short delay creates stuttering,
-    //  glitchy digital-sounding mayhem.  Filter resonance near max.
     {
-        "Glitch Storm",
-        3,              // Triangle
-        6,              // LFO: ExpRise
-        600.0f,         // freq  (mid — room to sweep both ways)
-        15.0f,          // lfo_rate  (fast — frantic)
-        0.90f,          // lfo_depth  (extreme pitch range)
-        12000.0f,       // filter_cutoff  (bright — all harmonics)
-        0.90f,          // filter_reso  (screaming, near self-osc)
-        0.120f,         // delay_time  (short — stuttering)
-        0.85f,          // delay_feedback  (heavy — self-reinforcing glitches)
-        0.65f,          // delay_mix  (prominent echo mayhem)
-        0.20f,          // reverb_mix  (tight — keeps glitches defined)
-        0.100f,         // release_time  (very short — percussive hits)
-        +1.0f,          // sweep_dir  (Up — filter opens into brightness)
-        0,              // pitch_env  (Off — let the LFO do the chaos)
+        "Glitch Storm", 3, 6, 600.0f, 15.0f, 0.90f, 12000.0f, 0.90f,
+        0.120f, 0.85f, 0.65f, 0.20f, 0.100f, +1.0f, 0,
+        0, 0, 1.0f, 1.0f, "Experimental"
     },
-    //  ── 4. Foghorn From Hell ──────────────────────────────────────
-    //  Sawtooth at very low frequency with slow ramp-up LFO.  Rich
-    //  harmonics through resonant filter with maximum reverb and
-    //  heavy delay feedback — a monstrous droning foghorn that fills
-    //  the entire space.
     {
-        "Foghorn From Hell",
-        2,              // Saw
-        3,              // LFO: RampUp
-        55.0f,          // freq  (very low — sub A1)
-        0.3f,           // lfo_rate  (very slow — ominous creep)
-        0.85f,          // lfo_depth  (wide — enormous pitch range)
-        1200.0f,        // filter_cutoff  (low — dark and thick)
-        0.80f,          // filter_reso  (resonant growl)
-        0.600f,         // delay_time  (long — massive echo)
-        0.88f,          // delay_feedback  (near-infinite — droning buildup)
-        0.75f,          // delay_mix  (heavy wet — wall of sound)
-        0.90f,          // reverb_mix  (cathedral of doom)
-        4.000f,         // release_time  (very long — hangs in the air)
-        -1.0f,          // sweep_dir  (Down — darkens into oblivion)
-        -1,             // pitch_env  (Fall — drops into the void)
+        "Foghorn From Hell", 2, 3, 55.0f, 0.3f, 0.85f, 1200.0f, 0.80f,
+        0.600f, 0.88f, 0.75f, 0.90f, 4.000f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Experimental"
+    },
+};
+
+// ─── Full Preset Library ──────────────────────────────────────────────
+//
+// Comprehensive library of dub siren presets across multiple categories.
+// Accessible via the AP mode web UI for browsing and loading into
+// user preset slots.
+
+static constexpr int NUM_LIBRARY_PRESETS = 28;
+
+static const DubPreset PRESET_LIBRARY[NUM_LIBRARY_PRESETS] = {
+    // ── Classic Dub (8) ─────────────────────────────────────────────
+    {
+        "King Tubby Aquarium", 2, 0, 440.0f, 0.15f, 0.90f, 2000.0f, 0.40f,
+        0.450f, 0.70f, 0.50f, 0.55f, 2.500f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Classic Dub"
+    },
+    {
+        "Channel One Riddim", 1, 1, 660.0f, 2.0f, 0.65f, 3000.0f, 0.35f,
+        0.375f, 0.55f, 0.35f, 0.40f, 1.200f, -1.0f, 0,
+        0, 0, 0.8f, 0.7f, "Classic Dub"
+    },
+    {
+        "Black Ark Madness", 2, 5, 500.0f, 6.0f, 0.80f, 2800.0f, 0.55f,
+        0.330f, 0.75f, 0.55f, 0.65f, 1.800f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Classic Dub"
+    },
+    {
+        "Scientist Dub", 1, 0, 380.0f, 0.3f, 0.70f, 1800.0f, 0.50f,
+        0.500f, 0.65f, 0.45f, 0.50f, 2.000f, -1.0f, -1,
+        0, 0, 0.9f, 0.8f, "Classic Dub"
+    },
+    {
+        "Far East Melodica", 3, 0, 520.0f, 0.2f, 0.50f, 4000.0f, 0.20f,
+        0.400f, 0.50f, 0.30f, 0.45f, 1.500f, -1.0f, 0,
+        0, 0, 0.5f, 0.4f, "Classic Dub"
+    },
+    {
+        "Taxi Connection", 1, 2, 880.0f, 10.0f, 0.75f, 3500.0f, 0.45f,
+        0.250f, 0.55f, 0.40f, 0.35f, 0.600f, -1.0f, 0,
+        0, 0, 1.0f, 1.0f, "Classic Dub"
+    },
+    {
+        "Digital Steppa", 1, 4, 750.0f, 5.0f, 0.70f, 2500.0f, 0.40f,
+        0.300f, 0.60f, 0.40f, 0.30f, 0.800f, -1.0f, -1,
+        0, 1, 0.0f, 0.0f, "Classic Dub"
+    },
+    {
+        "Roots Radics", 2, 3, 350.0f, 1.5f, 0.60f, 2200.0f, 0.45f,
+        0.375f, 0.70f, 0.45f, 0.50f, 1.500f, -1.0f, -1,
+        0, 0, 0.7f, 0.6f, "Classic Dub"
+    },
+
+    // ── NJD Style (4) ───────────────────────────────────────────────
+    {
+        "NJD Classic Wail", 1, 0, 600.0f, 0.08f, 1.00f, 3000.0f, 0.30f,
+        0.400f, 0.55f, 0.35f, 0.40f, 2.500f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "NJD Style"
+    },
+    {
+        "NJD Stutter", 1, 2, 900.0f, 16.0f, 0.90f, 4500.0f, 0.35f,
+        0.150f, 0.65f, 0.45f, 0.30f, 0.400f, -1.0f, 0,
+        0, 0, 1.0f, 1.0f, "NJD Style"
+    },
+    {
+        "NJD Laser", 1, 1, 1200.0f, 12.0f, 0.85f, 5000.0f, 0.50f,
+        0.200f, 0.50f, 0.35f, 0.25f, 0.250f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "NJD Style"
+    },
+    {
+        "NJD Sub Drop", 0, 7, 200.0f, 0.5f, 1.00f, 1500.0f, 0.60f,
+        0.500f, 0.70f, 0.50f, 0.55f, 3.000f, -1.0f, -1,
+        0, 0, 0.8f, 0.6f, "NJD Style"
+    },
+
+    // ── Sci-Fi (4) ──────────────────────────────────────────────────
+    {
+        "Dalek Voice", 1, 2, 150.0f, 20.0f, 0.40f, 2000.0f, 0.70f,
+        0.020f, 0.60f, 0.50f, 0.30f, 0.500f, 0.0f, 0,
+        3, 1, 0.0f, 0.0f, "Sci-Fi"
+    },
+    {
+        "Tardis Sweep", 2, 0, 300.0f, 0.05f, 1.00f, 6000.0f, 0.25f,
+        0.600f, 0.80f, 0.60f, 0.70f, 5.000f, +1.0f, +1,
+        2, 0, 1.0f, 1.0f, "Sci-Fi"
+    },
+    {
+        "Cyberman March", 1, 2, 400.0f, 8.0f, 0.50f, 3000.0f, 0.80f,
+        0.250f, 0.70f, 0.40f, 0.20f, 0.300f, -1.0f, 0,
+        3, 1, 0.0f, 0.0f, "Sci-Fi"
+    },
+    {
+        "Space Echo", 2, 0, 700.0f, 0.3f, 0.60f, 5000.0f, 0.15f,
+        0.500f, 0.85f, 0.70f, 0.60f, 2.000f, 0.0f, 0,
+        1, 0, 0.6f, 0.5f, "Sci-Fi"
+    },
+
+    // ── Modern Dub (4) ──────────────────────────────────────────────
+    {
+        "Iration Steppa", 1, 4, 800.0f, 3.0f, 0.80f, 2500.0f, 0.50f,
+        0.350f, 0.65f, 0.45f, 0.45f, 1.200f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Modern Dub"
+    },
+    {
+        "Jah Shaka Quake", 0, 3, 80.0f, 0.4f, 1.00f, 600.0f, 0.75f,
+        0.700f, 0.90f, 0.75f, 0.80f, 4.000f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Modern Dub"
+    },
+    {
+        "Aba Shanti Power", 1, 1, 950.0f, 6.0f, 0.85f, 3500.0f, 0.55f,
+        0.280f, 0.60f, 0.40f, 0.40f, 0.700f, -1.0f, -1,
+        0, 0, 0.9f, 0.8f, "Modern Dub"
+    },
+    {
+        "Channel One Sound", 2, 0, 440.0f, 0.2f, 0.75f, 2800.0f, 0.40f,
+        0.375f, 0.55f, 0.35f, 0.50f, 1.800f, -1.0f, -1,
+        0, 0, 0.7f, 0.6f, "Modern Dub"
+    },
+
+    // ── Experimental (4) ────────────────────────────────────────────
+    {
+        "Granular Storm", 3, 5, 1500.0f, 20.0f, 1.00f, 8000.0f, 0.90f,
+        0.030f, 0.92f, 0.80f, 0.50f, 0.080f, +1.0f, +1,
+        1, 1, 0.0f, 0.0f, "Experimental"
+    },
+    {
+        "Ring Mod Chaos", 1, 6, 3000.0f, 19.0f, 0.95f, 10000.0f, 0.85f,
+        0.080f, 0.88f, 0.65f, 0.40f, 0.120f, +1.0f, 0,
+        3, 0, 1.0f, 1.0f, "Experimental"
+    },
+    {
+        "Bit Crusher", 1, 5, 1000.0f, 15.0f, 0.80f, 4000.0f, 0.70f,
+        0.100f, 0.80f, 0.55f, 0.15f, 0.200f, 0.0f, 0,
+        3, 1, 0.0f, 0.0f, "Experimental"
+    },
+    {
+        "FM Madness", 0, 6, 250.0f, 18.0f, 1.00f, 15000.0f, 0.50f,
+        0.060f, 0.85f, 0.70f, 0.55f, 0.300f, +1.0f, +1,
+        2, 0, 1.0f, 1.0f, "Experimental"
+    },
+
+    // ── Utility (4) ─────────────────────────────────────────────────
+    {
+        "Pure Tone", 0, 0, 440.0f, 1.0f, 0.00f, 20000.0f, 0.00f,
+        0.375f, 0.00f, 0.00f, 0.00f, 0.300f, 0.0f, 0,
+        0, 1, 0.0f, 0.0f, "Utility"
+    },
+    {
+        "Test Sweep", 2, 0, 200.0f, 0.05f, 1.00f, 10000.0f, 0.00f,
+        0.375f, 0.00f, 0.00f, 0.00f, 5.000f, 0.0f, 0,
+        0, 1, 0.0f, 0.0f, "Utility"
+    },
+    {
+        "Click Track", 1, 2, 1000.0f, 4.0f, 1.00f, 20000.0f, 0.00f,
+        0.250f, 0.00f, 0.00f, 0.00f, 0.010f, 0.0f, 0,
+        0, 1, 0.0f, 0.0f, "Utility"
+    },
+    {
+        "Sub Bass", 0, 0, 60.0f, 0.5f, 0.30f, 200.0f, 0.60f,
+        0.500f, 0.40f, 0.25f, 0.20f, 2.000f, -1.0f, -1,
+        0, 0, 0.5f, 0.3f, "Utility"
     },
 };
 
@@ -360,6 +412,10 @@ static void apply_dub_preset(const DubPreset& p)
     g_release_time.store(p.release_time);
     g_sweep_dir.store(p.sweep_dir);
     g_pitch_env.store(p.pitch_env);
+    g_reverb_type.store(p.reverb_type);
+    g_delay_type.store(p.delay_type);
+    g_tape_wobble.store(p.tape_wobble);
+    g_tape_flutter.store(p.tape_flutter);
 
     update_link_eff();
 }
@@ -377,13 +433,15 @@ static void apply_experimental(int idx)
 // ─── User preset bank ────────────────────────────────────────────────
 
 static constexpr int NUM_USER_PRESETS = 4;
+static constexpr char PRESET_V3_HEADER[] = "DUBSIREN_PRESETS_V3";
 static constexpr char PRESET_V2_HEADER[] = "DUBSIREN_PRESETS_V2";
 static constexpr char PRESET_V1_HEADER[] = "DUBSIREN_PRESETS_V1";
 
 struct UserPreset {
-    bool saved;             // true = has user data, false = factory copy
-    int  waveform;
-    int  lfo_wave;
+    bool  saved;             // true = has user data, false = factory copy
+    char  name[32];          // user-assigned name
+    int   waveform;
+    int   lfo_wave;
     float freq;
     float lfo_rate;
     float lfo_depth;
@@ -395,8 +453,12 @@ struct UserPreset {
     float reverb_mix;
     float release_time;
     float sweep_dir;
-    int   pitch_env;        // -1=Fall, 0=Off, +1=Rise
+    int   pitch_env;         // -1=Fall, 0=Off, +1=Rise
     bool  super_drip;
+    int   reverb_type;       // 0=Spring, 1=Plate, 2=Hall, 3=Schroeder
+    int   delay_type;        // 0=Tape, 1=Digital
+    float tape_wobble;       // tape wobble amount (0–1)
+    float tape_flutter;      // tape flutter amount (0–1)
 };
 
 static UserPreset g_user_presets[NUM_USER_PRESETS];
@@ -681,6 +743,7 @@ static UserPreset snapshot_current()
 {
     UserPreset u;
     u.saved         = true;
+    snprintf(u.name, sizeof(u.name), "User Preset");
     u.waveform      = g_waveform.load();
     u.lfo_wave      = g_lfo_waveform.load();
     u.freq          = g_freq.load();
@@ -696,6 +759,10 @@ static UserPreset snapshot_current()
     u.sweep_dir     = g_sweep_dir.load();
     u.pitch_env     = g_pitch_env.load();
     u.super_drip    = g_super_drip.load();
+    u.reverb_type   = g_reverb_type.load();
+    u.delay_type    = g_delay_type.load();
+    u.tape_wobble   = g_tape_wobble.load();
+    u.tape_flutter  = g_tape_flutter.load();
     return u;
 }
 
@@ -710,7 +777,8 @@ static bool verify_preset_file(const char* path)
     }
     char header[64];
     if (!fgets(header, sizeof(header), f) ||
-        strncmp(header, PRESET_V2_HEADER, sizeof(PRESET_V2_HEADER) - 1) != 0) {
+        (strncmp(header, PRESET_V3_HEADER, sizeof(PRESET_V3_HEADER) - 1) != 0 &&
+         strncmp(header, PRESET_V2_HEADER, sizeof(PRESET_V2_HEADER) - 1) != 0)) {
         fprintf(stderr, "  !!! Verify FAILED: bad header in %s\n", path);
         fclose(f);
         return false;
@@ -743,18 +811,23 @@ static void save_user_presets()
         return;
     }
 
-    fprintf(f, "%s\n", PRESET_V2_HEADER);
+    fprintf(f, "%s\n", PRESET_V3_HEADER);
     for (int i = 0; i < NUM_USER_PRESETS; i++) {
         const UserPreset& u = g_user_presets[i];
-        fprintf(f, "%d %d %d %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %d %d\n",
+        // V3 format: all V2 fields + name + reverb_type + delay_type + wobble + flutter
+        // Name is quoted to handle spaces
+        fprintf(f, "%d \"%s\" %d %d %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %d %d %d %d %.6f %.6f\n",
                 u.saved ? 1 : 0,
+                u.name,
                 u.waveform, u.lfo_wave,
                 u.freq, u.lfo_rate, u.lfo_depth,
                 u.filter_cutoff, u.filter_reso,
                 u.delay_time, u.delay_feedback, u.delay_mix,
                 u.reverb_mix, u.release_time, u.sweep_dir,
                 u.pitch_env,
-                u.super_drip ? 1 : 0);
+                u.super_drip ? 1 : 0,
+                u.reverb_type, u.delay_type,
+                u.tape_wobble, u.tape_flutter);
     }
 
     fflush(f);
@@ -817,15 +890,16 @@ static void load_user_presets()
         return;
     }
 
+    bool v3 = (strncmp(header, PRESET_V3_HEADER, sizeof(PRESET_V3_HEADER) - 1) == 0);
     bool v2 = (strncmp(header, PRESET_V2_HEADER, sizeof(PRESET_V2_HEADER) - 1) == 0);
     bool v1 = (strncmp(header, PRESET_V1_HEADER, sizeof(PRESET_V1_HEADER) - 1) == 0);
-    if (!v1 && !v2) {
+    if (!v1 && !v2 && !v3) {
         fprintf(stderr, "  !!! Invalid preset file — ignoring\n");
         fclose(f);
         return;
     }
 
-    // V1 had 8 slots, V2 has 4 — only load what fits
+    // V1 had 8 slots, V2/V3 have 4 — only load what fits
     int slots_in_file = v1 ? 8 : NUM_USER_PRESETS;
 
     for (int i = 0; i < slots_in_file; i++) {
@@ -834,7 +908,41 @@ static void load_user_presets()
         UserPreset tmp;
         UserPreset& u = skip ? tmp : g_user_presets[i];
 
-        if (v2) {
+        if (v3) {
+            // V3 format: saved "name" waveform lfo_wave freq ... reverb_type delay_type wobble flutter
+            int saved, pe, sd, rt, dt;
+            char name_buf[32] = {};
+            // Read saved flag
+            if (fscanf(f, " %d", &saved) != 1) break;
+            // Read quoted name
+            int ch;
+            while ((ch = fgetc(f)) != EOF && ch != '"') {}  // skip to opening quote
+            if (ch == EOF) break;
+            int ni = 0;
+            while ((ch = fgetc(f)) != EOF && ch != '"' && ni < 31)
+                name_buf[ni++] = static_cast<char>(ch);
+            name_buf[ni] = '\0';
+            // Read remaining fields
+            int n = fscanf(f, " %d %d %f %f %f %f %f %f %f %f %f %f %f %d %d %d %d %f %f",
+                           &u.waveform, &u.lfo_wave,
+                           &u.freq, &u.lfo_rate, &u.lfo_depth,
+                           &u.filter_cutoff, &u.filter_reso,
+                           &u.delay_time, &u.delay_feedback, &u.delay_mix,
+                           &u.reverb_mix, &u.release_time, &u.sweep_dir,
+                           &pe, &sd, &rt, &dt,
+                           &u.tape_wobble, &u.tape_flutter);
+            if (n == 19) {
+                if (!validate_preset(u, pe, i)) { u.saved = false; continue; }
+                u.saved       = (saved != 0);
+                snprintf(u.name, sizeof(u.name), "%s", name_buf);
+                u.pitch_env   = pe;
+                u.super_drip  = (sd != 0);
+                u.reverb_type = rt;
+                u.delay_type  = dt;
+            } else {
+                break;
+            }
+        } else if (v2) {
             int saved, pe, sd;
             int n = fscanf(f, "%d %d %d %f %f %f %f %f %f %f %f %f %f %f %d %d",
                            &saved,
@@ -846,9 +954,14 @@ static void load_user_presets()
                            &pe, &sd);
             if (n == 16) {
                 if (!validate_preset(u, pe, i)) { u.saved = false; continue; }
-                u.saved      = (saved != 0);
-                u.pitch_env  = pe;
-                u.super_drip = (sd != 0);
+                u.saved       = (saved != 0);
+                snprintf(u.name, sizeof(u.name), "User %d", i + 1);
+                u.pitch_env   = pe;
+                u.super_drip  = (sd != 0);
+                u.reverb_type = 0;  // V2 default: spring
+                u.delay_type  = 0;  // V2 default: tape
+                u.tape_wobble  = 1.0f;
+                u.tape_flutter = 1.0f;
             } else {
                 break;
             }
@@ -865,9 +978,14 @@ static void load_user_presets()
                            &dl, &lpl, &sd);
             if (n == 17) {
                 if (!validate_preset(u, 0, i)) { u.saved = false; continue; }
-                u.saved      = (saved != 0);
-                u.pitch_env  = 0;  // V1 didn't store pitch_env, default off
-                u.super_drip = (sd != 0);
+                u.saved       = (saved != 0);
+                snprintf(u.name, sizeof(u.name), "User %d", i + 1);
+                u.pitch_env   = 0;
+                u.super_drip  = (sd != 0);
+                u.reverb_type = 0;
+                u.delay_type  = 0;
+                u.tape_wobble  = 1.0f;
+                u.tape_flutter = 1.0f;
             } else {
                 break;
             }
@@ -878,8 +996,9 @@ static void load_user_presets()
     int loaded_count = 0;
     for (int j = 0; j < NUM_USER_PRESETS; j++)
         if (g_user_presets[j].saved) loaded_count++;
+    const char* ver_str = v3 ? "V3" : (v2 ? "V2→V3 migration" : "V1→V3 migration");
     printf("  User presets loaded from %s (%s, %d/%d slots populated)\n",
-           path, v2 ? "V2" : "V1→V2 migration", loaded_count, NUM_USER_PRESETS);
+           path, ver_str, loaded_count, NUM_USER_PRESETS);
 }
 
 static void init_user_presets()
@@ -889,6 +1008,7 @@ static void init_user_presets()
         const DubPreset& f = PRESETS[i % NUM_PRESETS];
         UserPreset& u = g_user_presets[i];
         u.saved         = false;
+        snprintf(u.name, sizeof(u.name), "%s", f.name);
         u.waveform      = f.waveform;
         u.lfo_wave      = f.lfo_wave;
         u.freq          = f.freq;
@@ -904,6 +1024,10 @@ static void init_user_presets()
         u.sweep_dir     = f.sweep_dir;
         u.pitch_env     = f.pitch_env;
         u.super_drip    = true;
+        u.reverb_type   = f.reverb_type;
+        u.delay_type    = f.delay_type;
+        u.tape_wobble   = f.tape_wobble;
+        u.tape_flutter  = f.tape_flutter;
     }
 
     // Migrate from old ~/.config/dubsiren/ location if new path has no file
@@ -960,6 +1084,10 @@ static void apply_user_preset(const UserPreset& u)
     g_sweep_dir.store(u.sweep_dir);
     g_pitch_env.store(u.pitch_env);
     g_super_drip.store(u.super_drip);
+    g_reverb_type.store(u.reverb_type);
+    g_delay_type.store(u.delay_type);
+    g_tape_wobble.store(u.tape_wobble);
+    g_tape_flutter.store(u.tape_flutter);
 
     update_link_eff();
 }
@@ -1258,11 +1386,15 @@ int main(int argc, char *argv[])
     // These objects are captured by reference in the audio callback
     // and are only ever touched from the audio thread.
 
-    Oscillator osc;
-    LFO        lfo;
-    MoogFilter filter;
-    TapeDelay  delay;
-    Reverb     reverb;
+    Oscillator      osc;
+    LFO             lfo;
+    MoogFilter      filter;
+    TapeDelay       delay;
+    DigitalDelay    delay_digital;
+    Reverb          reverb;
+    PlateReverb     reverb_plate;
+    HallReverb      reverb_hall;
+    SchroederReverb reverb_schroeder;
 
     float env_level      = 0.0f;
     float attack_rate    = 0.0f;
@@ -1310,18 +1442,53 @@ int main(int argc, char *argv[])
         fall_factor  = std::pow(2.0f, -3.0f / rel_samples);  // 3 oct down
         float sweep_inc  = 1.0f / rel_samples;               // linear phase increment
 
+        int   rev_type  = g_reverb_type.load(rlx);
+        int   dly_type  = g_delay_type.load(rlx);
+        float wobble    = g_tape_wobble.load(rlx);
+        float flutter   = g_tape_flutter.load(rlx);
+        int   fx_chain  = g_fx_chain.load(rlx);
+
         // Update DSP modules (once per frame)
         // lfo rate set per-sample below (optionally tracks pitch envelope)
         lfo.setWaveform(static_cast<LfoWave>(g_lfo_waveform.load(rlx)));
         osc.setWaveform(static_cast<Waveform>(waveform));
         filter.setResonance(reso);
-        delay.setTime(dly_t);
-        delay.setFeedback(dly_fb);
-        delay.setMix(dly_mix);
-        delay.setRepitchRate(0.3f);
-        reverb.setSize(REVERB_SIZE);
-        reverb.setMix(rev_mix);
-        reverb.setSuperDrip(g_super_drip.load(rlx));
+
+        // Update active delay
+        if (dly_type == 0) {
+            delay.setTime(dly_t);
+            delay.setFeedback(dly_fb);
+            delay.setMix(dly_mix);
+            delay.setRepitchRate(0.3f);
+            delay.setWobbleAmount(wobble);
+            delay.setFlutterAmount(flutter);
+        } else {
+            delay_digital.setTime(dly_t);
+            delay_digital.setFeedback(dly_fb);
+            delay_digital.setMix(dly_mix);
+        }
+
+        // Update active reverb
+        bool super_drip = g_super_drip.load(rlx);
+        switch (rev_type) {
+        case 0:
+            reverb.setSize(REVERB_SIZE);
+            reverb.setMix(rev_mix);
+            reverb.setSuperDrip(super_drip);
+            break;
+        case 1:
+            reverb_plate.setSize(REVERB_SIZE);
+            reverb_plate.setMix(rev_mix);
+            break;
+        case 2:
+            reverb_hall.setSize(REVERB_SIZE);
+            reverb_hall.setMix(rev_mix);
+            break;
+        case 3:
+            reverb_schroeder.setSize(REVERB_SIZE);
+            reverb_schroeder.setMix(rev_mix);
+            break;
+        }
 
         // Gate edge — envelopes start on release, reset on press
         if (gate && !prev_gate) {
@@ -1369,10 +1536,6 @@ int main(int argc, char *argv[])
             // Oscillator
             float s = osc.tick();
 
-            // Filter before volume envelope so the sweep is
-            // audible through the full release tail
-            s = filter.process(s);
-
             // Volume envelope (linear attack / release)
             if (gate)
                 env_level += attack_rate;
@@ -1381,9 +1544,34 @@ int main(int argc, char *argv[])
             env_level = std::clamp(env_level, 0.0f, 1.0f);
             s *= env_level;
 
-            // Effects chain
-            s = delay.process(s);
-            s = reverb.process(s);
+            // Effects chain — three blocks: Filter, Delay, Reverb
+            // Order is configurable via g_fx_chain
+            auto do_filter = [&](float x) -> float {
+                return filter.process(x);
+            };
+            auto do_delay = [&](float x) -> float {
+                return (dly_type == 0) ? delay.process(x)
+                                       : delay_digital.process(x);
+            };
+            auto do_reverb = [&](float x) -> float {
+                switch (rev_type) {
+                case 1:  return reverb_plate.process(x);
+                case 2:  return reverb_hall.process(x);
+                case 3:  return reverb_schroeder.process(x);
+                default: return reverb.process(x);
+                }
+            };
+
+            // Apply effects in configured order
+            switch (fx_chain) {
+            default:
+            case 0:  s = do_filter(s); s = do_delay(s);  s = do_reverb(s); break;
+            case 1:  s = do_filter(s); s = do_reverb(s); s = do_delay(s);  break;
+            case 2:  s = do_delay(s);  s = do_filter(s); s = do_reverb(s); break;
+            case 3:  s = do_delay(s);  s = do_reverb(s); s = do_filter(s); break;
+            case 4:  s = do_reverb(s); s = do_filter(s); s = do_delay(s);  break;
+            case 5:  s = do_reverb(s); s = do_delay(s);  s = do_filter(s); break;
+            }
 
             // Output soft limiter — transparent at normal levels,
             // warm saturation when pushed (resonance, feedback, etc.)
@@ -1403,8 +1591,12 @@ int main(int argc, char *argv[])
         filter.setSampleRate(sr);
         delay.init(sr, 1.5f);
         delay.setRepitchRate(0.3f);
+        delay_digital.init(sr, 1.5f);
         reverb.init(sr);
         reverb.setSuperDrip(true);
+        reverb_plate.init(sr);
+        reverb_hall.init(sr);
+        reverb_schroeder.init(sr);
 
         attack_rate  = 1.0f / (0.005f * sr);           // ~5 ms
         release_rate = 1.0f / (0.050f * sr);            // ~50 ms
