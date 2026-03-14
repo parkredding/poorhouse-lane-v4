@@ -1724,7 +1724,8 @@ int main(int argc, char *argv[])
             led.blinkSave();
         else
             led.update(g_lfo_waveform.load(), g_lfo_out.load(),
-                       g_lfo_depth.load(), g_gate.load());
+                       g_lfo_depth.load(), g_gate.load(),
+                       g_freq.load());
 
         // Resolve pending shift double-click (fires 350 ms after
         // 2nd press if no 3rd click arrives for triple-click)

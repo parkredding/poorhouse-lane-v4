@@ -45,6 +45,33 @@ static constexpr float BASE_BRIGHT = 0.25f;  // trigger pressed
 // modulation = lfo_uni * lfo_depth
 // brightness = base + modulation * (1 - base)
 
+// ─── Pitch → desaturation ─────────────────────────────────────────────
+//
+// Low pitch (30 Hz)   → fully saturated jewel tone  (desat = 0)
+// High pitch (8000 Hz) → pastel / washed-out         (desat = 1)
+// Log-scaled to match pitch perception.
+
+static constexpr float FREQ_MIN = 30.0f;
+static constexpr float FREQ_MAX = 8000.0f;
+static constexpr float LOG_FREQ_MIN = 3.4012f;   // log2(30) ≈ 4.91 — actually let's use natural log
+// Using log2 for even spread: log2(30)≈4.91, log2(8000)≈12.97
+
+static uint32_t desaturate(uint32_t color, float amount)
+{
+    // Lerp each channel toward white (255) by amount [0,1]
+    float r = static_cast<float>((color >> 16) & 0xFF);
+    float g = static_cast<float>((color >> 8)  & 0xFF);
+    float b = static_cast<float>((color)       & 0xFF);
+
+    r += (255.0f - r) * amount;
+    g += (255.0f - g) * amount;
+    b += (255.0f - b) * amount;
+
+    return (static_cast<uint32_t>(r) << 16)
+         | (static_cast<uint32_t>(g) << 8)
+         |  static_cast<uint32_t>(b);
+}
+
 static uint32_t apply_brightness(uint32_t color, float brightness)
 {
     float r = static_cast<float>((color >> 16) & 0xFF);
@@ -108,13 +135,19 @@ bool LedDriver::init(int gpio_pin, int num_leds)
 }
 
 void LedDriver::update(int waveform_index, float lfo_output,
-                        float lfo_depth, bool gate)
+                        float lfo_depth, bool gate, float freq)
 {
     if (!pimpl_->initialised) return;
 
     // Clamp waveform index
     int idx = std::clamp(waveform_index, 0, NUM_COLORS - 1);
     uint32_t color = WAVEFORM_COLORS[idx];
+
+    // Pitch → desaturation (log-scaled)
+    float f = std::clamp(freq, FREQ_MIN, FREQ_MAX);
+    float desat = (std::log2(f) - std::log2(FREQ_MIN))
+                / (std::log2(FREQ_MAX) - std::log2(FREQ_MIN));
+    color = desaturate(color, desat);
 
     // Brightness calculation
     float base   = gate ? BASE_BRIGHT : BASE_DIM;
@@ -184,7 +217,7 @@ bool LedDriver::init(int, int)
     return false;
 }
 
-void LedDriver::update(int, float, float, bool) {}
+void LedDriver::update(int, float, float, bool, float) {}
 void LedDriver::blinkSave() {}
 void LedDriver::shutdown() {}
 

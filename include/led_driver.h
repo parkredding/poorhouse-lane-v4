@@ -23,8 +23,10 @@ public:
     //   lfo_output:     raw LFO value in [–1, +1]
     //   lfo_depth:      0.0–1.0
     //   gate:           true when trigger is held
+    //   freq:           oscillator base frequency in Hz (30–8000)
+    //                   higher pitch → desaturated (pastel)
     void update(int waveform_index, float lfo_output,
-                float lfo_depth, bool gate);
+                float lfo_depth, bool gate, float freq);
 
     // Triple white blink at 25% brightness (blocking, ~600 ms).
     // Call on preset save for visual confirmation.
