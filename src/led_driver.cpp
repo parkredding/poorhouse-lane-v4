@@ -8,6 +8,8 @@
 #include "led_driver.h"
 #include <cstdio>
 #include <algorithm>
+#include <thread>
+#include <chrono>
 
 // ─── Jewel-tone colour table (one per LfoWave, RGB) ──────────────────
 //
@@ -129,6 +131,30 @@ void LedDriver::update(int waveform_index, float lfo_output,
     ws2811_render(&pimpl_->ledstring);
 }
 
+void LedDriver::blinkSave()
+{
+    if (!pimpl_->initialised) return;
+
+    // White at 25% brightness
+    uint32_t white = apply_brightness(0xFFFFFF, BASE_BRIGHT);
+
+    // 3 blinks: 80 ms on, 80 ms off
+    for (int blink = 0; blink < 3; blink++) {
+        // On — white
+        for (int i = 0; i < pimpl_->num_leds; i++)
+            pimpl_->ledstring.channel[0].leds[i] = white;
+        ws2811_render(&pimpl_->ledstring);
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+
+        // Off
+        for (int i = 0; i < pimpl_->num_leds; i++)
+            pimpl_->ledstring.channel[0].leds[i] = 0;
+        ws2811_render(&pimpl_->ledstring);
+        if (blink < 2)
+            std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    }
+}
+
 void LedDriver::shutdown()
 {
     if (pimpl_ && pimpl_->initialised) {
@@ -159,6 +185,7 @@ bool LedDriver::init(int, int)
 }
 
 void LedDriver::update(int, float, float, bool) {}
+void LedDriver::blinkSave() {}
 void LedDriver::shutdown() {}
 
 #endif // HAS_WS2811

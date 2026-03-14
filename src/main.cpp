@@ -99,6 +99,7 @@ static std::atomic<bool>  g_lfo_pitch_link{true};
 static std::atomic<float> g_delay_time_eff{0.375f}; // effective delay time
 static std::atomic<float> g_lfo_rate_eff{0.35f};    // effective LFO rate (freq-scaled)
 static std::atomic<float> g_lfo_out{0.0f};          // LFO output [-1,+1] for LED
+static std::atomic<bool>  g_led_save_blink{false};  // trigger save-confirmation blink
 
 // ─── Per-parameter step sizes (base, before acceleration) ───────────
 //
@@ -1032,6 +1033,8 @@ static void save_current_to_user_bank()
         g_bank_mode.store(static_cast<int>(BankMode::USER));
     }
 
+    g_led_save_blink.store(true);
+
     printf("  >>> SAVED to USER %d  (Freq:%.0fHz %s LFO:%s)\n",
            idx + 1,
            g_freq.load(),
@@ -1716,9 +1719,12 @@ int main(int argc, char *argv[])
     while (g_running) {
         hw.poll();
 
-        // Update LED: colour = LFO waveform, brightness = gate + LFO pulse
-        led.update(g_lfo_waveform.load(), g_lfo_out.load(),
-                   g_lfo_depth.load(), g_gate.load());
+        // LED: triple white blink on preset save, otherwise normal update
+        if (g_led_save_blink.exchange(false))
+            led.blinkSave();
+        else
+            led.update(g_lfo_waveform.load(), g_lfo_out.load(),
+                       g_lfo_depth.load(), g_gate.load());
 
         // Resolve pending shift double-click (fires 350 ms after
         // 2nd press if no 3rd click arrives for triple-click)
