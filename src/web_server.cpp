@@ -134,6 +134,31 @@ static void setup_api(httplib::Server& svr)
         }
     });
 
+    svr.Post("/api/presets/swap", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.swap_slots) { json_error(res, "not implemented", 501); return; }
+        int a = 0, b = 0;
+        try { a = std::stoi(req.get_param_value("a")); } catch (...) {}
+        try { b = std::stoi(req.get_param_value("b")); } catch (...) {}
+        if (g_callbacks.swap_slots(a, b)) {
+            json_ok(res, "swapped");
+        } else {
+            json_error(res, "failed to swap");
+        }
+    });
+
+    svr.Post("/api/presets/load-to-slot", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.load_to_slot) { json_error(res, "not implemented", 501); return; }
+        int slot = 0, index = 0;
+        try { slot = std::stoi(req.get_param_value("slot")); } catch (...) {}
+        try { index = std::stoi(req.get_param_value("index")); } catch (...) {}
+        auto category = req.get_param_value("category");
+        if (g_callbacks.load_to_slot(slot, category, index)) {
+            json_ok(res, "loaded");
+        } else {
+            json_error(res, "failed to load preset to slot");
+        }
+    });
+
     // ── Siren options ───────────────────────────────────────────────
 
     svr.Get("/api/siren/options", [](const httplib::Request&, httplib::Response& res) {

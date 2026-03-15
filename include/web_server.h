@@ -24,6 +24,12 @@ struct Callbacks {
     // Save current state to user slot with a name
     std::function<bool(int slot, const std::string& name)> save_to_slot;
 
+    // Swap two user preset slots
+    std::function<bool(int a, int b)> swap_slots;
+
+    // Load a library/factory preset into a user slot
+    std::function<bool(int slot, const std::string& category, int index)> load_to_slot;
+
     // Get/set siren options as JSON
     std::function<std::string()> get_siren_options;
     std::function<bool(const std::string& json)> set_siren_options;

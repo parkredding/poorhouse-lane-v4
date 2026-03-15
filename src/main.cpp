@@ -1665,6 +1665,57 @@ static void enter_ap_mode(AudioEngine& audio)
         return true;
     };
 
+    cb.swap_slots = [](int a, int b) -> bool {
+        if (a < 0 || a >= NUM_USER_PRESETS || b < 0 || b >= NUM_USER_PRESETS || a == b)
+            return false;
+        UserPreset tmp = g_user_presets[a];
+        g_user_presets[a] = g_user_presets[b];
+        g_user_presets[b] = tmp;
+        save_user_presets();
+        printf("AP: Swapped user slots %d <-> %d\n", a + 1, b + 1);
+        return true;
+    };
+
+    cb.load_to_slot = [](int slot, const std::string& category, int index) -> bool {
+        if (slot < 0 || slot >= NUM_USER_PRESETS) return false;
+
+        const DubPreset* src = nullptr;
+        if (category == "standard" && index >= 0 && index < NUM_PRESETS)
+            src = &PRESETS[index];
+        else if (category == "experimental" && index >= 0 && index < NUM_EXPERIMENTAL)
+            src = &EXPERIMENTAL[index];
+        else if (category == "library" && index >= 0 && index < NUM_LIBRARY_PRESETS)
+            src = &PRESET_LIBRARY[index];
+        else
+            return false;
+
+        UserPreset& u = g_user_presets[slot];
+        u.saved = true;
+        snprintf(u.name, sizeof(u.name), "%s", src->name);
+        u.waveform      = src->waveform;
+        u.lfo_wave       = src->lfo_wave;
+        u.freq           = src->freq;
+        u.lfo_rate       = src->lfo_rate;
+        u.lfo_depth      = src->lfo_depth;
+        u.filter_cutoff  = src->filter_cutoff;
+        u.filter_reso    = src->filter_reso;
+        u.delay_time     = src->delay_time;
+        u.delay_feedback = src->delay_feedback;
+        u.delay_mix      = src->delay_mix;
+        u.reverb_mix     = src->reverb_mix;
+        u.release_time   = src->release_time;
+        u.sweep_dir      = src->sweep_dir;
+        u.pitch_env      = src->pitch_env;
+        u.super_drip     = false;
+        u.reverb_type    = src->reverb_type;
+        u.delay_type     = src->delay_type;
+        u.tape_wobble    = src->tape_wobble;
+        u.tape_flutter   = src->tape_flutter;
+        save_user_presets();
+        printf("AP: Loaded \"%s\" into slot %d\n", src->name, slot + 1);
+        return true;
+    };
+
     cb.get_siren_options = []() -> std::string {
         char buf[512];
         snprintf(buf, sizeof(buf),
