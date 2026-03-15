@@ -1516,13 +1516,25 @@ static void exit_ap_mode(AudioEngine& audio);
 
 static void check_ap_combo(AudioEngine& audio)
 {
-    bool all = g_btn_trigger.load() && g_btn_shift.load() && g_btn_preset.load();
+    bool t = g_btn_trigger.load();
+    bool s = g_btn_shift.load();
+    bool p = g_btn_preset.load();
+
+    // Debug: print whenever any button is held (throttled)
+    static int dbg_count = 0;
+    if ((t || s || p) && (++dbg_count % 20 == 0))
+        printf("  [combo] T=%d S=%d P=%d\n", t, s, p);
+
+    bool all = t && s && p;
 
     if (all && !g_combo_active) {
         g_combo_active = true;
         g_combo_start = std::chrono::steady_clock::now();
         g_combo_feedback_given = false;
+        printf("  >>> AP COMBO: All 3 buttons detected — hold for 3s\n");
     } else if (!all) {
+        if (g_combo_active)
+            printf("  >>> AP COMBO: Released (button dropped)\n");
         g_combo_active = false;
         return;
     }
@@ -1540,6 +1552,8 @@ static void check_ap_combo(AudioEngine& audio)
 
     if (elapsed >= 3000) {
         g_combo_active = false;
+        printf("  >>> AP COMBO: 3s reached — %s AP mode\n",
+               g_ap_mode.load() ? "exiting" : "entering");
         if (g_ap_mode.load()) {
             exit_ap_mode(audio);
         } else {
