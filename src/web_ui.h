@@ -19,9 +19,66 @@ static const char* const INDEX_HTML = R"HTML(
   --accent:#ff6600;--accent-dim:#993d00;
   --led-green:#00ff88;--led-off:#1a1a1a;
   --text:#ccc;--text-hi:#fff;--text-lo:#555;
-  --danger:#ff3333;
+  --danger:#ff3333;--card:var(--surface);
   --font:'Space Mono',monospace;
 }
+
+/* ── Themes ──────────────────────────────────────────────── */
+[data-theme="midnight"]{
+  --bg:#0a0a0a;--surface:#141414;--border:#2a2a2a;
+  --accent:#ff6600;--accent-dim:#993d00;
+  --led-green:#00ff88;--led-off:#1a1a1a;
+  --text:#ccc;--text-hi:#fff;--text-lo:#555;
+  --danger:#ff3333;--card:#141414;
+}
+[data-theme="deep-dub"]{
+  --bg:#05080f;--surface:#0c1220;--border:#1a2744;
+  --accent:#00ccff;--accent-dim:#007799;
+  --led-green:#00ff88;--led-off:#0a1020;
+  --text:#8899bb;--text-hi:#ccddef;--text-lo:#3a4a66;
+  --danger:#ff4466;--card:#0c1220;
+}
+[data-theme="reggae"]{
+  --bg:#0a0f06;--surface:#141e0c;--border:#2a3a18;
+  --accent:#ffcc00;--accent-dim:#997a00;
+  --led-green:#00ff44;--led-off:#111a08;
+  --text:#b0c890;--text-hi:#e0f0c0;--text-lo:#4a5a38;
+  --danger:#ff4444;--card:#141e0c;
+}
+[data-theme="steppers"]{
+  --bg:#0f0808;--surface:#1a1010;--border:#332020;
+  --accent:#ff2222;--accent-dim:#991414;
+  --led-green:#ff4444;--led-off:#1a0e0e;
+  --text:#cc9999;--text-hi:#ffdddd;--text-lo:#664444;
+  --danger:#ff6644;--card:#1a1010;
+}
+[data-theme="silver"]{
+  --bg:#f0f0f0;--surface:#ffffff;--border:#d0d0d0;
+  --accent:#ff6600;--accent-dim:#cc5200;
+  --led-green:#00cc66;--led-off:#e0e0e0;
+  --text:#444;--text-hi:#111;--text-lo:#999;
+  --danger:#dd2222;--card:#ffffff;
+}
+[data-theme="concrete"]{
+  --bg:#e8e4e0;--surface:#f5f2ee;--border:#c8c4c0;
+  --accent:#2a6b4f;--accent-dim:#1a4a35;
+  --led-green:#2a9b5f;--led-off:#d8d4d0;
+  --text:#4a4640;--text-hi:#1a1816;--text-lo:#9a9690;
+  --danger:#cc3333;--card:#f5f2ee;
+}
+
+/* ── Theme Picker Styles ─────────────────────────────────── */
+.theme-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px}
+.theme-swatch{position:relative;cursor:pointer;border:2px solid var(--border);
+  padding:10px 8px;text-align:center;transition:all 0.2s}
+.theme-swatch:hover{border-color:var(--text-lo)}
+.theme-swatch.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.theme-swatch .swatch-bar{height:6px;display:flex;gap:2px;margin-bottom:8px}
+.theme-swatch .swatch-bar span{flex:1;display:block}
+.theme-swatch .swatch-label{font-size:0.55rem;font-weight:700;letter-spacing:1px;
+  text-transform:uppercase;color:var(--text-lo)}
+.theme-swatch.active .swatch-label{color:var(--accent)}
+
 html{font-size:14px}
 body{font-family:var(--font);background:var(--bg);color:var(--text);
   min-height:100vh;-webkit-tap-highlight-color:transparent;
@@ -82,7 +139,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);
 .slot{background:var(--surface);padding:10px;position:relative;
   min-height:100px;display:flex;flex-direction:column;transition:all 0.2s}
 .slot.active-slot{border:2px solid var(--led-green)}
-.slot.target-slot{border:2px solid var(--accent);background:#1a1000}
+.slot.target-slot{border:2px solid var(--accent);background:var(--surface)}
 .target-hint{font-size:0.65rem;color:var(--text-lo);letter-spacing:1px;
   text-transform:uppercase;padding:8px 0;text-align:center}
 /* Library browser */
@@ -92,7 +149,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);
 .lib-preset{display:flex;align-items:center;justify-content:space-between;
   padding:8px 6px;border-bottom:1px solid var(--border);cursor:pointer;
   transition:background 0.15s}
-.lib-preset:hover{background:#1a1a1a}
+.lib-preset:hover{background:var(--border)}
 .lib-preset .lib-name{font-size:0.8rem;color:var(--text-hi);flex:1}
 .lib-preset .lib-actions{display:flex;gap:4px}
 .lib-preset .lib-btn{font-family:var(--font);font-size:0.55rem;font-weight:700;
@@ -192,7 +249,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
   border:none;cursor:pointer;transition:all 0.15s}
 .btn-sm{font-size:0.6rem;padding:8px 12px}
 .btn-primary{background:var(--accent);color:var(--bg)}
-.btn-primary:hover{background:#e55a00}
+.btn-primary:hover{background:var(--accent-dim)}
 .btn-secondary{background:var(--bg);color:var(--text);border:1px solid var(--border)}
 .btn-secondary:hover{border-color:var(--text-lo)}
 .btn-danger{background:var(--danger);color:var(--bg)}
@@ -204,7 +261,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 .network-item{display:flex;justify-content:space-between;align-items:center;
   padding:8px 4px;cursor:pointer;border-bottom:1px solid var(--border);
   font-size:0.8rem}
-.network-item:hover{background:#1a1a1a}
+.network-item:hover{background:var(--border)}
 .signal{color:var(--text-lo);font-size:0.7rem}
 
 /* ── Toast ──────────────────────────────────────────────── */
@@ -419,6 +476,10 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
   <div class="card">
     <h3>Device</h3>
     <div id="sys-info" style="font-size:0.8rem;color:var(--text-lo)">Loading...</div>
+  </div>
+  <div class="card">
+    <h3>Theme</h3>
+    <div class="theme-grid" id="theme-grid"></div>
   </div>
   <div class="card">
     <h3>Backup &amp; Restore</h3>
@@ -869,9 +930,47 @@ async function exitAP() {
   } catch (e) { toast('Error: ' + e, true); }
 }
 
+// ─── Theme ──────────────────────────────────────────────────────────
+const THEMES = [
+  { id:'midnight',  name:'Midnight',  colors:['#0a0a0a','#ff6600','#00ff88','#ccc'] },
+  { id:'deep-dub',  name:'Deep Dub',  colors:['#05080f','#00ccff','#00ff88','#8899bb'] },
+  { id:'reggae',    name:'Reggae',    colors:['#0a0f06','#ffcc00','#00ff44','#b0c890'] },
+  { id:'steppers',  name:'Steppers',  colors:['#0f0808','#ff2222','#ff4444','#cc9999'] },
+  { id:'silver',    name:'Silver',    colors:['#f0f0f0','#ff6600','#00cc66','#444'] },
+  { id:'concrete',  name:'Concrete',  colors:['#e8e4e0','#2a6b4f','#2a9b5f','#4a4640'] },
+];
+
+function renderThemeGrid() {
+  const cur = document.documentElement.getAttribute('data-theme') || 'midnight';
+  document.getElementById('theme-grid').innerHTML = THEMES.map(t =>
+    `<div class="theme-swatch${t.id === cur ? ' active' : ''}" onclick="setTheme('${t.id}')">
+       <div class="swatch-bar">${t.colors.map(c => `<span style="background:${c}"></span>`).join('')}</div>
+       <div class="swatch-label">${t.name}</div>
+     </div>`
+  ).join('');
+}
+
+function setTheme(id) {
+  document.documentElement.setAttribute('data-theme', id);
+  try { localStorage.setItem('dubsiren-theme', id); } catch(e) {}
+  renderThemeGrid();
+}
+
+// Apply saved theme on load (before paint)
+(function() {
+  try {
+    const saved = localStorage.getItem('dubsiren-theme');
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+    else document.documentElement.setAttribute('data-theme', 'midnight');
+  } catch(e) {
+    document.documentElement.setAttribute('data-theme', 'midnight');
+  }
+})();
+
 // ─── Init ───────────────────────────────────────────────────────────
 loadPresets();
 loadOptions();
+renderThemeGrid();
 </script>
 </body>
 </html>
