@@ -17,6 +17,7 @@
 static std::unique_ptr<httplib::Server> g_server;
 static std::thread g_thread;
 static std::atomic<bool> g_running{false};
+static web_server::Callbacks g_callbacks;  // persistent copy of callbacks
 
 // ─── Captive portal detection responses ─────────────────────────────
 //
@@ -82,7 +83,7 @@ static void json_error(httplib::Response& res, const std::string& msg, int statu
 
 // ─── Setup API routes ───────────────────────────────────────────────
 
-static void setup_api(httplib::Server& svr, const web_server::Callbacks& cb)
+static void setup_api(httplib::Server& svr)
 {
     // Main page
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
@@ -91,43 +92,42 @@ static void setup_api(httplib::Server& svr, const web_server::Callbacks& cb)
 
     // ── Preset endpoints ────────────────────────────────────────────
 
-    svr.Get("/api/presets", [&cb](const httplib::Request&, httplib::Response& res) {
-        if (cb.get_all_presets) {
-            json_response(res, cb.get_all_presets());
+    svr.Get("/api/presets", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.get_all_presets) {
+            json_response(res, g_callbacks.get_all_presets());
         } else {
             json_error(res, "not implemented", 501);
         }
     });
 
-    svr.Get("/api/presets/current", [&cb](const httplib::Request&, httplib::Response& res) {
-        if (cb.get_preset_state) {
-            json_response(res, cb.get_preset_state());
+    svr.Get("/api/presets/current", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.get_preset_state) {
+            json_response(res, g_callbacks.get_preset_state());
         } else {
             json_error(res, "not implemented", 501);
         }
     });
 
-    svr.Post("/api/presets/apply", [&cb](const httplib::Request& req, httplib::Response& res) {
-        if (!cb.apply_preset) { json_error(res, "not implemented", 501); return; }
-        // Parse category and index from body (simple key=value)
+    svr.Post("/api/presets/apply", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.apply_preset) { json_error(res, "not implemented", 501); return; }
         auto category = req.get_param_value("category");
         auto index_str = req.get_param_value("index");
         int index = 0;
         try { index = std::stoi(index_str); } catch (...) {}
-        if (cb.apply_preset(category, index)) {
+        if (g_callbacks.apply_preset(category, index)) {
             json_ok(res);
         } else {
             json_error(res, "failed to apply preset");
         }
     });
 
-    svr.Post("/api/presets/save", [&cb](const httplib::Request& req, httplib::Response& res) {
-        if (!cb.save_to_slot) { json_error(res, "not implemented", 501); return; }
+    svr.Post("/api/presets/save", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.save_to_slot) { json_error(res, "not implemented", 501); return; }
         auto slot_str = req.get_param_value("slot");
         auto name = req.get_param_value("name");
         int slot = 0;
         try { slot = std::stoi(slot_str); } catch (...) {}
-        if (cb.save_to_slot(slot, name)) {
+        if (g_callbacks.save_to_slot(slot, name)) {
             json_ok(res, "saved");
         } else {
             json_error(res, "failed to save");
@@ -136,17 +136,17 @@ static void setup_api(httplib::Server& svr, const web_server::Callbacks& cb)
 
     // ── Siren options ───────────────────────────────────────────────
 
-    svr.Get("/api/siren/options", [&cb](const httplib::Request&, httplib::Response& res) {
-        if (cb.get_siren_options) {
-            json_response(res, cb.get_siren_options());
+    svr.Get("/api/siren/options", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.get_siren_options) {
+            json_response(res, g_callbacks.get_siren_options());
         } else {
             json_error(res, "not implemented", 501);
         }
     });
 
-    svr.Post("/api/siren/options", [&cb](const httplib::Request& req, httplib::Response& res) {
-        if (!cb.set_siren_options) { json_error(res, "not implemented", 501); return; }
-        if (cb.set_siren_options(req.body)) {
+    svr.Post("/api/siren/options", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.set_siren_options) { json_error(res, "not implemented", 501); return; }
+        if (g_callbacks.set_siren_options(req.body)) {
             json_ok(res, "applied");
         } else {
             json_error(res, "failed to apply options");
@@ -155,18 +155,18 @@ static void setup_api(httplib::Server& svr, const web_server::Callbacks& cb)
 
     // ── Preview control ─────────────────────────────────────────────
 
-    svr.Post("/api/preview/start", [&cb](const httplib::Request& req, httplib::Response& res) {
-        if (cb.preview_start) {
-            cb.preview_start(req.body);
+    svr.Post("/api/preview/start", [](const httplib::Request& req, httplib::Response& res) {
+        if (g_callbacks.preview_start) {
+            g_callbacks.preview_start(req.body);
             json_ok(res, "previewing");
         } else {
             json_error(res, "not implemented", 501);
         }
     });
 
-    svr.Post("/api/preview/stop", [&cb](const httplib::Request&, httplib::Response& res) {
-        if (cb.preview_stop) {
-            cb.preview_stop();
+    svr.Post("/api/preview/stop", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.preview_stop) {
+            g_callbacks.preview_stop();
             json_ok(res, "stopped");
         } else {
             json_error(res, "not implemented", 501);
@@ -175,28 +175,28 @@ static void setup_api(httplib::Server& svr, const web_server::Callbacks& cb)
 
     // ── WiFi operations ─────────────────────────────────────────────
 
-    svr.Get("/api/wifi/scan", [&cb](const httplib::Request&, httplib::Response& res) {
-        if (cb.wifi_scan) {
-            json_response(res, cb.wifi_scan());
+    svr.Get("/api/wifi/scan", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.wifi_scan) {
+            json_response(res, g_callbacks.wifi_scan());
         } else {
             json_error(res, "not implemented", 501);
         }
     });
 
-    svr.Post("/api/wifi/connect", [&cb](const httplib::Request& req, httplib::Response& res) {
-        if (!cb.wifi_connect) { json_error(res, "not implemented", 501); return; }
+    svr.Post("/api/wifi/connect", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.wifi_connect) { json_error(res, "not implemented", 501); return; }
         auto ssid = req.get_param_value("ssid");
         auto password = req.get_param_value("password");
-        if (cb.wifi_connect(ssid, password)) {
+        if (g_callbacks.wifi_connect(ssid, password)) {
             json_ok(res, "credentials saved");
         } else {
             json_error(res, "failed to save credentials");
         }
     });
 
-    svr.Get("/api/wifi/status", [&cb](const httplib::Request&, httplib::Response& res) {
-        if (cb.wifi_status) {
-            json_response(res, cb.wifi_status());
+    svr.Get("/api/wifi/status", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.wifi_status) {
+            json_response(res, g_callbacks.wifi_status());
         } else {
             json_error(res, "not implemented", 501);
         }
@@ -204,26 +204,26 @@ static void setup_api(httplib::Server& svr, const web_server::Callbacks& cb)
 
     // ── Update operations ───────────────────────────────────────────
 
-    svr.Post("/api/update/check", [&cb](const httplib::Request&, httplib::Response& res) {
-        if (cb.update_check) {
-            json_response(res, cb.update_check());
+    svr.Post("/api/update/check", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.update_check) {
+            json_response(res, g_callbacks.update_check());
         } else {
             json_error(res, "not implemented", 501);
         }
     });
 
-    svr.Post("/api/update/install", [&cb](const httplib::Request&, httplib::Response& res) {
-        if (!cb.update_install) { json_error(res, "not implemented", 501); return; }
-        if (cb.update_install()) {
+    svr.Post("/api/update/install", [](const httplib::Request&, httplib::Response& res) {
+        if (!g_callbacks.update_install) { json_error(res, "not implemented", 501); return; }
+        if (g_callbacks.update_install()) {
             json_ok(res, "update started");
         } else {
             json_error(res, "update failed");
         }
     });
 
-    svr.Get("/api/update/status", [&cb](const httplib::Request&, httplib::Response& res) {
-        if (cb.update_status) {
-            json_response(res, cb.update_status());
+    svr.Get("/api/update/status", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.update_status) {
+            json_response(res, g_callbacks.update_status());
         } else {
             json_error(res, "not implemented", 501);
         }
@@ -231,9 +231,9 @@ static void setup_api(httplib::Server& svr, const web_server::Callbacks& cb)
 
     // ── Backup/restore ──────────────────────────────────────────────
 
-    svr.Get("/api/backup", [&cb](const httplib::Request&, httplib::Response& res) {
-        if (cb.backup_create) {
-            auto data = cb.backup_create();
+    svr.Get("/api/backup", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.backup_create) {
+            auto data = g_callbacks.backup_create();
             res.set_header("Content-Disposition",
                            "attachment; filename=\"dubsiren-backup.json\"");
             res.set_content(data, "application/json");
@@ -242,9 +242,9 @@ static void setup_api(httplib::Server& svr, const web_server::Callbacks& cb)
         }
     });
 
-    svr.Post("/api/restore", [&cb](const httplib::Request& req, httplib::Response& res) {
-        if (!cb.backup_restore) { json_error(res, "not implemented", 501); return; }
-        if (cb.backup_restore(req.body)) {
+    svr.Post("/api/restore", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.backup_restore) { json_error(res, "not implemented", 501); return; }
+        if (g_callbacks.backup_restore(req.body)) {
             json_ok(res, "restored");
         } else {
             json_error(res, "restore failed");
@@ -253,13 +253,13 @@ static void setup_api(httplib::Server& svr, const web_server::Callbacks& cb)
 
     // ── Exit AP mode ────────────────────────────────────────────────
 
-    svr.Post("/api/exit", [&cb](const httplib::Request&, httplib::Response& res) {
+    svr.Post("/api/exit", [](const httplib::Request&, httplib::Response& res) {
         json_ok(res, "exiting AP mode");
-        if (cb.exit_ap) {
+        if (g_callbacks.exit_ap) {
             // Schedule exit after response is sent
-            std::thread([&cb]() {
+            std::thread([]() {
                 usleep(500000);  // 500ms delay so response reaches client
-                cb.exit_ap();
+                g_callbacks.exit_ap();
             }).detach();
         }
     });
@@ -271,10 +271,11 @@ bool web_server::start(int port, const Callbacks& cb)
 {
     if (g_running) return true;
 
+    g_callbacks = cb;  // persistent copy — outlives this function
     g_server = std::make_unique<httplib::Server>();
 
     setup_captive_portal(*g_server);
-    setup_api(*g_server, cb);
+    setup_api(*g_server);
 
     g_running = true;
     g_thread = std::thread([port]() {
@@ -305,6 +306,7 @@ void web_server::stop()
     }
 
     g_server.reset();
+    g_callbacks = {};
     g_running = false;
 }
 
