@@ -10,14 +10,101 @@
 #include <httplib.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <thread>
 #include <atomic>
 #include <memory>
+#include <unistd.h>
+#include <sys/wait.h>
 
 static std::unique_ptr<httplib::Server> g_server;
 static std::thread g_thread;
 static std::atomic<bool> g_running{false};
 static web_server::Callbacks g_callbacks;  // persistent copy of callbacks
+static pid_t g_mdns_pid = 0;  // avahi-publish child for poorhouse.local
+
+// ─── mDNS hostname alias ────────────────────────────────────────────
+//
+// Publishes "poorhouse.local" via avahi regardless of the system hostname.
+// This lets users always reach the config portal at poorhouse.local/config
+// even if Pi Imager set the hostname to something else (e.g. poorhouse34).
+//
+// The system hostname remains unchanged, so SSH to poorhouse34.local
+// continues to work.
+
+static std::string get_local_ip()
+{
+    // Get the IP of the default route interface
+    FILE* fp = popen("hostname -I 2>/dev/null | awk '{print $1}'", "r");
+    if (!fp) return "";
+    char buf[64] = {};
+    if (fgets(buf, sizeof(buf), fp)) {
+        // Strip trailing newline
+        for (char* p = buf; *p; p++) {
+            if (*p == '\n' || *p == '\r') { *p = '\0'; break; }
+        }
+    }
+    pclose(fp);
+    return buf;
+}
+
+static void start_mdns_alias()
+{
+    // Check if system hostname is already "poorhouse" — no alias needed
+    char hostname[256] = {};
+    gethostname(hostname, sizeof(hostname));
+    if (strncmp(hostname, "poorhouse", 9) == 0 &&
+        (hostname[9] == '\0' || hostname[9] == '.')) {
+        printf("WEB: Hostname is already '%s' — mDNS alias not needed\n", hostname);
+        return;
+    }
+
+    std::string ip = get_local_ip();
+    if (ip.empty()) {
+        fprintf(stderr, "WEB: Could not determine local IP — skipping mDNS alias\n");
+        return;
+    }
+
+    printf("WEB: Publishing mDNS alias poorhouse.local -> %s\n", ip.c_str());
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Child — run avahi-publish-host-name (blocks until killed)
+        // Redirect stdout to /dev/null, keep stderr for errors
+        freopen("/dev/null", "w", stdout);
+        execlp("avahi-publish-host-name", "avahi-publish-host-name",
+               "poorhouse.local", ip.c_str(), nullptr);
+        // If avahi-publish-host-name isn't installed, try avahi-publish
+        execlp("avahi-publish", "avahi-publish", "-a",
+               "poorhouse.local", ip.c_str(), nullptr);
+        _exit(127);
+    } else if (pid > 0) {
+        g_mdns_pid = pid;
+        // Brief wait to check if it started OK
+        usleep(200000);
+        int status = 0;
+        pid_t result = waitpid(pid, &status, WNOHANG);
+        if (result == 0) {
+            // Still running — good
+            printf("WEB: mDNS alias active (pid %d)\n", pid);
+        } else {
+            // Exited immediately — avahi-publish probably not installed
+            fprintf(stderr, "WEB: avahi-publish exited immediately — "
+                    "poorhouse.local alias unavailable (install avahi-utils)\n");
+            g_mdns_pid = 0;
+        }
+    }
+}
+
+static void stop_mdns_alias()
+{
+    if (g_mdns_pid > 0) {
+        kill(g_mdns_pid, SIGTERM);
+        int status;
+        waitpid(g_mdns_pid, &status, 0);
+        g_mdns_pid = 0;
+    }
+}
 
 // ─── Captive portal detection responses ─────────────────────────────
 //
@@ -429,6 +516,12 @@ bool web_server::start(int port, const Callbacks& cb)
 
     // Wait briefly for server to start
     usleep(100000);
+
+    // Publish poorhouse.local mDNS alias (if hostname differs)
+    if (g_running) {
+        start_mdns_alias();
+    }
+
     return g_running;
 }
 
@@ -437,6 +530,7 @@ void web_server::stop()
     if (!g_running) return;
 
     printf("WEB: Stopping server\n");
+    stop_mdns_alias();
     if (g_server) {
         g_server->stop();
     }
