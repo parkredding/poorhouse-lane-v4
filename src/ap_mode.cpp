@@ -13,8 +13,6 @@
 #include <fstream>
 #include <sstream>
 #include <unistd.h>
-#include <signal.h>
-#include <sys/wait.h>
 #include <sys/stat.h>
 
 static const char* AP_IP        = "192.168.4.1";
@@ -23,8 +21,6 @@ static const char* AP_PHY_IFACE = "wlan0";     // physical interface to base ap0
 static const char* HOSTAPD_CONF = "/tmp/dubsiren_hostapd.conf";
 static const char* DNSMASQ_CONF = "/tmp/dubsiren_dnsmasq.conf";
 
-static pid_t g_hostapd_pid  = 0;
-static pid_t g_dnsmasq_pid  = 0;
 static bool  g_active       = false;
 static std::string g_ssid;
 
@@ -81,7 +77,8 @@ static bool write_hostapd_conf(const std::string& ssid)
         "macaddr_acl=0\n"
         "auth_algs=1\n"
         "ignore_broadcast_ssid=0\n"
-        "wpa=0\n",    // open network (no password needed for config)
+        "wpa=0\n"
+        "pid_file=/tmp/dubsiren_hostapd.pid\n",
         AP_IFACE, ssid.c_str());
 
     fclose(f);
@@ -112,32 +109,6 @@ static bool write_dnsmasq_conf()
     return true;
 }
 
-// ─── Process management ─────────────────────────────────────────────
-
-static pid_t start_process(const char* program, const char* arg)
-{
-    pid_t pid = fork();
-    if (pid == 0) {
-        // Child process
-        // Redirect stdout/stderr to /dev/null to avoid cluttering siren output
-        freopen("/dev/null", "w", stdout);
-        // Keep stderr for debugging
-        execlp(program, program, arg, nullptr);
-        _exit(127);  // exec failed
-    }
-    return pid;
-}
-
-static void stop_process(pid_t& pid)
-{
-    if (pid > 0) {
-        kill(pid, SIGTERM);
-        int status;
-        waitpid(pid, &status, 0);
-        pid = 0;
-    }
-}
-
 // ─── Public interface ───────────────────────────────────────────────
 
 bool ap_mode::start_ap()
@@ -149,10 +120,10 @@ bool ap_mode::start_ap()
 
     printf("AP: Starting access point '%s' on %s\n", g_ssid.c_str(), AP_IFACE);
 
-    // 1. Clean up any previous AP state
+    // 1. Clean up any previous AP state (use PID files to avoid killing unrelated processes)
     char cmd[512];
-    system("killall hostapd 2>/dev/null");
-    system("killall dnsmasq 2>/dev/null");
+    system("pkill -F /tmp/dubsiren_hostapd.pid 2>/dev/null");
+    system("pkill -F /tmp/dubsiren_dnsmasq.pid 2>/dev/null");
     // Remove stale virtual interface from previous run
     snprintf(cmd, sizeof(cmd), "iw dev %s del 2>/dev/null", AP_IFACE);
     system(cmd);
@@ -187,8 +158,6 @@ bool ap_mode::start_ap()
         fprintf(stderr, "AP: Failed to start hostapd (exit %d)\n", ret);
         return false;
     }
-    g_hostapd_pid = 1;  // sentinel — managed by hostapd -B
-
     usleep(1000000);  // 1s — let hostapd fully settle
 
     // 5. Start dnsmasq
@@ -199,8 +168,6 @@ bool ap_mode::start_ap()
         fprintf(stderr, "AP: Failed to start dnsmasq (exit %d)\n", ret);
         return false;
     }
-    g_dnsmasq_pid = 1;  // sentinel
-
     g_active = true;
     printf("AP: Access point active — SSID: %s  IP: %s\n", g_ssid.c_str(), AP_IP);
     return true;
@@ -212,17 +179,15 @@ void ap_mode::stop_ap()
 
     printf("AP: Stopping access point\n");
 
-    // Kill hostapd and dnsmasq
-    system("killall hostapd 2>/dev/null");
-    system("killall dnsmasq 2>/dev/null");
+    // Kill hostapd and dnsmasq using PID files (avoids killing unrelated processes)
+    system("pkill -F /tmp/dubsiren_hostapd.pid 2>/dev/null");
+    system("pkill -F /tmp/dubsiren_dnsmasq.pid 2>/dev/null");
     usleep(500000);
 
-    g_hostapd_pid = 0;
-    g_dnsmasq_pid = 0;
-
-    // Clean up config files
+    // Clean up config and PID files
     unlink(HOSTAPD_CONF);
     unlink(DNSMASQ_CONF);
+    unlink("/tmp/dubsiren_hostapd.pid");
     unlink("/tmp/dubsiren_dnsmasq.pid");
 
     // Remove the virtual AP interface (wlan0 stays connected)

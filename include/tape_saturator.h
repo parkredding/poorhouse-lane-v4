@@ -77,7 +77,7 @@ private:
     {
         // 1-pole LP coefficient for ~8 kHz cutoff
         constexpr float CUTOFF = 8000.0f;
-        float w = 2.0f * 3.14159265f * CUTOFF / sr_;
+        float w = 2.0f * dsp::PI_F * CUTOFF / sr_;
         lp_coeff_ = w / (1.0f + w);  // bilinear-ish approximation
     }
 

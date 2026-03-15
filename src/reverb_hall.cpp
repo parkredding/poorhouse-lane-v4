@@ -92,7 +92,7 @@ void HallReverb::updateParams()
 
     // LP damping cutoff: 2000 Hz (dark/large) to 8000 Hz (bright/small)
     float lpHz = 2000.0f + (1.0f - size_) * 6000.0f;
-    float lp   = 1.0f - std::exp(-2.0f * 3.14159265f * lpHz / sampleRate_);
+    float lp   = 1.0f - std::exp(-2.0f * dsp::PI_F * lpHz / sampleRate_);
 
     for (int i = 0; i < NUM_CHANNELS; i++)
         lines_[i].lpCoeff = lp;

@@ -133,10 +133,10 @@ void PlateReverb::init(float sampleRate)
     }
 
     // LP coefficient for feedback damping
-    float lp = 1.0f - std::exp(-2.0f * 3.14159265f * DAMP_LP_HZ / sampleRate);
+    float lp = 1.0f - std::exp(-2.0f * dsp::PI_F * DAMP_LP_HZ / sampleRate);
 
     // LFO increment per sample
-    float lfoInc = 2.0f * 3.14159265f * LFO_RATE_HZ / sampleRate;
+    float lfoInc = 2.0f * dsp::PI_F * LFO_RATE_HZ / sampleRate;
     float lfoAmt = LFO_DEPTH * scale;
 
     // Tank halves
@@ -153,7 +153,7 @@ void PlateReverb::init(float sampleRate)
         tank_[i].modAp.lfoRate = lfoInc;
         tank_[i].modAp.lfoAmt  = lfoAmt;
         // Offset LFO phase between the two halves for decorrelation
-        tank_[i].modAp.phase   = (i == 0) ? 0.0f : 3.14159265f;
+        tank_[i].modAp.phase   = (i == 0) ? 0.0f : dsp::PI_F;
 
         // Delay line
         int dlLen = std::max(1, static_cast<int>(TANK_DL_LENGTHS[i] * scale));

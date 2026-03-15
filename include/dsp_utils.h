@@ -4,6 +4,11 @@
 
 namespace dsp {
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+constexpr float PI_F = static_cast<float>(M_PI);
+
 // Replace NaN / Inf with zero — use in every feedback path
 inline float sanitize(float x)
 {

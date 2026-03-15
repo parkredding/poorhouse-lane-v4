@@ -66,7 +66,7 @@ void SchroederReverb::init(float sampleRate)
     float scale = sampleRate / 48000.0f;
 
     // LP coefficient for comb feedback damping
-    float lp = 1.0f - std::exp(-2.0f * 3.14159265f * COMB_LP_HZ
+    float lp = 1.0f - std::exp(-2.0f * dsp::PI_F * COMB_LP_HZ
                                 / sampleRate);
 
     for (int i = 0; i < NUM_COMBS; i++) {
@@ -100,7 +100,7 @@ void SchroederReverb::setSize(float size)
     // LP damping: higher size → lower cutoff → darker tail
     // Scale LP coefficient so larger size damps HF more
     float lpHz = 5000.0f - size_ * 2500.0f;   // 5 kHz → 2.5 kHz
-    float lp   = 1.0f - std::exp(-2.0f * 3.14159265f * lpHz
+    float lp   = 1.0f - std::exp(-2.0f * dsp::PI_F * lpHz
                                   / sampleRate_);
     for (auto& c : combs_) c.lpCoeff = lp;
 }
