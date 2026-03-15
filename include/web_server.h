@@ -5,8 +5,9 @@
 
 // ─── Web configuration server ──────────────────────────────────────
 //
-// HTTP server for the AP mode captive portal.  Serves the web UI
-// and provides REST API endpoints for device configuration.
+// Always-on HTTP server for device configuration.  Accessible at
+// poorhouse.local/config on the local network, or via captive portal
+// in AP mode.  Provides REST API endpoints for presets, WiFi, etc.
 
 namespace web_server {
 
@@ -54,6 +55,9 @@ struct Callbacks {
 
     // Exit AP mode
     std::function<void()> exit_ap;
+
+    // Check if AP mode is currently active (for captive portal gating)
+    std::function<bool()> is_ap_active;
 };
 
 // Start the web server on the given port (usually 80)

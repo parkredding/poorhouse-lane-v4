@@ -1,8 +1,8 @@
-// web_server.cpp — HTTP server for AP mode configuration portal
+// web_server.cpp — Always-on HTTP server for device configuration
 //
 // Uses cpp-httplib (single-header) to serve the web UI and REST API.
-// Runs in its own thread.  Handles captive portal detection for
-// Android, iOS, and Windows.
+// Runs in its own thread.  Accessible at poorhouse.local/config on the
+// local network, or via captive portal when AP mode is active.
 
 #include "web_server.h"
 #include "web_ui.h"
@@ -24,43 +24,25 @@ static web_server::Callbacks g_callbacks;  // persistent copy of callbacks
 // Different OS vendors probe specific URLs to detect captive portals.
 // We respond with redirects or minimal content to trigger the portal.
 
+// Captive portal redirect — only active during AP mode
+static void captive_redirect(const httplib::Request&, httplib::Response& res)
+{
+    if (g_callbacks.is_ap_active && g_callbacks.is_ap_active()) {
+        res.status = 302;
+        res.set_header("Location", "http://192.168.4.1/");
+    } else {
+        res.status = 404;
+    }
+}
+
 static void setup_captive_portal(httplib::Server& svr)
 {
-    // Android captive portal detection
-    svr.Get("/generate_204", [](const httplib::Request&, httplib::Response& res) {
-        res.status = 302;
-        res.set_header("Location", "http://192.168.4.1/");
-    });
-
-    // Additional Android check
-    svr.Get("/gen_204", [](const httplib::Request&, httplib::Response& res) {
-        res.status = 302;
-        res.set_header("Location", "http://192.168.4.1/");
-    });
-
-    // Apple captive portal detection
-    svr.Get("/hotspot-detect.html", [](const httplib::Request&, httplib::Response& res) {
-        res.status = 302;
-        res.set_header("Location", "http://192.168.4.1/");
-    });
-
-    // Windows captive portal detection
-    svr.Get("/connecttest.txt", [](const httplib::Request&, httplib::Response& res) {
-        res.status = 302;
-        res.set_header("Location", "http://192.168.4.1/");
-    });
-
-    // Windows NCSI
-    svr.Get("/ncsi.txt", [](const httplib::Request&, httplib::Response& res) {
-        res.status = 302;
-        res.set_header("Location", "http://192.168.4.1/");
-    });
-
-    // Firefox captive portal detection
-    svr.Get("/success.txt", [](const httplib::Request&, httplib::Response& res) {
-        res.status = 302;
-        res.set_header("Location", "http://192.168.4.1/");
-    });
+    svr.Get("/generate_204",      captive_redirect);   // Android
+    svr.Get("/gen_204",           captive_redirect);   // Android alt
+    svr.Get("/hotspot-detect.html", captive_redirect); // Apple
+    svr.Get("/connecttest.txt",   captive_redirect);   // Windows
+    svr.Get("/ncsi.txt",          captive_redirect);   // Windows NCSI
+    svr.Get("/success.txt",       captive_redirect);   // Firefox
 }
 
 // ─── JSON helpers ───────────────────────────────────────────────────
@@ -85,8 +67,11 @@ static void json_error(httplib::Response& res, const std::string& msg, int statu
 
 static void setup_api(httplib::Server& svr)
 {
-    // Main page
+    // Main page — accessible at / (AP mode) or /config (network mode)
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(web_ui::INDEX_HTML, "text/html");
+    });
+    svr.Get("/config", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(web_ui::INDEX_HTML, "text/html");
     });
 

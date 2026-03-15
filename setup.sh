@@ -185,12 +185,22 @@ install_deps() {
         libgpiod-dev \
         gpiod \
         hostapd \
-        dnsmasq
+        dnsmasq \
+        avahi-daemon
     # Disable hostapd/dnsmasq at boot — AP mode starts them on demand
     systemctl disable hostapd 2>/dev/null || true
     systemctl stop hostapd 2>/dev/null || true
     systemctl disable dnsmasq 2>/dev/null || true
     systemctl stop dnsmasq 2>/dev/null || true
+    # Enable avahi for poorhouse.local mDNS resolution
+    systemctl enable avahi-daemon 2>/dev/null || true
+    systemctl start avahi-daemon 2>/dev/null || true
+    # Set hostname to 'poorhouse' so device is reachable at poorhouse.local
+    if [[ "$(hostname)" != "poorhouse" ]]; then
+        hostnamectl set-hostname poorhouse 2>/dev/null || echo "poorhouse" > /etc/hostname
+        sed -i 's/127\.0\.1\.1.*/127.0.1.1\tpoorhouse/' /etc/hosts 2>/dev/null || true
+        info "Hostname set to 'poorhouse' — device will be reachable at poorhouse.local"
+    fi
     success "Dependencies installed."
 }
 

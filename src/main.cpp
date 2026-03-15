@@ -1564,27 +1564,8 @@ static void check_ap_combo(AudioEngine& audio)
 // Flag set by web UI "exit AP" button, checked in main loop
 static std::atomic<bool> g_ap_exit_requested{false};
 
-static void enter_ap_mode()
+static web_server::Callbacks build_web_callbacks()
 {
-    if (g_ap_mode.load()) return;
-
-    printf("\n>>> ENTERING AP CONFIG MODE <<<\n\n");
-    printf("  Audio engine stays active — presets can be previewed live\n");
-
-    // Clear gate stuck from 3-button combo hold
-    g_gate.store(false);
-
-    // Audio keeps running so users can preview presets via trigger button
-    g_ap_mode.store(true);
-
-    // Start the access point
-    if (!ap_mode::start_ap()) {
-        fprintf(stderr, "!!! Failed to start AP mode\n");
-        g_ap_mode.store(false);
-        return;
-    }
-
-    // Set up web server callbacks
     web_server::Callbacks cb;
 
     cb.get_all_presets = []() -> std::string {
@@ -2015,13 +1996,34 @@ static void enter_ap_mode()
         g_ap_exit_requested.store(true);
     };
 
-    // Start web server on port 80
-    if (!web_server::start(80, cb)) {
-        fprintf(stderr, "!!! Failed to start web server\n");
-        ap_mode::stop_ap();
+    cb.is_ap_active = []() -> bool {
+        return g_ap_mode.load();
+    };
+
+    return cb;
+}
+
+static void enter_ap_mode()
+{
+    if (g_ap_mode.load()) return;
+
+    printf("\n>>> ENTERING AP CONFIG MODE <<<\n\n");
+    printf("  Audio engine stays active — presets can be previewed live\n");
+
+    // Clear gate stuck from 3-button combo hold
+    g_gate.store(false);
+
+    // Audio keeps running so users can preview presets via trigger button
+    g_ap_mode.store(true);
+
+    // Start the access point
+    if (!ap_mode::start_ap()) {
+        fprintf(stderr, "!!! Failed to start AP mode\n");
         g_ap_mode.store(false);
         return;
     }
+
+    // Web server is already running (started at boot) — no need to start it here
 
     printf(">>> AP MODE ACTIVE — Connect to '%s' WiFi <<<\n",
            ap_mode::get_ssid().c_str());
@@ -2035,7 +2037,7 @@ static void exit_ap_mode()
 
     printf("\n>>> EXITING AP CONFIG MODE <<<\n\n");
 
-    web_server::stop();
+    // Only stop the AP infrastructure — web server keeps running
     ap_mode::stop_ap();
     g_ap_mode.store(false);
     g_ap_exit_requested.store(false);
@@ -2592,6 +2594,15 @@ int main(int argc, char *argv[])
     // Initialise user presets (factory defaults + saved overrides)
     init_user_presets();
 
+    // Start web server (always-on for poorhouse.local/config access)
+    {
+        auto cb = build_web_callbacks();
+        if (!web_server::start(80, cb)) {
+            fprintf(stderr, "WEB: Failed to start web server on port 80\n");
+            // Non-fatal — siren still works without web config
+        }
+    }
+
     // Boot into user bank (identical to standard on first boot)
     apply_user_preset(g_user_presets[0]);
 
@@ -2645,9 +2656,9 @@ int main(int argc, char *argv[])
         }
     }
 
-    // Clean up AP mode if active
+    // Clean up
+    web_server::stop();
     if (g_ap_mode.load()) {
-        web_server::stop();
         ap_mode::stop_ap();
     }
 
