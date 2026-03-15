@@ -47,6 +47,20 @@ struct Callbacks {
     std::function<void(const std::string& preset_json)> preview_start;
     std::function<void()> preview_stop;
 
+    // Live DSP parameter control
+    std::function<std::string()> get_dsp_state;
+    std::function<bool(const std::string& name, float value)> set_dsp_param;
+    std::function<bool()> reset_defaults;
+
+    // System info & control
+    std::function<std::string()> get_system_info;
+    std::function<bool()> reboot_system;
+    std::function<bool()> restart_service;
+
+    // Encoder mapping
+    std::function<std::string()> get_encoder_map;
+    std::function<bool(const std::string& json)> set_encoder_map;
+
     // WiFi operations
     std::function<std::string()> wifi_scan;
     std::function<bool(const std::string& ssid, const std::string& password)> wifi_connect;

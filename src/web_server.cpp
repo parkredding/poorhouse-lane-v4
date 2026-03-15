@@ -212,6 +212,90 @@ static void setup_api(httplib::Server& svr)
         }
     });
 
+    // ── Live DSP parameter control ──────────────────────────────────
+
+    svr.Get("/api/dsp/state", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.get_dsp_state) {
+            json_response(res, g_callbacks.get_dsp_state());
+        } else {
+            json_error(res, "not implemented", 501);
+        }
+    });
+
+    svr.Post("/api/dsp/param", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.set_dsp_param) { json_error(res, "not implemented", 501); return; }
+        auto name = req.get_param_value("name");
+        auto value_str = req.get_param_value("value");
+        if (name.empty() || value_str.empty()) {
+            json_error(res, "name and value required"); return;
+        }
+        float value = 0;
+        try { value = std::stof(value_str); } catch (...) {
+            json_error(res, "invalid value"); return;
+        }
+        if (g_callbacks.set_dsp_param(name, value)) {
+            json_ok(res, "set");
+        } else {
+            json_error(res, "unknown parameter");
+        }
+    });
+
+    svr.Post("/api/dsp/reset", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.reset_defaults) {
+            g_callbacks.reset_defaults();
+            json_ok(res, "reset");
+        } else {
+            json_error(res, "not implemented", 501);
+        }
+    });
+
+    // ── System info & control ───────────────────────────────────────
+
+    svr.Get("/api/system/info", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.get_system_info) {
+            json_response(res, g_callbacks.get_system_info());
+        } else {
+            json_error(res, "not implemented", 501);
+        }
+    });
+
+    svr.Post("/api/system/reboot", [](const httplib::Request&, httplib::Response& res) {
+        if (!g_callbacks.reboot_system) { json_error(res, "not implemented", 501); return; }
+        json_ok(res, "rebooting");
+        std::thread([]() {
+            usleep(500000);
+            g_callbacks.reboot_system();
+        }).detach();
+    });
+
+    svr.Post("/api/system/restart", [](const httplib::Request&, httplib::Response& res) {
+        if (!g_callbacks.restart_service) { json_error(res, "not implemented", 501); return; }
+        json_ok(res, "restarting");
+        std::thread([]() {
+            usleep(500000);
+            g_callbacks.restart_service();
+        }).detach();
+    });
+
+    // ── Encoder mapping ─────────────────────────────────────────────
+
+    svr.Get("/api/encoders/map", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.get_encoder_map) {
+            json_response(res, g_callbacks.get_encoder_map());
+        } else {
+            json_error(res, "not implemented", 501);
+        }
+    });
+
+    svr.Post("/api/encoders/map", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.set_encoder_map) { json_error(res, "not implemented", 501); return; }
+        if (g_callbacks.set_encoder_map(req.body)) {
+            json_ok(res, "saved");
+        } else {
+            json_error(res, "failed to save mapping");
+        }
+    });
+
     // ── WiFi operations ─────────────────────────────────────────────
 
     svr.Get("/api/wifi/scan", [](const httplib::Request&, httplib::Response& res) {

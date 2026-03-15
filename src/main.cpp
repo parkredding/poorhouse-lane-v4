@@ -135,6 +135,64 @@ static std::atomic<float> g_saturator_drive{0.5f};  // 0–1 drive amount
 // AP mode flag
 static std::atomic<bool>  g_ap_mode{false};
 
+// Preview state — snapshot before preview, restore on stop
+static UserPreset g_preview_snapshot;
+static std::atomic<bool> g_previewing{false};
+
+// ─── Encoder parameter mapping ──────────────────────────────────────
+//
+// Table-driven encoder → parameter assignment.  Each encoder (0–4) in
+// each bank (A/B) maps to a parameter name string.  Defaults match the
+// original hardcoded layout.  Configurable via web UI.
+
+struct EncoderParam {
+    const char* name;    // parameter key name
+    const char* label;   // display label
+    float min_val, max_val, default_val;
+    bool  is_log;        // logarithmic (multiplicative) vs linear (additive)
+    float step;          // base step size
+};
+
+static const EncoderParam PARAM_TABLE[] = {
+    {"freq",           "Frequency",       30.0f,   8000.0f,  440.0f,  true,  1.0594630943592953f},
+    {"lfo_rate",       "LFO Rate",        0.1f,    20.0f,    0.35f,   true,  1.12f},
+    {"filter_cutoff",  "Filter Cutoff",   20.0f,   20000.0f, 8000.0f, true,  1.122462048309373f},
+    {"delay_time",     "Delay Time",      0.001f,  1.0f,     0.375f,  true,  1.10f},
+    {"delay_feedback", "Delay Feedback",  0.0f,    0.95f,    0.55f,   false, 0.04f},
+    {"lfo_depth",      "LFO Depth",       0.0f,    1.0f,     0.35f,   false, 0.04f},
+    {"release_time",   "Release Time",    0.01f,   5.0f,     0.05f,   true,  1.15f},
+    {"filter_reso",    "Filter Resonance",0.0f,    0.95f,    0.0f,    false, 0.03f},
+    {"delay_mix",      "Delay Mix",       0.0f,    1.0f,     0.30f,   false, 0.05f},
+    {"reverb_mix",     "Reverb Mix",      0.0f,    1.0f,     0.35f,   false, 0.05f},
+};
+static constexpr int NUM_PARAMS = sizeof(PARAM_TABLE) / sizeof(PARAM_TABLE[0]);
+
+// Default encoder assignments: bank_a[0..4], bank_b[0..4]
+// Index into PARAM_TABLE
+static int g_encoder_map_a[5] = {0, 1, 2, 3, 4};  // freq, lfo_rate, cutoff, delay_time, delay_fb
+static int g_encoder_map_b[5] = {5, 6, 7, 8, 9};  // lfo_depth, release, reso, delay_mix, reverb_mix
+static std::mutex g_encoder_map_mutex;
+
+static std::atomic<float>* param_atomic_for(const char* name) {
+    if (strcmp(name, "freq") == 0) return &g_freq;
+    if (strcmp(name, "lfo_rate") == 0) return &g_lfo_rate;
+    if (strcmp(name, "filter_cutoff") == 0) return &g_filter_cutoff;
+    if (strcmp(name, "delay_time") == 0) return &g_delay_time;
+    if (strcmp(name, "delay_feedback") == 0) return &g_delay_feedback;
+    if (strcmp(name, "lfo_depth") == 0) return &g_lfo_depth;
+    if (strcmp(name, "release_time") == 0) return &g_release_time;
+    if (strcmp(name, "filter_reso") == 0) return &g_filter_reso;
+    if (strcmp(name, "delay_mix") == 0) return &g_delay_mix;
+    if (strcmp(name, "reverb_mix") == 0) return &g_reverb_mix;
+    return nullptr;
+}
+
+static int find_param_index(const char* name) {
+    for (int i = 0; i < NUM_PARAMS; i++)
+        if (strcmp(PARAM_TABLE[i].name, name) == 0) return i;
+    return -1;
+}
+
 // ─── Per-parameter step sizes (base, before acceleration) ───────────
 //
 // Multiplicative params: acceleration raises base step to a power
@@ -891,6 +949,15 @@ static void save_siren_config()
     fprintf(f, "active_bank=%d\n",    g_bank_mode.load());
     fprintf(f, "active_preset=%d\n",  g_preset.load());
 
+    // Encoder mapping
+    {
+        std::lock_guard<std::mutex> lk(g_encoder_map_mutex);
+        for (int i = 0; i < 5; i++)
+            fprintf(f, "enc_a%d=%d\n", i, g_encoder_map_a[i]);
+        for (int i = 0; i < 5; i++)
+            fprintf(f, "enc_b%d=%d\n", i, g_encoder_map_b[i]);
+    }
+
     fflush(f);
     fsync(fileno(f));
     fclose(f);
@@ -990,6 +1057,17 @@ static void load_siren_config()
             g_bank_mode.store(atoi(val));
         else if (strcmp(key, "active_preset") == 0)
             g_preset.store(atoi(val));
+        // Encoder mapping
+        else if (strncmp(key, "enc_a", 5) == 0 && key[5] >= '0' && key[5] <= '4') {
+            int idx = key[5] - '0';
+            int v = atoi(val);
+            if (v >= 0 && v < NUM_PARAMS) g_encoder_map_a[idx] = v;
+        }
+        else if (strncmp(key, "enc_b", 5) == 0 && key[5] >= '0' && key[5] <= '4') {
+            int idx = key[5] - '0';
+            int v = atoi(val);
+            if (v >= 0 && v < NUM_PARAMS) g_encoder_map_b[idx] = v;
+        }
     }
 
     fclose(f);
@@ -2550,6 +2628,287 @@ static web_server::Callbacks build_web_callbacks()
         return true;
     };
 
+    // ── Live DSP state ─────────────────────────────────────────────
+    cb.get_dsp_state = []() -> std::string {
+        char buf[1024];
+        snprintf(buf, sizeof(buf),
+            "{\"freq\":%.2f,\"lfo_rate\":%.4f,\"lfo_depth\":%.4f,"
+            "\"filter_cutoff\":%.2f,\"filter_reso\":%.4f,"
+            "\"delay_time\":%.4f,\"delay_feedback\":%.4f,\"delay_mix\":%.4f,"
+            "\"reverb_mix\":%.4f,\"release_time\":%.4f,"
+            "\"waveform\":%d,\"lfo_waveform\":%d,"
+            "\"pitch_env\":%d,\"sweep_dir\":%.1f,"
+            "\"reverb_type\":%d,\"delay_type\":%d,"
+            "\"tape_wobble\":%.4f,\"tape_flutter\":%.4f,"
+            "\"fx_chain\":%d,"
+            "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
+            "\"phaser_mix\":%.4f,\"chorus_mix\":%.4f,\"flanger_mix\":%.4f,"
+            "\"saturator_mix\":%.4f,\"saturator_drive\":%.4f,"
+            "\"active_bank\":%d,\"active_preset\":%d}",
+            g_freq.load(), g_lfo_rate.load(), g_lfo_depth.load(),
+            g_filter_cutoff.load(), g_filter_reso.load(),
+            g_delay_time.load(), g_delay_feedback.load(), g_delay_mix.load(),
+            g_reverb_mix.load(), g_release_time.load(),
+            g_waveform.load(), g_lfo_waveform.load(),
+            g_pitch_env.load(), g_sweep_dir.load(),
+            g_reverb_type.load(), g_delay_type.load(),
+            g_tape_wobble.load(), g_tape_flutter.load(),
+            g_fx_chain.load(),
+            g_lfo_pitch_link.load() ? "true" : "false",
+            g_super_drip.load() ? "true" : "false",
+            g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load(),
+            g_saturator_mix.load(), g_saturator_drive.load(),
+            g_bank_mode.load(), g_preset.load());
+        return std::string(buf);
+    };
+
+    cb.set_dsp_param = [](const std::string& name, float value) -> bool {
+        auto* atom = param_atomic_for(name.c_str());
+        if (atom) {
+            int idx = find_param_index(name.c_str());
+            if (idx >= 0) {
+                value = std::clamp(value, PARAM_TABLE[idx].min_val,
+                                          PARAM_TABLE[idx].max_val);
+            }
+            atom->store(value);
+            if (name == "freq" || name == "lfo_rate" || name == "delay_time")
+                update_link_eff();
+            return true;
+        }
+        // Non-knob parameters
+        if (name == "waveform") {
+            g_waveform.store(std::clamp(static_cast<int>(value), 0, 3));
+            return true;
+        }
+        if (name == "lfo_waveform") {
+            g_lfo_waveform.store(std::clamp(static_cast<int>(value), 0, 7));
+            return true;
+        }
+        if (name == "pitch_env") {
+            g_pitch_env.store(std::clamp(static_cast<int>(value), -1, 1));
+            return true;
+        }
+        if (name == "sweep_dir") {
+            g_sweep_dir.store(std::clamp(value, -1.0f, 1.0f));
+            return true;
+        }
+        if (name == "reverb_type") {
+            g_reverb_type.store(std::clamp(static_cast<int>(value), 0, 3));
+            return true;
+        }
+        if (name == "delay_type") {
+            g_delay_type.store(std::clamp(static_cast<int>(value), 0, 1));
+            return true;
+        }
+        if (name == "tape_wobble") {
+            g_tape_wobble.store(std::clamp(value, 0.0f, 1.0f)); return true;
+        }
+        if (name == "tape_flutter") {
+            g_tape_flutter.store(std::clamp(value, 0.0f, 1.0f)); return true;
+        }
+        if (name == "fx_chain") {
+            g_fx_chain.store(std::clamp(static_cast<int>(value), 0, 5)); return true;
+        }
+        if (name == "lfo_pitch_link") {
+            g_lfo_pitch_link.store(value > 0.5f); return true;
+        }
+        if (name == "super_drip") {
+            g_super_drip.store(value > 0.5f); return true;
+        }
+        if (name == "phaser_mix") {
+            g_phaser_mix.store(std::clamp(value, 0.0f, 1.0f)); return true;
+        }
+        if (name == "chorus_mix") {
+            g_chorus_mix.store(std::clamp(value, 0.0f, 1.0f)); return true;
+        }
+        if (name == "flanger_mix") {
+            g_flanger_mix.store(std::clamp(value, 0.0f, 1.0f)); return true;
+        }
+        if (name == "saturator_mix") {
+            g_saturator_mix.store(std::clamp(value, 0.0f, 1.0f)); return true;
+        }
+        if (name == "saturator_drive") {
+            g_saturator_drive.store(std::clamp(value, 0.0f, 1.0f)); return true;
+        }
+        return false;
+    };
+
+    cb.reset_defaults = []() -> bool {
+        g_freq.store(440.0f);
+        g_lfo_rate.store(0.35f);
+        g_filter_cutoff.store(8000.0f);
+        g_delay_time.store(0.375f);
+        g_delay_feedback.store(0.55f);
+        g_lfo_depth.store(0.35f);
+        g_release_time.store(0.050f);
+        g_filter_reso.store(0.0f);
+        g_delay_mix.store(0.30f);
+        g_reverb_mix.store(0.35f);
+        g_waveform.store(0);
+        g_lfo_waveform.store(0);
+        g_pitch_env.store(0);
+        g_sweep_dir.store(-1.0f);
+        g_reverb_type.store(0);
+        g_delay_type.store(0);
+        g_tape_wobble.store(1.0f);
+        g_tape_flutter.store(1.0f);
+        g_fx_chain.store(0);
+        g_lfo_pitch_link.store(true);
+        g_super_drip.store(true);
+        g_phaser_mix.store(0.0f);
+        g_chorus_mix.store(0.0f);
+        g_flanger_mix.store(0.0f);
+        g_saturator_mix.store(0.0f);
+        g_saturator_drive.store(0.5f);
+        update_link_eff();
+        save_siren_config();
+        printf("  WEB: Reset to factory defaults\n");
+        return true;
+    };
+
+    // ── Preview (snapshot/restore) ──────────────────────────────────
+    cb.preview_start = [](const std::string& body) {
+        // Snapshot current state before preview
+        g_preview_snapshot = snapshot_current();
+        g_previewing.store(true);
+
+        // Parse index from body (form: category=library&index=N)
+        auto get_val = [&](const std::string& key) -> std::string {
+            auto pos = body.find(key + "=");
+            if (pos == std::string::npos) return "";
+            auto start = pos + key.size() + 1;
+            auto end = body.find('&', start);
+            if (end == std::string::npos) end = body.size();
+            return body.substr(start, end - start);
+        };
+        auto cat = get_val("category");
+        auto idx_str = get_val("index");
+        int idx = 0;
+        try { idx = std::stoi(idx_str); } catch (...) {}
+
+        if (cat == "library" && idx >= 0 && idx < NUM_LIBRARY_PRESETS) {
+            apply_dub_preset(PRESET_LIBRARY[idx]);
+            printf("  WEB: Preview started — library[%d] \"%s\"\n",
+                   idx, PRESET_LIBRARY[idx].name);
+        }
+    };
+
+    cb.preview_stop = []() {
+        if (g_previewing.load()) {
+            apply_user_preset(g_preview_snapshot);
+            g_previewing.store(false);
+            printf("  WEB: Preview stopped — restored previous state\n");
+        }
+    };
+
+    // ── System info ────────────────────────────────────────────────
+    cb.get_system_info = []() -> std::string {
+        std::string json = "{";
+
+        // CPU temperature
+        FILE* tf = fopen("/sys/class/thermal/thermal_zone0/temp", "r");
+        float cpu_temp = 0;
+        if (tf) {
+            int milli;
+            if (fscanf(tf, "%d", &milli) == 1)
+                cpu_temp = milli / 1000.0f;
+            fclose(tf);
+        }
+
+        // Uptime
+        FILE* uf = fopen("/proc/uptime", "r");
+        float uptime_sec = 0;
+        if (uf) {
+            fscanf(uf, "%f", &uptime_sec);
+            fclose(uf);
+        }
+        int up_days = static_cast<int>(uptime_sec) / 86400;
+        int up_hours = (static_cast<int>(uptime_sec) % 86400) / 3600;
+        int up_mins = (static_cast<int>(uptime_sec) % 3600) / 60;
+
+        // Memory
+        FILE* mf = fopen("/proc/meminfo", "r");
+        long mem_total = 0, mem_avail = 0;
+        if (mf) {
+            char line[256];
+            while (fgets(line, sizeof(line), mf)) {
+                if (strncmp(line, "MemTotal:", 9) == 0)
+                    sscanf(line + 9, "%ld", &mem_total);
+                else if (strncmp(line, "MemAvailable:", 13) == 0)
+                    sscanf(line + 13, "%ld", &mem_avail);
+            }
+            fclose(mf);
+        }
+        long mem_used = mem_total - mem_avail;
+
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+            "\"cpu_temp\":%.1f,\"uptime_days\":%d,\"uptime_hours\":%d,"
+            "\"uptime_mins\":%d,\"mem_total_mb\":%ld,\"mem_used_mb\":%ld",
+            cpu_temp, up_days, up_hours, up_mins,
+            mem_total / 1024, mem_used / 1024);
+        json += buf;
+        json += "}";
+        return json;
+    };
+
+    cb.reboot_system = []() -> bool {
+        printf("  WEB: Reboot requested\n");
+        return system("sudo reboot") == 0;
+    };
+
+    cb.restart_service = []() -> bool {
+        printf("  WEB: Service restart requested\n");
+        return system("sudo systemctl restart dubsiren.service") == 0;
+    };
+
+    // ── Encoder mapping ─────────────────────────────────────────────
+    cb.get_encoder_map = []() -> std::string {
+        std::lock_guard<std::mutex> lk(g_encoder_map_mutex);
+        std::string json = "{\"bank_a\":[";
+        for (int i = 0; i < 5; i++) {
+            if (i > 0) json += ",";
+            json += std::to_string(g_encoder_map_a[i]);
+        }
+        json += "],\"bank_b\":[";
+        for (int i = 0; i < 5; i++) {
+            if (i > 0) json += ",";
+            json += std::to_string(g_encoder_map_b[i]);
+        }
+        json += "],\"params\":[";
+        for (int i = 0; i < NUM_PARAMS; i++) {
+            if (i > 0) json += ",";
+            json += "{\"name\":\"" + std::string(PARAM_TABLE[i].name) + "\","
+                    "\"label\":\"" + std::string(PARAM_TABLE[i].label) + "\"}";
+        }
+        json += "]}";
+        return json;
+    };
+
+    cb.set_encoder_map = [](const std::string& body) -> bool {
+        // Parse form data: a0=N&a1=N&...&b0=N&b1=N&...
+        auto get_val = [&](const std::string& key) -> int {
+            auto pos = body.find(key + "=");
+            if (pos == std::string::npos) return -1;
+            auto start = pos + key.size() + 1;
+            auto end = body.find('&', start);
+            if (end == std::string::npos) end = body.size();
+            return atoi(body.substr(start, end - start).c_str());
+        };
+        {
+            std::lock_guard<std::mutex> lk(g_encoder_map_mutex);
+            for (int i = 0; i < 5; i++) {
+                int v = get_val("a" + std::to_string(i));
+                if (v >= 0 && v < NUM_PARAMS) g_encoder_map_a[i] = v;
+                v = get_val("b" + std::to_string(i));
+                if (v >= 0 && v < NUM_PARAMS) g_encoder_map_b[i] = v;
+            }
+        }
+        save_siren_config();
+        printf("  WEB: Encoder mapping updated\n");
+        return true;
+    };
+
     cb.exit_ap = []() {
         printf("AP: Exit requested via web UI\n");
         g_ap_exit_requested.store(true);
@@ -2907,111 +3266,42 @@ int main(int argc, char *argv[])
     HwCallbacks cb;
 
     cb.on_encoder = [](int id, int dir) {
+        if (id < 0 || id > 4) return;
         bool  shift = g_shift.load();
         float accel = encoder_accel(id);
 
-        if (!shift) {
-            // ── Bank A ─────────────────────────────────────────────
-            switch (id) {
-            case 0: {   // Freq — semitone base
-                // Halve acceleration for cleaner pitch sweeps (1×–2.5×)
-                float pitch_accel = 1.0f + (accel - 1.0f) * 0.5f;
-                float step = std::pow(FREQ_STEP, pitch_accel);
-                float f = g_freq.load();
-                f *= (dir > 0) ? step : (1.0f / step);
-                f = std::clamp(f, 30.0f, 8000.0f);
-                g_freq.store(f);
-                update_link_eff();
-                printf("  [A] FREQ     %.1f Hz  (lfo %.1f Hz)\n",
-                       f, g_lfo_rate_eff.load());
-                break;
-            }
-            case 1: {   // LFO Rate — 12 % base, log accel
-                float step = std::pow(LFO_RATE_STEP, accel);
-                float r = g_lfo_rate.load();
-                r *= (dir > 0) ? step : (1.0f / step);
-                r = std::clamp(r, 0.1f, 20.0f);
-                g_lfo_rate.store(r);
-                update_link_eff();
-                printf("  [A] LFO RATE %.1f Hz  (eff %.1f Hz)\n",
-                       r, g_lfo_rate_eff.load());
-                break;
-            }
-            case 2: {   // Filter Cutoff — 2 semitones base, fast sweep
-                float step = std::pow(CUTOFF_STEP, accel);
-                float c = g_filter_cutoff.load();
-                c *= (dir > 0) ? step : (1.0f / step);
-                c = std::clamp(c, 20.0f, 20000.0f);
-                g_filter_cutoff.store(c);
-                printf("  [A] CUTOFF   %.0f Hz\n", c);
-                break;
-            }
-            case 3: {   // Delay Time — 10 % base, log accel
-                float step = std::pow(DELAY_TIME_STEP, accel);
-                float t = g_delay_time.load();
-                t *= (dir > 0) ? step : (1.0f / step);
-                t = std::clamp(t, 0.001f, 1.0f);
-                g_delay_time.store(t);
-                update_link_eff();
-                printf("  [A] DLY TIME %.0f ms\n", t * 1000.0f);
-                break;
-            }
-            case 4: {   // Delay Feedback — 3 % base (careful near runaway)
-                float fb = g_delay_feedback.load()
-                         + dir * DELAY_FB_STEP * accel;
-                fb = std::clamp(fb, 0.0f, 0.95f);
-                g_delay_feedback.store(fb);
-                printf("  [A] DLY FB   %.0f%%\n", fb * 100.0f);
-                break;
-            }
-            }
-
-        } else {
-            // ── Bank B ─────────────────────────────────────────────
-            switch (id) {
-            case 0: {   // LFO Depth — 4 % base
-                float d = g_lfo_depth.load()
-                        + dir * LFO_DEPTH_STEP * accel;
-                d = std::clamp(d, 0.0f, 1.0f);
-                g_lfo_depth.store(d);
-                printf("  [B] LFO DEP  %.0f%%\n", d * 100.0f);
-                break;
-            }
-            case 1: {   // Release Time — 15 % per click, log
-                float step = std::pow(RELEASE_TIME_STEP, accel);
-                float rt = g_release_time.load();
-                rt *= (dir > 0) ? step : (1.0f / step);
-                rt = std::clamp(rt, 0.010f, 5.0f);
-                g_release_time.store(rt);
-                printf("  [B] RELEASE  %.0f ms\n", rt * 1000.0f);
-                break;
-            }
-            case 2: {   // Filter Resonance — 3 % base (fine near self-osc)
-                float r = g_filter_reso.load()
-                        + dir * FILTER_RESO_STEP * accel;
-                r = std::clamp(r, 0.0f, 0.95f);
-                g_filter_reso.store(r);
-                printf("  [B] RESO     %.0f%%\n", r * 100.0f);
-                break;
-            }
-            case 3: {   // Delay Mix — 5 % base
-                float m = g_delay_mix.load()
-                        + dir * DELAY_MIX_STEP * accel;
-                m = std::clamp(m, 0.0f, 1.0f);
-                g_delay_mix.store(m);
-                printf("  [B] DLY MIX  %.0f%%\n", m * 100.0f);
-                break;
-            }
-            case 4: {   // Reverb Mix — 5 % base
-                float m = g_reverb_mix.load()
-                        + dir * REVERB_MIX_STEP * accel;
-                m = std::clamp(m, 0.0f, 1.0f);
-                g_reverb_mix.store(m);
-                printf("  [B] REV MIX  %.0f%%\n", m * 100.0f);
-                break;
-            }
-            }
+        int param_idx;
+        {
+            std::lock_guard<std::mutex> lk(g_encoder_map_mutex);
+            param_idx = shift ? g_encoder_map_b[id] : g_encoder_map_a[id];
         }
+        if (param_idx < 0 || param_idx >= NUM_PARAMS) return;
+
+        const auto& p = PARAM_TABLE[param_idx];
+        auto* atom = param_atomic_for(p.name);
+        if (!atom) return;
+
+        float val = atom->load();
+        if (p.is_log) {
+            // Freq gets halved acceleration for cleaner sweeps
+            float eff_accel = (param_idx == 0)
+                ? 1.0f + (accel - 1.0f) * 0.5f : accel;
+            float step = std::pow(p.step, eff_accel);
+            val *= (dir > 0) ? step : (1.0f / step);
+        } else {
+            val += dir * p.step * accel;
+        }
+        val = std::clamp(val, p.min_val, p.max_val);
+        atom->store(val);
+
+        // Update linked effective parameters if needed
+        if (param_idx == 0 || param_idx == 1 || param_idx == 3)
+            update_link_eff();
+
+        printf("  [%c] %-8s  %s\n", shift ? 'B' : 'A', p.label,
+               p.is_log && p.max_val > 100
+                   ? (std::to_string(static_cast<int>(val)) + (p.max_val > 100 ? " Hz" : "")).c_str()
+                   : (std::to_string(static_cast<int>(val * 100)) + "%").c_str());
     };
 
     cb.on_button = [](int id, bool pressed) {
