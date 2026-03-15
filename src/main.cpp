@@ -1571,6 +1571,9 @@ static void enter_ap_mode()
     printf("\n>>> ENTERING AP CONFIG MODE <<<\n\n");
     printf("  Audio engine stays active — presets can be previewed live\n");
 
+    // Clear gate stuck from 3-button combo hold
+    g_gate.store(false);
+
     // Audio keeps running so users can preview presets via trigger button
     g_ap_mode.store(true);
 
@@ -2432,15 +2435,19 @@ int main(int argc, char *argv[])
                g_btn_trigger.load(), g_btn_shift.load(),
                g_btn_preset.load());
 
-        // Skip normal button handling when in AP mode
+        // Trigger gate always works (including AP mode for preview)
+        if (id == 0) {
+            g_gate.store(pressed);
+            printf("  %-9s %s\n", btn_name[0],
+                   pressed ? "GATE ON" : "GATE OFF");
+        }
+
+        // Skip other button handling when in AP mode
         if (g_ap_mode.load()) return;
 
         switch (id) {
         case 0:
-            // Trigger → gate
-            g_gate.store(pressed);
-            printf("  %-9s %s\n", btn_name[0],
-                   pressed ? "GATE ON" : "GATE OFF");
+            // Already handled above
             break;
         case 1: {
             // Shift → bank select
