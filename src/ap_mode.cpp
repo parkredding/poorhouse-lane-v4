@@ -177,7 +177,7 @@ bool ap_mode::start_ap()
 
     // 4. Start hostapd (daemonized with -B)
     snprintf(cmd, sizeof(cmd), "hostapd %s -B", HOSTAPD_CONF);
-    int ret = system(cmd);
+    ret = system(cmd);
     if (ret != 0) {
         fprintf(stderr, "AP: Failed to start hostapd (exit %d)\n", ret);
         return false;
