@@ -146,19 +146,31 @@ bool ap_mode::start_ap()
 
     printf("AP: Starting access point '%s' on %s\n", g_ssid.c_str(), AP_IFACE);
 
-    // 1. Stop anything that might hold the interface
-    system("sudo killall hostapd 2>/dev/null");
-    system("sudo killall dnsmasq 2>/dev/null");
-    system("sudo killall wpa_supplicant 2>/dev/null");
+    // 1. Tell NetworkManager to release the interface
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "nmcli device disconnect %s 2>/dev/null", AP_IFACE);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "nmcli device set %s managed no 2>/dev/null", AP_IFACE);
+    system(cmd);
+
+    // 2. Stop anything that might hold the interface
+    system("killall hostapd 2>/dev/null");
+    system("killall dnsmasq 2>/dev/null");
+    system("killall wpa_supplicant 2>/dev/null");
+    system("systemctl stop wpa_supplicant 2>/dev/null");
     usleep(1000000);  // 1s — let processes fully exit
 
-    // 2. Configure the interface
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "sudo ip addr flush dev %s 2>/dev/null", AP_IFACE);
+    // 3. Configure the interface
+    snprintf(cmd, sizeof(cmd), "ip addr flush dev %s 2>/dev/null", AP_IFACE);
     system(cmd);
-    snprintf(cmd, sizeof(cmd), "sudo ip addr add %s/24 dev %s", AP_IP, AP_IFACE);
+    snprintf(cmd, sizeof(cmd), "ip link set %s down", AP_IFACE);
     system(cmd);
-    snprintf(cmd, sizeof(cmd), "sudo ip link set %s up", AP_IFACE);
+    usleep(200000);
+    snprintf(cmd, sizeof(cmd), "iw dev %s set type __ap", AP_IFACE);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "ip addr add %s/24 dev %s", AP_IP, AP_IFACE);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "ip link set %s up", AP_IFACE);
     system(cmd);
 
     // 3. Write config files
@@ -210,13 +222,20 @@ void ap_mode::stop_ap()
     unlink(DNSMASQ_CONF);
     unlink("/tmp/dubsiren_dnsmasq.pid");
 
-    // Flush interface
+    // Restore interface to managed mode
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "ip addr flush dev %s 2>/dev/null", AP_IFACE);
     system(cmd);
+    snprintf(cmd, sizeof(cmd), "ip link set %s down", AP_IFACE);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "iw dev %s set type managed", AP_IFACE);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "ip link set %s up", AP_IFACE);
+    system(cmd);
 
-    // Try to restore normal WiFi
-    system("systemctl restart wpa_supplicant 2>/dev/null");
+    // Hand interface back to NetworkManager
+    snprintf(cmd, sizeof(cmd), "nmcli device set %s managed yes 2>/dev/null", AP_IFACE);
+    system(cmd);
 
     g_active = false;
     printf("AP: Access point stopped\n");
