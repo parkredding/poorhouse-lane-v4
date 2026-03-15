@@ -135,10 +135,6 @@ static std::atomic<float> g_saturator_drive{0.5f};  // 0–1 drive amount
 // AP mode flag
 static std::atomic<bool>  g_ap_mode{false};
 
-// Preview state — snapshot before preview, restore on stop
-static UserPreset g_preview_snapshot;
-static std::atomic<bool> g_previewing{false};
-
 // ─── Encoder parameter mapping ──────────────────────────────────────
 //
 // Table-driven encoder → parameter assignment.  Each encoder (0–4) in
@@ -599,6 +595,10 @@ struct UserPreset {
 static UserPreset g_user_presets[NUM_USER_PRESETS];
 static UserPreset g_standard_presets[NUM_PRESETS];
 static UserPreset g_experimental_presets[NUM_EXPERIMENTAL];
+
+// Preview state — snapshot before preview, restore on stop
+static UserPreset g_preview_snapshot;
+static std::atomic<bool> g_previewing{false};
 
 // Bank mode: USER (boot default), STANDARD (factory), EXPERIMENTAL
 enum class BankMode { USER, STANDARD, EXPERIMENTAL };
