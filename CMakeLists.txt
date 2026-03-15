@@ -29,6 +29,9 @@ set(SOURCES
     src/reverb_plate.cpp
     src/reverb_hall.cpp
     src/reverb_schroeder.cpp
+    src/phaser.cpp
+    src/chorus.cpp
+    src/flanger.cpp
     src/web_server.cpp
 )
 

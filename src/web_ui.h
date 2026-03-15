@@ -312,19 +312,23 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 
   <div class="card">
     <h3>Reverb Type</h3>
-    <div class="seg-ctrl" id="reverb-type">
-      <div class="seg-btn active" data-val="0" onclick="setSeg('reverb-type',0)">Spring</div>
-      <div class="seg-btn" data-val="1" onclick="setSeg('reverb-type',1)">Plate</div>
-      <div class="seg-btn" data-val="2" onclick="setSeg('reverb-type',2)">Hall</div>
-      <div class="seg-btn" data-val="3" onclick="setSeg('reverb-type',3)">Schroeder</div>
+    <div class="form-group">
+      <select id="reverb-type" onchange="onReverbTypeChange()">
+        <option value="0">Spring</option>
+        <option value="1">Plate</option>
+        <option value="2">Hall</option>
+        <option value="3">Schroeder</option>
+      </select>
     </div>
   </div>
 
   <div class="card">
     <h3>Delay Type</h3>
-    <div class="seg-ctrl" id="delay-type">
-      <div class="seg-btn active" data-val="0" onclick="setSeg('delay-type',0)">Tape</div>
-      <div class="seg-btn" data-val="1" onclick="setSeg('delay-type',1)">Digital</div>
+    <div class="form-group">
+      <select id="delay-type" onchange="onDelayTypeChange()">
+        <option value="0">Tape</option>
+        <option value="1">Digital</option>
+      </select>
     </div>
   </div>
 
@@ -372,6 +376,22 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
         <option value="0">Flat</option>
         <option value="1">Up (Bright)</option>
       </select>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Modulation FX</h3>
+    <div class="toggle-row">
+      <span>Phaser</span>
+      <label class="toggle"><input type="checkbox" id="phaser"><span class="slider"></span></label>
+    </div>
+    <div class="toggle-row">
+      <span>Chorus</span>
+      <label class="toggle"><input type="checkbox" id="chorus"><span class="slider"></span></label>
+    </div>
+    <div class="toggle-row">
+      <span>Flanger</span>
+      <label class="toggle"><input type="checkbox" id="flanger"><span class="slider"></span></label>
     </div>
   </div>
 
@@ -464,14 +484,13 @@ function esc(s) {
   return d.innerHTML;
 }
 
-// ─── Segmented Controls ─────────────────────────────────────────────
-function setSeg(group, val) {
-  document.querySelectorAll('#' + group + ' .seg-btn').forEach(b => {
-    b.classList.toggle('active', parseInt(b.dataset.val) === val);
-  });
-  if (group === 'delay-type') {
-    document.getElementById('tape-params').style.display = val === 0 ? 'block' : 'none';
-  }
+// ─── Dropdown Handlers ──────────────────────────────────────────────
+function onReverbTypeChange() {
+  // No extra logic needed — value captured on apply
+}
+function onDelayTypeChange() {
+  const val = parseInt(document.getElementById('delay-type').value);
+  document.getElementById('tape-params').style.display = val === 0 ? 'block' : 'none';
 }
 
 function updateRange(id) {
@@ -627,8 +646,9 @@ async function loadOptions() {
   try {
     const r = await fetch('/api/siren/options');
     const d = await r.json();
-    setSeg('reverb-type', d.reverb_type || 0);
-    setSeg('delay-type', d.delay_type || 0);
+    document.getElementById('reverb-type').value = d.reverb_type || 0;
+    document.getElementById('delay-type').value = d.delay_type || 0;
+    onDelayTypeChange();
     document.getElementById('wobble').value = Math.round((d.tape_wobble || 1) * 100);
     document.getElementById('flutter').value = Math.round((d.tape_flutter || 1) * 100);
     updateRange('wobble'); updateRange('flutter');
@@ -636,12 +656,15 @@ async function loadOptions() {
     document.getElementById('lfo-link').checked = d.lfo_pitch_link !== false;
     document.getElementById('super-drip').checked = d.super_drip !== false;
     document.getElementById('sweep-dir').value = d.sweep_dir || -1;
+    document.getElementById('phaser').checked = !!d.phaser;
+    document.getElementById('chorus').checked = !!d.chorus;
+    document.getElementById('flanger').checked = !!d.flanger;
   } catch (e) { console.error(e); }
 }
 
 async function applyOptions() {
-  const rt = document.querySelector('#reverb-type .seg-btn.active').dataset.val;
-  const dt = document.querySelector('#delay-type .seg-btn.active').dataset.val;
+  const rt = document.getElementById('reverb-type').value;
+  const dt = document.getElementById('delay-type').value;
   const body = [
     'reverb_type=' + rt, 'delay_type=' + dt,
     'tape_wobble=' + (document.getElementById('wobble').value / 100),
@@ -649,7 +672,10 @@ async function applyOptions() {
     'fx_chain=' + document.getElementById('fx-chain').value,
     'lfo_pitch_link=' + (document.getElementById('lfo-link').checked ? '1' : '0'),
     'super_drip=' + (document.getElementById('super-drip').checked ? '1' : '0'),
-    'sweep_dir=' + document.getElementById('sweep-dir').value
+    'sweep_dir=' + document.getElementById('sweep-dir').value,
+    'phaser=' + (document.getElementById('phaser').checked ? '1' : '0'),
+    'chorus=' + (document.getElementById('chorus').checked ? '1' : '0'),
+    'flanger=' + (document.getElementById('flanger').checked ? '1' : '0')
   ].join('&');
   try {
     const r = await fetch('/api/siren/options', { method: 'POST',

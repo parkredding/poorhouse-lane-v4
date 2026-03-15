@@ -65,6 +65,9 @@
 #include "reverb_schroeder.h"
 #include "delay_digital.h"
 #include "dsp_utils.h"
+#include "phaser.h"
+#include "chorus.h"
+#include "flanger.h"
 #include "ap_mode.h"
 #include "web_server.h"
 
@@ -116,6 +119,11 @@ static std::atomic<float> g_tape_flutter{1.0f}; // tape delay flutter amount (0�
 // 0=Filt→Dly→Rev  1=Filt→Rev→Dly  2=Dly→Filt→Rev
 // 3=Dly→Rev→Filt  4=Rev→Filt→Dly  5=Rev→Dly→Filt
 static std::atomic<int>   g_fx_chain{0};
+
+// Toggleable modulation effects (configurable via AP mode web UI)
+static std::atomic<bool>  g_phaser_enabled{false};
+static std::atomic<bool>  g_chorus_enabled{false};
+static std::atomic<bool>  g_flanger_enabled{false};
 
 // AP mode flag
 static std::atomic<bool>  g_ap_mode{false};
@@ -868,6 +876,9 @@ static void save_siren_config()
     fprintf(f, "lfo_pitch_link=%d\n", g_lfo_pitch_link.load() ? 1 : 0);
     fprintf(f, "super_drip=%d\n",     g_super_drip.load() ? 1 : 0);
     fprintf(f, "sweep_dir=%.6f\n",    g_sweep_dir.load());
+    fprintf(f, "phaser=%d\n",          g_phaser_enabled.load() ? 1 : 0);
+    fprintf(f, "chorus=%d\n",          g_chorus_enabled.load() ? 1 : 0);
+    fprintf(f, "flanger=%d\n",         g_flanger_enabled.load() ? 1 : 0);
     fprintf(f, "active_bank=%d\n",    g_bank_mode.load());
     fprintf(f, "active_preset=%d\n",  g_preset.load());
 
@@ -949,6 +960,12 @@ static void load_siren_config()
             g_super_drip.store(atoi(val) != 0);
         else if (strcmp(key, "sweep_dir") == 0)
             g_sweep_dir.store(static_cast<float>(atof(val)));
+        else if (strcmp(key, "phaser") == 0)
+            g_phaser_enabled.store(atoi(val) != 0);
+        else if (strcmp(key, "chorus") == 0)
+            g_chorus_enabled.store(atoi(val) != 0);
+        else if (strcmp(key, "flanger") == 0)
+            g_flanger_enabled.store(atoi(val) != 0);
         else if (strcmp(key, "active_bank") == 0)
             g_bank_mode.store(atoi(val));
         else if (strcmp(key, "active_preset") == 0)
@@ -2011,13 +2028,17 @@ static web_server::Callbacks build_web_callbacks()
             "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
             "\"fx_chain\":%d,"
             "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
-            "\"sweep_dir\":%.0f}",
+            "\"sweep_dir\":%.0f,"
+            "\"phaser\":%s,\"chorus\":%s,\"flanger\":%s}",
             g_reverb_type.load(), g_delay_type.load(),
             g_tape_wobble.load(), g_tape_flutter.load(),
             g_fx_chain.load(),
             g_lfo_pitch_link.load() ? "true" : "false",
             g_super_drip.load() ? "true" : "false",
-            g_sweep_dir.load());
+            g_sweep_dir.load(),
+            g_phaser_enabled.load() ? "true" : "false",
+            g_chorus_enabled.load() ? "true" : "false",
+            g_flanger_enabled.load() ? "true" : "false");
         return std::string(buf);
     };
 
@@ -2048,6 +2069,12 @@ static web_server::Callbacks build_web_callbacks()
         if (!sd.empty()) g_super_drip.store(sd == "1" || sd == "true");
         auto sw = get_val("sweep_dir");
         if (!sw.empty()) g_sweep_dir.store(std::stof(sw));
+        auto ph = get_val("phaser");
+        if (!ph.empty()) g_phaser_enabled.store(ph == "1" || ph == "true");
+        auto ch = get_val("chorus");
+        if (!ch.empty()) g_chorus_enabled.store(ch == "1" || ch == "true");
+        auto fl = get_val("flanger");
+        if (!fl.empty()) g_flanger_enabled.store(fl == "1" || fl == "true");
 
         save_siren_config();
         return true;
@@ -2188,12 +2215,16 @@ static web_server::Callbacks build_web_callbacks()
             "\"reverb_type\":%d,\"delay_type\":%d,"
             "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
             "\"fx_chain\":%d,"
-            "\"lfo_pitch_link\":%s,\"super_drip\":%s",
+            "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
+            "\"phaser\":%s,\"chorus\":%s,\"flanger\":%s",
             g_reverb_type.load(), g_delay_type.load(),
             g_tape_wobble.load(), g_tape_flutter.load(),
             g_fx_chain.load(),
             g_lfo_pitch_link.load() ? "true" : "false",
-            g_super_drip.load() ? "true" : "false");
+            g_super_drip.load() ? "true" : "false",
+            g_phaser_enabled.load() ? "true" : "false",
+            g_chorus_enabled.load() ? "true" : "false",
+            g_flanger_enabled.load() ? "true" : "false");
         json += cfg;
         json += "}}";
         return json;
@@ -2246,6 +2277,9 @@ static web_server::Callbacks build_web_callbacks()
                 if (fc != -999) g_fx_chain.store(fc);
                 g_lfo_pitch_link.store(json_bool(cfg, "lfo_pitch_link"));
                 g_super_drip.store(json_bool(cfg, "super_drip"));
+                g_phaser_enabled.store(json_bool(cfg, "phaser"));
+                g_chorus_enabled.store(json_bool(cfg, "chorus"));
+                g_flanger_enabled.store(json_bool(cfg, "flanger"));
             }
         }
 
@@ -2408,6 +2442,9 @@ int main(int argc, char *argv[])
     PlateReverb     reverb_plate;
     HallReverb      reverb_hall;
     SchroederReverb reverb_schroeder;
+    Phaser          phaser;
+    Chorus          chorus;
+    Flanger         flanger;
 
     float env_level      = 0.0f;
     float attack_rate    = 0.0f;
@@ -2460,6 +2497,9 @@ int main(int argc, char *argv[])
         float wobble    = g_tape_wobble.load(rlx);
         float flutter   = g_tape_flutter.load(rlx);
         int   fx_chain  = g_fx_chain.load(rlx);
+        bool  phaser_on = g_phaser_enabled.load(rlx);
+        bool  chorus_on = g_chorus_enabled.load(rlx);
+        bool  flanger_on = g_flanger_enabled.load(rlx);
 
         // Update DSP modules (once per frame)
         // lfo rate set per-sample below (optionally tracks pitch envelope)
@@ -2586,6 +2626,11 @@ int main(int argc, char *argv[])
             case 5:  s = do_reverb(s); s = do_delay(s);  s = do_filter(s); break;
             }
 
+            // Modulation effects (post-chain, pre-limiter)
+            if (phaser_on)  s = phaser.process(s);
+            if (chorus_on)  s = chorus.process(s);
+            if (flanger_on) s = flanger.process(s);
+
             // Output soft limiter — transparent at normal levels,
             // warm saturation when pushed (resonance, feedback, etc.)
             s = dsp::fast_tanh(s * 1.2f) * (1.0f / 1.1f);
@@ -2610,6 +2655,9 @@ int main(int argc, char *argv[])
         reverb_plate.init(sr);
         reverb_hall.init(sr);
         reverb_schroeder.init(sr);
+        phaser.init(sr);
+        chorus.init(sr);
+        flanger.init(sr);
 
         attack_rate  = 1.0f / (0.005f * sr);           // ~5 ms
         release_rate = 1.0f / (0.050f * sr);            // ~50 ms
@@ -2927,8 +2975,8 @@ int main(int argc, char *argv[])
     {
         int idx = g_preset.load();
         const UserPreset& u = g_user_presets[idx];
-        printf("\nBank: USER  Preset %d%s\n",
-               idx + 1, u.saved ? "" : " (factory copy)");
+        printf("\nBank: USER  Preset %d  \"%s\"%s\n",
+               idx + 1, u.name, u.saved ? "" : "  (factory copy)");
         printf("  Freq: %.0f Hz  Wave: %s\n",
                g_freq.load(), waveform_name(g_waveform.load()));
         printf("  LFO: %.1f Hz @ %.0f%% [%s]  Filter: %.0f Hz / %.0f%%\n",
