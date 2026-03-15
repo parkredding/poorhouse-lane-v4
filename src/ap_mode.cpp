@@ -153,6 +153,9 @@ bool ap_mode::start_ap()
     char cmd[512];
     system("killall hostapd 2>/dev/null");
     system("killall dnsmasq 2>/dev/null");
+    // Remove stale virtual interface from previous run
+    snprintf(cmd, sizeof(cmd), "iw dev %s del 2>/dev/null", AP_IFACE);
+    system(cmd);
     usleep(500000);
 
     // 2. Create virtual AP interface (keeps wlan0 intact for SSH)
