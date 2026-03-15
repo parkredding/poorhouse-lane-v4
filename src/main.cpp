@@ -43,6 +43,7 @@
 #include <atomic>
 #include <algorithm>
 #include <chrono>
+#include <mutex>
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -781,8 +782,11 @@ static const char* config_file_path()
 
 static constexpr const char* CONFIG_V1_HEADER = "DUBSIREN_CONFIG_V1";
 
+static std::mutex g_config_save_mutex;
+
 static void save_siren_config()
 {
+    std::lock_guard<std::mutex> lock(g_config_save_mutex);
     const char* path = config_file_path();
 
     char tmp[PATH_MAX];
@@ -948,8 +952,11 @@ static bool verify_preset_file(const char* path)
 
 // ─── Save / load user presets to disk ────────────────────────────────
 
+static std::mutex g_preset_save_mutex;
+
 static void save_user_presets()
 {
+    std::lock_guard<std::mutex> lock(g_preset_save_mutex);
     const char* path = preset_file_path();
 
     // Write to temp file, then rename for power-safety
