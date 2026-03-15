@@ -399,9 +399,22 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 <div id="system" class="panel">
   <div class="card">
     <h3>Updates</h3>
-    <p style="color:var(--text-lo);margin-bottom:12px;font-size:0.75rem">Version 0.5.0</p>
-    <button class="btn btn-secondary" onclick="checkUpdate()">Check for Updates</button>
+    <p style="color:var(--text-lo);margin-bottom:8px;font-size:0.75rem">Version 0.5.0</p>
+    <div class="form-group">
+      <label>Branch</label>
+      <select id="update-branch" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem">
+        <option value="main">main</option>
+      </select>
+    </div>
+    <button class="btn btn-secondary" onclick="checkUpdate()" id="btn-check">Check for Updates</button>
     <div id="update-result" style="margin-top:12px"></div>
+    <div id="update-progress" style="display:none;margin-top:12px">
+      <div style="font-size:0.8rem;color:var(--text-lo);margin-bottom:6px" id="update-stage-text">Preparing...</div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;height:22px;overflow:hidden">
+        <div id="update-bar" style="height:100%;width:0%;background:var(--accent);border-radius:8px;transition:width 0.4s ease"></div>
+      </div>
+      <div style="font-size:0.7rem;color:var(--text-lo);margin-top:4px;text-align:right" id="update-pct-text">0%</div>
+    </div>
   </div>
   <div class="card">
     <h3>Device</h3>
@@ -444,7 +457,7 @@ function showTab(id) {
   const tabs = ['presets','options','wifi','system'];
   const tabEls = document.querySelectorAll('.tab');
   tabs.forEach((t, i) => { if (t === id && tabEls[i]) tabEls[i].classList.add('active'); });
-  if (id === 'system') loadSystemInfo();
+  if (id === 'system') { loadSystemInfo(); loadBranches(); }
 }
 
 // ─── Toast ──────────────────────────────────────────────────────────
@@ -704,15 +717,37 @@ async function connectWifi() {
 }
 
 // ─── System ─────────────────────────────────────────────────────────
+const STAGE_LABELS = {
+  idle: 'Ready', backup: 'Backing up settings...', fetch: 'Fetching updates...',
+  pull: 'Pulling code...', build: 'Building firmware...', deploy: 'Deploying...',
+  done: 'Complete!', error: 'Error'
+};
+let updatePollTimer = null;
+
+async function loadBranches() {
+  try {
+    const r = await fetch('/api/update/branches');
+    const d = await r.json();
+    const sel = document.getElementById('update-branch');
+    const cur = sel.value;
+    sel.innerHTML = (d.branches || ['main']).map(b =>
+      `<option value="${esc(b)}"${b === cur ? ' selected' : ''}>${esc(b)}</option>`
+    ).join('');
+  } catch (e) { /* keep default main */ }
+}
+
 async function checkUpdate() {
+  const branch = document.getElementById('update-branch').value;
   document.getElementById('update-result').innerHTML =
     '<div class="loading"><div class="spinner"></div> Checking...</div>';
   try {
-    const r = await fetch('/api/update/check', { method: 'POST' });
+    const r = await fetch('/api/update/check', { method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'branch=' + encodeURIComponent(branch) });
     const d = await r.json();
     if (d.available) {
       document.getElementById('update-result').innerHTML =
-        `<p style="color:var(--accent);font-size:0.8rem">${d.count} update(s) available</p>
+        `<p style="color:var(--accent);font-size:0.8rem">${d.count} update(s) available on ${esc(branch)}</p>
          <button class="btn btn-primary" onclick="installUpdate()" style="margin-top:8px">Install</button>`;
     } else {
       document.getElementById('update-result').innerHTML =
@@ -725,13 +760,63 @@ async function checkUpdate() {
 }
 
 async function installUpdate() {
-  document.getElementById('update-result').innerHTML =
-    '<div class="loading"><div class="spinner"></div> Installing...</div>';
+  const branch = document.getElementById('update-branch').value;
+  document.getElementById('update-result').innerHTML = '';
+  document.getElementById('update-progress').style.display = 'block';
+  document.getElementById('update-bar').style.width = '0%';
+  document.getElementById('update-stage-text').textContent = 'Starting...';
+  document.getElementById('update-pct-text').textContent = '0%';
+  document.getElementById('btn-check').disabled = true;
   try {
-    const r = await fetch('/api/update/install', { method: 'POST' });
-    if (r.ok) toast('Update installed — restart to apply');
-    else toast('Update failed', true);
-  } catch (e) { toast('Error: ' + e, true); }
+    const r = await fetch('/api/update/install', { method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'branch=' + encodeURIComponent(branch) });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      toast(d.error || 'Update failed', true);
+      document.getElementById('update-progress').style.display = 'none';
+      document.getElementById('btn-check').disabled = false;
+      return;
+    }
+    // Start polling for progress
+    pollUpdateStatus();
+  } catch (e) {
+    toast('Error: ' + e, true);
+    document.getElementById('update-progress').style.display = 'none';
+    document.getElementById('btn-check').disabled = false;
+  }
+}
+
+async function pollUpdateStatus() {
+  if (updatePollTimer) clearTimeout(updatePollTimer);
+  try {
+    const r = await fetch('/api/update/status');
+    const d = await r.json();
+    const pct = d.progress || 0;
+    const stage = d.stage || 'idle';
+    document.getElementById('update-bar').style.width = pct + '%';
+    document.getElementById('update-pct-text').textContent = pct + '%';
+    document.getElementById('update-stage-text').textContent = STAGE_LABELS[stage] || stage;
+
+    if (stage === 'error') {
+      document.getElementById('update-bar').style.background = 'var(--danger)';
+      document.getElementById('update-stage-text').textContent = 'Error: ' + (d.error || 'unknown');
+      document.getElementById('btn-check').disabled = false;
+      toast('Update failed: ' + (d.error || 'unknown'), true);
+      return;
+    }
+    if (stage === 'done') {
+      document.getElementById('update-bar').style.background = 'var(--accent)';
+      document.getElementById('btn-check').disabled = false;
+      toast('Update installed — restart to apply');
+      return;
+    }
+    // Keep polling every 1.5s
+    updatePollTimer = setTimeout(pollUpdateStatus, 1500);
+  } catch (e) {
+    // Network glitch — retry
+    updatePollTimer = setTimeout(pollUpdateStatus, 3000);
+  }
 }
 
 async function loadSystemInfo() {

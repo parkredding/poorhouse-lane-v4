@@ -53,9 +53,10 @@ struct Callbacks {
     std::function<std::string()> wifi_status;
 
     // Update operations
-    std::function<std::string()> update_check;
-    std::function<bool()> update_install;
+    std::function<std::string(const std::string& branch)> update_check;
+    std::function<bool(const std::string& branch)> update_install;
     std::function<std::string()> update_status;
+    std::function<std::string()> update_branches;
 
     // Backup/restore
     std::function<std::string()> backup_create;

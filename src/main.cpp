@@ -44,6 +44,7 @@
 #include <algorithm>
 #include <chrono>
 #include <mutex>
+#include <thread>
 #include <map>
 
 #include <sys/stat.h>
@@ -2170,39 +2171,167 @@ static web_server::Callbacks build_web_callbacks()
                ",\"ssid\":\"" + ssid + "\"}";
     };
 
-    cb.update_check = []() -> std::string {
-        int ret = system("cd /home/pi/dubsiren && git fetch origin main 2>/dev/null");
+    // ── Update: progress tracking state ─────────────────────────────
+    // Shared between the background update thread and the status endpoint.
+    static std::mutex              upd_mtx;
+    static std::string             upd_stage;     // "idle","fetch","pull","build","deploy","done","error"
+    static int                     upd_pct;       // 0–100
+    static std::string             upd_error;
+    static std::atomic<bool>       upd_running{false};
+
+    auto set_upd = [](const std::string& stage, int pct, const std::string& err = "") {
+        std::lock_guard<std::mutex> lk(upd_mtx);
+        upd_stage = stage;
+        upd_pct   = pct;
+        upd_error = err;
+    };
+
+    set_upd("idle", 0);
+
+    cb.update_branches = []() -> std::string {
+        // Fetch all remotes first
+        system("cd /home/pi/dubsiren && git fetch --all 2>/dev/null");
+        FILE* pipe = popen("cd /home/pi/dubsiren && "
+                           "git branch -r --format='%(refname:lstrip=3)' 2>/dev/null", "r");
+        if (!pipe) return "{\"branches\":[\"main\"]}";
+
+        std::string json = "{\"branches\":[";
+        char line[256];
+        bool first = true;
+        while (fgets(line, sizeof(line), pipe)) {
+            // Strip newline
+            size_t len = strlen(line);
+            if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
+            // Skip HEAD pointer
+            if (strncmp(line, "HEAD", 4) == 0) continue;
+            if (strlen(line) == 0) continue;
+            if (!first) json += ",";
+            json += "\"" + std::string(line) + "\"";
+            first = false;
+        }
+        pclose(pipe);
+        json += "]}";
+        return json;
+    };
+
+    cb.update_check = [](const std::string& branch) -> std::string {
+        std::string cmd = "cd /home/pi/dubsiren && git fetch origin "
+                          + branch + " 2>/dev/null";
+        int ret = system(cmd.c_str());
         if (ret != 0)
             return "{\"available\":false,\"error\":\"fetch failed\"}";
 
-        FILE* pipe = popen("cd /home/pi/dubsiren && "
-                           "git log HEAD..origin/main --oneline 2>/dev/null", "r");
+        std::string log_cmd = "cd /home/pi/dubsiren && "
+                              "git log HEAD..origin/" + branch +
+                              " --oneline 2>/dev/null";
+        FILE* pipe = popen(log_cmd.c_str(), "r");
         if (!pipe)
             return "{\"available\":false,\"error\":\"git error\"}";
 
-        std::string commits;
         char line[256];
         int count = 0;
-        while (fgets(line, sizeof(line), pipe)) {
+        while (fgets(line, sizeof(line), pipe))
             count++;
-            commits += std::string(line);
-        }
         pclose(pipe);
 
         return "{\"available\":" + std::string(count > 0 ? "true" : "false") +
                ",\"count\":" + std::to_string(count) + "}";
     };
 
-    cb.update_install = []() -> bool {
-        int ret = system("cd /home/pi/dubsiren && "
-                         "git pull origin main && "
-                         "cd build && cmake .. && make -j$(nproc) && "
-                         "sudo ../scripts/deploy-to-persist.sh 2>&1");
-        return ret == 0;
+    cb.update_install = [set_upd](const std::string& branch) -> bool {
+        // Reject if already running
+        bool expected = false;
+        if (!upd_running.compare_exchange_strong(expected, true))
+            return false;
+
+        // Launch background thread so the HTTP response returns immediately
+        std::thread([set_upd, branch]() {
+            auto run = [](const std::string& cmd) -> int {
+                return system(cmd.c_str());
+            };
+
+            // Stage 0: Back up user data (5%)
+            // On kiosk (overlay FS) devices, data/ is bind-mounted from
+            // persistent storage.  Copy settings to a safe location in case
+            // the deploy overwrites the data dir structure.
+            set_upd("backup", 5);
+            run("cp -a /home/pi/dubsiren/data /tmp/dubsiren-data-backup 2>/dev/null");
+
+            // Stage 1: Fetch (15%)
+            set_upd("fetch", 15);
+            if (run("cd /home/pi/dubsiren && git fetch origin " + branch + " 2>&1") != 0) {
+                set_upd("error", 0, "git fetch failed");
+                upd_running.store(false);
+                return;
+            }
+
+            // Stage 2: Pull / checkout (25%)
+            // Use git reset to avoid merge conflicts — user shouldn't have
+            // local source changes on the Pi.  The data/ dir is bind-mounted
+            // separately so it won't be affected by git operations.
+            set_upd("pull", 25);
+            if (run("cd /home/pi/dubsiren && "
+                     "git checkout " + branch + " 2>&1 && "
+                     "git reset --hard origin/" + branch + " 2>&1") != 0) {
+                set_upd("error", 0, "git pull failed");
+                upd_running.store(false);
+                return;
+            }
+
+            // Stage 3: Build — cmake (40%)
+            set_upd("build", 40);
+            if (run("cd /home/pi/dubsiren/build && cmake .. 2>&1") != 0) {
+                set_upd("error", 0, "cmake failed");
+                upd_running.store(false);
+                return;
+            }
+
+            // Stage 3b: Build — make (40→85%)
+            set_upd("build", 55);
+            if (run("cd /home/pi/dubsiren/build && make -j$(nproc) 2>&1") != 0) {
+                set_upd("error", 0, "build failed");
+                upd_running.store(false);
+                return;
+            }
+            set_upd("build", 85);
+
+            // Stage 4: Deploy to persistent storage (90%)
+            // deploy-to-persist.sh copies binary + syncs git repo to real disk
+            // so updates survive reboot on kiosk/overlay FS devices.
+            set_upd("deploy", 90);
+            if (run("cd /home/pi/dubsiren && "
+                     "sudo ./scripts/deploy-to-persist.sh 2>&1") != 0) {
+                set_upd("error", 0, "deploy failed");
+                upd_running.store(false);
+                return;
+            }
+
+            // Stage 5: Restore user data if needed (95%)
+            // If the data dir lost its bind mount or files were overwritten,
+            // restore from backup.  The bind mount makes this unlikely, but
+            // this is a safety net.
+            set_upd("deploy", 95);
+            run("if [ ! -f /home/pi/dubsiren/data/presets/user_presets.txt ] && "
+                "[ -f /tmp/dubsiren-data-backup/presets/user_presets.txt ]; then "
+                "cp -a /tmp/dubsiren-data-backup/* /home/pi/dubsiren/data/ 2>/dev/null; fi");
+            run("rm -rf /tmp/dubsiren-data-backup 2>/dev/null");
+
+            // Done (100%)
+            set_upd("done", 100);
+            upd_running.store(false);
+        }).detach();
+
+        return true;
     };
 
     cb.update_status = []() -> std::string {
-        return "{\"status\":\"idle\"}";
+        std::lock_guard<std::mutex> lk(upd_mtx);
+        std::string json = "{\"stage\":\"" + upd_stage + "\""
+                           ",\"progress\":" + std::to_string(upd_pct);
+        if (!upd_error.empty())
+            json += ",\"error\":\"" + upd_error + "\"";
+        json += "}";
+        return json;
     };
 
     cb.backup_create = []() -> std::string {

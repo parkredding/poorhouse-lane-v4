@@ -243,20 +243,29 @@ static void setup_api(httplib::Server& svr)
 
     // ── Update operations ───────────────────────────────────────────
 
-    svr.Post("/api/update/check", [](const httplib::Request&, httplib::Response& res) {
-        if (g_callbacks.update_check) {
-            json_response(res, g_callbacks.update_check());
+    svr.Get("/api/update/branches", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.update_branches) {
+            json_response(res, g_callbacks.update_branches());
         } else {
             json_error(res, "not implemented", 501);
         }
     });
 
-    svr.Post("/api/update/install", [](const httplib::Request&, httplib::Response& res) {
+    svr.Post("/api/update/check", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.update_check) { json_error(res, "not implemented", 501); return; }
+        auto branch = req.get_param_value("branch");
+        if (branch.empty()) branch = "main";
+        json_response(res, g_callbacks.update_check(branch));
+    });
+
+    svr.Post("/api/update/install", [](const httplib::Request& req, httplib::Response& res) {
         if (!g_callbacks.update_install) { json_error(res, "not implemented", 501); return; }
-        if (g_callbacks.update_install()) {
+        auto branch = req.get_param_value("branch");
+        if (branch.empty()) branch = "main";
+        if (g_callbacks.update_install(branch)) {
             json_ok(res, "update started");
         } else {
-            json_error(res, "update failed");
+            json_error(res, "already running");
         }
     });
 
