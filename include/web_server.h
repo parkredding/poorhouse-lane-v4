@@ -57,6 +57,7 @@ struct Callbacks {
     std::function<bool(const std::string& branch)> update_install;
     std::function<std::string()> update_status;
     std::function<std::string()> update_branches;
+    std::function<std::string()> update_log;
 
     // Backup/restore
     std::function<std::string()> backup_create;

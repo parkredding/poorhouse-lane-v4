@@ -40,6 +40,7 @@
 #include <csignal>
 #include <cmath>
 #include <cstdlib>
+#include <sys/wait.h>
 #include <atomic>
 #include <algorithm>
 #include <chrono>
@@ -2177,6 +2178,7 @@ static web_server::Callbacks build_web_callbacks()
     static std::string             upd_stage;     // "idle","fetch","pull","build","deploy","done","error"
     static int                     upd_pct;       // 0–100
     static std::string             upd_error;
+    static std::string             upd_log;       // verbose command output
     static std::atomic<bool>       upd_running{false};
 
     auto set_upd = [](const std::string& stage, int pct, const std::string& err = "") {
@@ -2184,6 +2186,12 @@ static web_server::Callbacks build_web_callbacks()
         upd_stage = stage;
         upd_pct   = pct;
         upd_error = err;
+    };
+
+    // Append a line to the verbose log (thread-safe)
+    auto log_append = [](const std::string& line) {
+        std::lock_guard<std::mutex> lk(upd_mtx);
+        upd_log += line;
     };
 
     set_upd("idle", 0);
@@ -2238,16 +2246,37 @@ static web_server::Callbacks build_web_callbacks()
                ",\"count\":" + std::to_string(count) + "}";
     };
 
-    cb.update_install = [set_upd](const std::string& branch) -> bool {
+    cb.update_install = [set_upd, log_append](const std::string& branch) -> bool {
         // Reject if already running
         bool expected = false;
         if (!upd_running.compare_exchange_strong(expected, true))
             return false;
 
+        // Clear log for new install
+        {
+            std::lock_guard<std::mutex> lk(upd_mtx);
+            upd_log.clear();
+        }
+
         // Launch background thread so the HTTP response returns immediately
-        std::thread([set_upd, branch]() {
-            auto run = [](const std::string& cmd) -> int {
-                return system(cmd.c_str());
+        std::thread([set_upd, log_append, branch]() {
+            // Run a command, capture output into the verbose log, return exit code
+            auto run = [&log_append](const std::string& cmd) -> int {
+                log_append("$ " + cmd + "\n");
+                FILE* pipe = popen((cmd + " 2>&1").c_str(), "r");
+                if (!pipe) {
+                    log_append("[error: popen failed]\n");
+                    return -1;
+                }
+                char buf[512];
+                while (fgets(buf, sizeof(buf), pipe)) {
+                    log_append(std::string(buf));
+                }
+                int status = pclose(pipe);
+                int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+                if (code != 0)
+                    log_append("[exit code: " + std::to_string(code) + "]\n");
+                return code;
             };
 
             // Stage 0: Back up user data (5%)
@@ -2259,7 +2288,7 @@ static web_server::Callbacks build_web_callbacks()
 
             // Stage 1: Fetch (15%)
             set_upd("fetch", 15);
-            if (run("cd /home/pi/dubsiren && git fetch origin " + branch + " 2>&1") != 0) {
+            if (run("cd /home/pi/dubsiren && git fetch origin " + branch) != 0) {
                 set_upd("error", 0, "git fetch failed");
                 upd_running.store(false);
                 return;
@@ -2270,17 +2299,20 @@ static web_server::Callbacks build_web_callbacks()
             // local source changes on the Pi.  The data/ dir is bind-mounted
             // separately so it won't be affected by git operations.
             set_upd("pull", 25);
-            if (run("cd /home/pi/dubsiren && "
-                     "git checkout " + branch + " 2>&1 && "
-                     "git reset --hard origin/" + branch + " 2>&1") != 0) {
-                set_upd("error", 0, "git pull failed");
+            if (run("cd /home/pi/dubsiren && git checkout " + branch) != 0) {
+                set_upd("error", 0, "git checkout failed");
+                upd_running.store(false);
+                return;
+            }
+            if (run("cd /home/pi/dubsiren && git reset --hard origin/" + branch) != 0) {
+                set_upd("error", 0, "git reset failed");
                 upd_running.store(false);
                 return;
             }
 
             // Stage 3: Build — cmake (40%)
             set_upd("build", 40);
-            if (run("cd /home/pi/dubsiren/build && cmake .. 2>&1") != 0) {
+            if (run("cd /home/pi/dubsiren/build && cmake ..") != 0) {
                 set_upd("error", 0, "cmake failed");
                 upd_running.store(false);
                 return;
@@ -2288,7 +2320,7 @@ static web_server::Callbacks build_web_callbacks()
 
             // Stage 3b: Build — make (40→85%)
             set_upd("build", 55);
-            if (run("cd /home/pi/dubsiren/build && make -j$(nproc) 2>&1") != 0) {
+            if (run("cd /home/pi/dubsiren/build && make -j$(nproc)") != 0) {
                 set_upd("error", 0, "build failed");
                 upd_running.store(false);
                 return;
@@ -2299,8 +2331,7 @@ static web_server::Callbacks build_web_callbacks()
             // deploy-to-persist.sh copies binary + syncs git repo to real disk
             // so updates survive reboot on kiosk/overlay FS devices.
             set_upd("deploy", 90);
-            if (run("cd /home/pi/dubsiren && "
-                     "sudo ./scripts/deploy-to-persist.sh 2>&1") != 0) {
+            if (run("cd /home/pi/dubsiren && sudo ./scripts/deploy-to-persist.sh") != 0) {
                 set_upd("error", 0, "deploy failed");
                 upd_running.store(false);
                 return;
@@ -2332,6 +2363,28 @@ static web_server::Callbacks build_web_callbacks()
             json += ",\"error\":\"" + upd_error + "\"";
         json += "}";
         return json;
+    };
+
+    cb.update_log = []() -> std::string {
+        std::lock_guard<std::mutex> lk(upd_mtx);
+        // JSON-escape the log text
+        std::string escaped;
+        escaped.reserve(upd_log.size() + 64);
+        for (char c : upd_log) {
+            switch (c) {
+                case '"':  escaped += "\\\""; break;
+                case '\\': escaped += "\\\\"; break;
+                case '\n': escaped += "\\n";  break;
+                case '\r': escaped += "\\r";  break;
+                case '\t': escaped += "\\t";  break;
+                default:
+                    if (static_cast<unsigned char>(c) < 0x20)
+                        escaped += ' ';
+                    else
+                        escaped += c;
+            }
+        }
+        return "{\"log\":\"" + escaped + "\"}";
     };
 
     cb.backup_create = []() -> std::string {

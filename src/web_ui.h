@@ -472,6 +472,19 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       </div>
       <div style="font-size:0.7rem;color:var(--text-lo);margin-top:4px;text-align:right" id="update-pct-text">0%</div>
     </div>
+    <div id="update-log-section" style="display:none;margin-top:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:6px 0"
+           onclick="toggleUpdateLog()">
+        <span style="font-size:0.65rem;font-weight:700;color:var(--text-lo);letter-spacing:2px;text-transform:uppercase">
+          Verbose Log <span id="log-arrow">&#9654;</span>
+        </span>
+        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();copyUpdateLog()"
+                style="font-size:0.55rem;padding:4px 8px">Copy</button>
+      </div>
+      <pre id="update-log" style="display:none;background:var(--bg);border:1px solid var(--border);
+        padding:10px;margin-top:4px;max-height:300px;overflow:auto;font-family:var(--font);
+        font-size:0.65rem;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-all"></pre>
+    </div>
   </div>
   <div class="card">
     <h3>Device</h3>
@@ -828,6 +841,9 @@ async function installUpdate() {
   document.getElementById('update-stage-text').textContent = 'Starting...';
   document.getElementById('update-pct-text').textContent = '0%';
   document.getElementById('btn-check').disabled = true;
+  // Show log section, reset content
+  document.getElementById('update-log-section').style.display = 'block';
+  document.getElementById('update-log').textContent = '';
   try {
     const r = await fetch('/api/update/install', { method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -851,19 +867,37 @@ async function installUpdate() {
 async function pollUpdateStatus() {
   if (updatePollTimer) clearTimeout(updatePollTimer);
   try {
-    const r = await fetch('/api/update/status');
-    const d = await r.json();
+    const [statusRes, logRes] = await Promise.all([
+      fetch('/api/update/status'),
+      fetch('/api/update/log')
+    ]);
+    const d = await statusRes.json();
     const pct = d.progress || 0;
     const stage = d.stage || 'idle';
     document.getElementById('update-bar').style.width = pct + '%';
     document.getElementById('update-pct-text').textContent = pct + '%';
     document.getElementById('update-stage-text').textContent = STAGE_LABELS[stage] || stage;
 
+    // Update verbose log
+    try {
+      const ld = await logRes.json();
+      if (ld.log) {
+        const el = document.getElementById('update-log');
+        el.textContent = ld.log;
+        // Auto-scroll if user is near the bottom
+        if (el.scrollHeight - el.scrollTop - el.clientHeight < 60)
+          el.scrollTop = el.scrollHeight;
+      }
+    } catch(e) {}
+
     if (stage === 'error') {
       document.getElementById('update-bar').style.background = 'var(--danger)';
       document.getElementById('update-stage-text').textContent = 'Error: ' + (d.error || 'unknown');
       document.getElementById('btn-check').disabled = false;
       toast('Update failed: ' + (d.error || 'unknown'), true);
+      // Auto-expand log on error so user sees what went wrong
+      document.getElementById('update-log').style.display = 'block';
+      document.getElementById('log-arrow').innerHTML = '&#9660;';
       return;
     }
     if (stage === 'done') {
@@ -877,6 +911,38 @@ async function pollUpdateStatus() {
   } catch (e) {
     // Network glitch — retry
     updatePollTimer = setTimeout(pollUpdateStatus, 3000);
+  }
+}
+
+function toggleUpdateLog() {
+  const el = document.getElementById('update-log');
+  const arrow = document.getElementById('log-arrow');
+  if (el.style.display === 'none') {
+    el.style.display = 'block';
+    arrow.innerHTML = '&#9660;';
+    el.scrollTop = el.scrollHeight;
+  } else {
+    el.style.display = 'none';
+    arrow.innerHTML = '&#9654;';
+  }
+}
+
+function copyUpdateLog() {
+  const text = document.getElementById('update-log').textContent;
+  if (!text) { toast('No log to copy', true); return; }
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => toast('Log copied'));
+  } else {
+    // Fallback for non-HTTPS contexts (common on Pi local network)
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast('Log copied');
   }
 }
 

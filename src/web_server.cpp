@@ -277,6 +277,14 @@ static void setup_api(httplib::Server& svr)
         }
     });
 
+    svr.Get("/api/update/log", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.update_log) {
+            json_response(res, g_callbacks.update_log());
+        } else {
+            json_error(res, "not implemented", 501);
+        }
+    });
+
     // ── Backup/restore ──────────────────────────────────────────────
 
     svr.Get("/api/backup", [](const httplib::Request&, httplib::Response& res) {
