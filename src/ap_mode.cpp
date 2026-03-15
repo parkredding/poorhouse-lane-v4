@@ -146,12 +146,14 @@ bool ap_mode::start_ap()
 
     printf("AP: Starting access point '%s' on %s\n", g_ssid.c_str(), AP_IFACE);
 
-    // 1. Stop any existing networking on the interface
+    // 1. Stop anything that might hold the interface
+    system("sudo killall hostapd 2>/dev/null");
+    system("sudo killall dnsmasq 2>/dev/null");
     system("sudo killall wpa_supplicant 2>/dev/null");
-    usleep(500000);  // 500ms
+    usleep(1000000);  // 1s — let processes fully exit
 
     // 2. Configure the interface
-    char cmd[256];
+    char cmd[512];
     snprintf(cmd, sizeof(cmd), "sudo ip addr flush dev %s 2>/dev/null", AP_IFACE);
     system(cmd);
     snprintf(cmd, sizeof(cmd), "sudo ip addr add %s/24 dev %s", AP_IP, AP_IFACE);
@@ -163,36 +165,23 @@ bool ap_mode::start_ap()
     if (!write_hostapd_conf(g_ssid)) return false;
     if (!write_dnsmasq_conf()) return false;
 
-    // 4. Start hostapd
-    g_hostapd_pid = start_process("sudo", "hostapd");
-    if (g_hostapd_pid <= 0) {
-        // Try launching with full config path
-        pid_t pid = fork();
-        if (pid == 0) {
-            execlp("sudo", "sudo", "hostapd", HOSTAPD_CONF, nullptr);
-            _exit(127);
-        }
-        g_hostapd_pid = pid;
-    } else {
-        // The simple start_process doesn't work for sudo + args, use system
-        stop_process(g_hostapd_pid);
-    }
-
-    // Use system() + background for reliability
-    snprintf(cmd, sizeof(cmd), "sudo hostapd %s -B 2>/dev/null", HOSTAPD_CONF);
-    if (system(cmd) != 0) {
-        fprintf(stderr, "AP: Failed to start hostapd\n");
+    // 4. Start hostapd (daemonized with -B)
+    snprintf(cmd, sizeof(cmd), "hostapd %s -B", HOSTAPD_CONF);
+    int ret = system(cmd);
+    if (ret != 0) {
+        fprintf(stderr, "AP: Failed to start hostapd (exit %d)\n", ret);
         return false;
     }
     g_hostapd_pid = 1;  // sentinel — managed by hostapd -B
 
-    usleep(500000);  // let hostapd settle
+    usleep(1000000);  // 1s — let hostapd fully settle
 
     // 5. Start dnsmasq
-    snprintf(cmd, sizeof(cmd), "sudo dnsmasq -C %s --pid-file=/tmp/dubsiren_dnsmasq.pid 2>/dev/null",
+    snprintf(cmd, sizeof(cmd), "dnsmasq -C %s --pid-file=/tmp/dubsiren_dnsmasq.pid",
              DNSMASQ_CONF);
-    if (system(cmd) != 0) {
-        fprintf(stderr, "AP: Failed to start dnsmasq\n");
+    ret = system(cmd);
+    if (ret != 0) {
+        fprintf(stderr, "AP: Failed to start dnsmasq (exit %d)\n", ret);
         return false;
     }
     g_dnsmasq_pid = 1;  // sentinel
@@ -209,8 +198,8 @@ void ap_mode::stop_ap()
     printf("AP: Stopping access point\n");
 
     // Kill hostapd and dnsmasq
-    system("sudo killall hostapd 2>/dev/null");
-    system("sudo killall dnsmasq 2>/dev/null");
+    system("killall hostapd 2>/dev/null");
+    system("killall dnsmasq 2>/dev/null");
     usleep(500000);
 
     g_hostapd_pid = 0;
@@ -223,11 +212,11 @@ void ap_mode::stop_ap()
 
     // Flush interface
     char cmd[256];
-    snprintf(cmd, sizeof(cmd), "sudo ip addr flush dev %s 2>/dev/null", AP_IFACE);
+    snprintf(cmd, sizeof(cmd), "ip addr flush dev %s 2>/dev/null", AP_IFACE);
     system(cmd);
 
     // Try to restore normal WiFi
-    system("sudo systemctl restart wpa_supplicant 2>/dev/null");
+    system("systemctl restart wpa_supplicant 2>/dev/null");
 
     g_active = false;
     printf("AP: Access point stopped\n");
