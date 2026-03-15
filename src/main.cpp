@@ -120,10 +120,10 @@ static std::atomic<float> g_tape_flutter{1.0f}; // tape delay flutter amount (0�
 // 3=Dly→Rev→Filt  4=Rev→Filt→Dly  5=Rev→Dly→Filt
 static std::atomic<int>   g_fx_chain{0};
 
-// Toggleable modulation effects (configurable via AP mode web UI)
-static std::atomic<bool>  g_phaser_enabled{false};
-static std::atomic<bool>  g_chorus_enabled{false};
-static std::atomic<bool>  g_flanger_enabled{false};
+// Modulation effects wet/dry mix (0 = off, >0 = enabled at that mix level)
+static std::atomic<float> g_phaser_mix{0.0f};   // 0–1
+static std::atomic<float> g_chorus_mix{0.0f};   // 0–1
+static std::atomic<float> g_flanger_mix{0.0f};  // 0–1
 
 // AP mode flag
 static std::atomic<bool>  g_ap_mode{false};
@@ -876,9 +876,9 @@ static void save_siren_config()
     fprintf(f, "lfo_pitch_link=%d\n", g_lfo_pitch_link.load() ? 1 : 0);
     fprintf(f, "super_drip=%d\n",     g_super_drip.load() ? 1 : 0);
     fprintf(f, "sweep_dir=%.6f\n",    g_sweep_dir.load());
-    fprintf(f, "phaser=%d\n",          g_phaser_enabled.load() ? 1 : 0);
-    fprintf(f, "chorus=%d\n",          g_chorus_enabled.load() ? 1 : 0);
-    fprintf(f, "flanger=%d\n",         g_flanger_enabled.load() ? 1 : 0);
+    fprintf(f, "phaser_mix=%.6f\n",    g_phaser_mix.load());
+    fprintf(f, "chorus_mix=%.6f\n",   g_chorus_mix.load());
+    fprintf(f, "flanger_mix=%.6f\n",  g_flanger_mix.load());
     fprintf(f, "active_bank=%d\n",    g_bank_mode.load());
     fprintf(f, "active_preset=%d\n",  g_preset.load());
 
@@ -960,12 +960,19 @@ static void load_siren_config()
             g_super_drip.store(atoi(val) != 0);
         else if (strcmp(key, "sweep_dir") == 0)
             g_sweep_dir.store(static_cast<float>(atof(val)));
+        else if (strcmp(key, "phaser_mix") == 0)
+            g_phaser_mix.store(static_cast<float>(atof(val)));
+        else if (strcmp(key, "chorus_mix") == 0)
+            g_chorus_mix.store(static_cast<float>(atof(val)));
+        else if (strcmp(key, "flanger_mix") == 0)
+            g_flanger_mix.store(static_cast<float>(atof(val)));
+        // backwards compat: old boolean phaser/chorus/flanger keys
         else if (strcmp(key, "phaser") == 0)
-            g_phaser_enabled.store(atoi(val) != 0);
+            g_phaser_mix.store(atoi(val) != 0 ? 0.5f : 0.0f);
         else if (strcmp(key, "chorus") == 0)
-            g_chorus_enabled.store(atoi(val) != 0);
+            g_chorus_mix.store(atoi(val) != 0 ? 0.5f : 0.0f);
         else if (strcmp(key, "flanger") == 0)
-            g_flanger_enabled.store(atoi(val) != 0);
+            g_flanger_mix.store(atoi(val) != 0 ? 0.5f : 0.0f);
         else if (strcmp(key, "active_bank") == 0)
             g_bank_mode.store(atoi(val));
         else if (strcmp(key, "active_preset") == 0)
@@ -2029,16 +2036,14 @@ static web_server::Callbacks build_web_callbacks()
             "\"fx_chain\":%d,"
             "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
             "\"sweep_dir\":%.0f,"
-            "\"phaser\":%s,\"chorus\":%s,\"flanger\":%s}",
+            "\"phaser_mix\":%.2f,\"chorus_mix\":%.2f,\"flanger_mix\":%.2f}",
             g_reverb_type.load(), g_delay_type.load(),
             g_tape_wobble.load(), g_tape_flutter.load(),
             g_fx_chain.load(),
             g_lfo_pitch_link.load() ? "true" : "false",
             g_super_drip.load() ? "true" : "false",
             g_sweep_dir.load(),
-            g_phaser_enabled.load() ? "true" : "false",
-            g_chorus_enabled.load() ? "true" : "false",
-            g_flanger_enabled.load() ? "true" : "false");
+            g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load());
         return std::string(buf);
     };
 
@@ -2069,12 +2074,12 @@ static web_server::Callbacks build_web_callbacks()
         if (!sd.empty()) g_super_drip.store(sd == "1" || sd == "true");
         auto sw = get_val("sweep_dir");
         if (!sw.empty()) g_sweep_dir.store(std::stof(sw));
-        auto ph = get_val("phaser");
-        if (!ph.empty()) g_phaser_enabled.store(ph == "1" || ph == "true");
-        auto ch = get_val("chorus");
-        if (!ch.empty()) g_chorus_enabled.store(ch == "1" || ch == "true");
-        auto fl = get_val("flanger");
-        if (!fl.empty()) g_flanger_enabled.store(fl == "1" || fl == "true");
+        auto pm = get_val("phaser_mix");
+        if (!pm.empty()) g_phaser_mix.store(std::stof(pm));
+        auto cm = get_val("chorus_mix");
+        if (!cm.empty()) g_chorus_mix.store(std::stof(cm));
+        auto fm = get_val("flanger_mix");
+        if (!fm.empty()) g_flanger_mix.store(std::stof(fm));
 
         save_siren_config();
         return true;
@@ -2216,15 +2221,13 @@ static web_server::Callbacks build_web_callbacks()
             "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
             "\"fx_chain\":%d,"
             "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
-            "\"phaser\":%s,\"chorus\":%s,\"flanger\":%s",
+            "\"phaser_mix\":%.2f,\"chorus_mix\":%.2f,\"flanger_mix\":%.2f",
             g_reverb_type.load(), g_delay_type.load(),
             g_tape_wobble.load(), g_tape_flutter.load(),
             g_fx_chain.load(),
             g_lfo_pitch_link.load() ? "true" : "false",
             g_super_drip.load() ? "true" : "false",
-            g_phaser_enabled.load() ? "true" : "false",
-            g_chorus_enabled.load() ? "true" : "false",
-            g_flanger_enabled.load() ? "true" : "false");
+            g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load());
         json += cfg;
         json += "}}";
         return json;
@@ -2277,9 +2280,15 @@ static web_server::Callbacks build_web_callbacks()
                 if (fc != -999) g_fx_chain.store(fc);
                 g_lfo_pitch_link.store(json_bool(cfg, "lfo_pitch_link"));
                 g_super_drip.store(json_bool(cfg, "super_drip"));
-                g_phaser_enabled.store(json_bool(cfg, "phaser"));
-                g_chorus_enabled.store(json_bool(cfg, "chorus"));
-                g_flanger_enabled.store(json_bool(cfg, "flanger"));
+                float pmix = json_float(cfg, "phaser_mix");
+                if (pmix != -999.0f) g_phaser_mix.store(pmix);
+                else g_phaser_mix.store(json_bool(cfg, "phaser") ? 0.5f : 0.0f);
+                float cmix = json_float(cfg, "chorus_mix");
+                if (cmix != -999.0f) g_chorus_mix.store(cmix);
+                else g_chorus_mix.store(json_bool(cfg, "chorus") ? 0.5f : 0.0f);
+                float fmix = json_float(cfg, "flanger_mix");
+                if (fmix != -999.0f) g_flanger_mix.store(fmix);
+                else g_flanger_mix.store(json_bool(cfg, "flanger") ? 0.5f : 0.0f);
             }
         }
 
@@ -2497,9 +2506,9 @@ int main(int argc, char *argv[])
         float wobble    = g_tape_wobble.load(rlx);
         float flutter   = g_tape_flutter.load(rlx);
         int   fx_chain  = g_fx_chain.load(rlx);
-        bool  phaser_on = g_phaser_enabled.load(rlx);
-        bool  chorus_on = g_chorus_enabled.load(rlx);
-        bool  flanger_on = g_flanger_enabled.load(rlx);
+        float phaser_mix = g_phaser_mix.load(rlx);
+        float chorus_mix = g_chorus_mix.load(rlx);
+        float flanger_mix = g_flanger_mix.load(rlx);
 
         // Update DSP modules (once per frame)
         // lfo rate set per-sample below (optionally tracks pitch envelope)
@@ -2627,9 +2636,18 @@ int main(int argc, char *argv[])
             }
 
             // Modulation effects (post-chain, pre-limiter)
-            if (phaser_on)  s = phaser.process(s);
-            if (chorus_on)  s = chorus.process(s);
-            if (flanger_on) s = flanger.process(s);
+            if (phaser_mix > 0.0f) {
+                phaser.setMix(phaser_mix);
+                s = phaser.process(s);
+            }
+            if (chorus_mix > 0.0f) {
+                chorus.setMix(chorus_mix);
+                s = chorus.process(s);
+            }
+            if (flanger_mix > 0.0f) {
+                flanger.setMix(flanger_mix);
+                s = flanger.process(s);
+            }
 
             // Output soft limiter — transparent at normal levels,
             // warm saturation when pushed (resonance, feedback, etc.)

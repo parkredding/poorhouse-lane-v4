@@ -82,6 +82,25 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);
 .slot{background:var(--surface);padding:10px;position:relative;
   min-height:100px;display:flex;flex-direction:column;transition:all 0.2s}
 .slot.active-slot{border:2px solid var(--led-green)}
+.slot.target-slot{border:2px solid var(--accent);background:#1a1000}
+.target-hint{font-size:0.65rem;color:var(--text-lo);letter-spacing:1px;
+  text-transform:uppercase;padding:8px 0;text-align:center}
+/* Library browser */
+.lib-category{font-size:0.6rem;font-weight:700;color:var(--accent);
+  letter-spacing:2px;text-transform:uppercase;padding:10px 0 6px;
+  border-bottom:1px solid var(--border);margin-top:4px}
+.lib-preset{display:flex;align-items:center;justify-content:space-between;
+  padding:8px 6px;border-bottom:1px solid var(--border);cursor:pointer;
+  transition:background 0.15s}
+.lib-preset:hover{background:#1a1a1a}
+.lib-preset .lib-name{font-size:0.8rem;color:var(--text-hi);flex:1}
+.lib-preset .lib-actions{display:flex;gap:4px}
+.lib-preset .lib-btn{font-family:var(--font);font-size:0.55rem;font-weight:700;
+  letter-spacing:1px;text-transform:uppercase;padding:4px 8px;
+  background:var(--bg);color:var(--text-lo);border:1px solid var(--border);
+  cursor:pointer;transition:all 0.15s}
+.lib-preset .lib-btn:hover{color:var(--text-hi);border-color:var(--text-lo)}
+.lib-preset .lib-btn.primary{background:var(--accent);color:var(--bg);border-color:var(--accent)}
 .slot-num{display:flex;align-items:center;gap:6px;margin-bottom:6px}
 .slot-num span{font-size:0.65rem;font-weight:700;color:var(--text-lo);
   letter-spacing:2px}
@@ -110,33 +129,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);
   background:var(--accent);color:var(--bg);border:none;padding:3px 8px;
   cursor:pointer;letter-spacing:1px}
 
-/* ── Preset Loader (dropdown-based) ────────────────────── */
+/* ── Preset Library Browser ───────────────────────────── */
 .preset-loader{background:var(--surface);border:1px solid var(--border);
-  padding:16px;margin-bottom:16px}
+  padding:16px;margin-bottom:16px;max-height:60vh;overflow-y:auto}
 .preset-loader h3{font-size:0.7rem;font-weight:700;color:var(--accent);
   letter-spacing:2px;text-transform:uppercase;margin-bottom:12px}
-.loader-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
-.loader-group{flex:1;min-width:120px}
-.loader-group label{display:block;font-size:0.55rem;font-weight:700;
-  color:var(--text-lo);letter-spacing:2px;text-transform:uppercase;
-  margin-bottom:4px}
-.loader-group select{width:100%;padding:8px;font-family:var(--font);
-  font-size:0.75rem;background:var(--bg);color:var(--text-hi);
-  border:1px solid var(--border);outline:none}
-.loader-group select:focus{border-color:var(--accent)}
-.loader-actions{display:flex;gap:6px;padding-bottom:1px}
-
-/* Desktop: loader row is horizontal */
-@media (min-width: 768px) {
-  .loader-row{flex-wrap:nowrap}
-  .loader-group{min-width:0}
-}
-/* Mobile: loader wraps */
-@media (max-width: 767px) {
-  .loader-group{min-width:100%}
-  .loader-actions{width:100%;margin-top:4px}
-  .loader-actions .btn{flex:1}
-}
 
 /* ── Cards / Form Elements ──────────────────────────────── */
 .card{background:var(--surface);border:1px solid var(--border);
@@ -249,47 +246,8 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 <div class="content">
 <div id="presets" class="panel active">
 
-  <!-- Preset Loader -->
-  <div class="preset-loader">
-    <h3>Load Preset</h3>
-    <div class="loader-row">
-      <div class="loader-group">
-        <label>Category</label>
-        <select id="load-category" onchange="onCategoryChange()">
-          <option value="">-- Select --</option>
-        </select>
-      </div>
-      <div class="loader-group">
-        <label>Preset</label>
-        <select id="load-preset">
-          <option value="">-- Select --</option>
-        </select>
-      </div>
-      <div class="loader-group">
-        <label>Target Bank</label>
-        <select id="load-bank" onchange="onTargetBankChange()">
-          <option value="user">User</option>
-          <option value="standard">Standard</option>
-          <option value="experimental">Experimental</option>
-        </select>
-      </div>
-      <div class="loader-group">
-        <label>Slot</label>
-        <select id="load-slot">
-          <option value="0">1</option>
-          <option value="1">2</option>
-          <option value="2">3</option>
-          <option value="3">4</option>
-        </select>
-      </div>
-      <div class="loader-actions">
-        <button class="btn btn-primary btn-sm" onclick="doLoadPreset()">Load</button>
-        <button class="btn btn-secondary btn-sm" onclick="doPreviewPreset()">Preview</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Bank Grids -->
+  <!-- Bank Grids — tap a slot to select as target -->
+  <div id="target-hint" class="target-hint">Tap a slot to select it, then pick a preset below</div>
   <div class="banks-row">
     <div class="bank-col">
       <div class="section">User Bank</div>
@@ -303,6 +261,12 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       <div class="section">Experimental Bank</div>
       <div class="slot-grid" id="slot-grid-experimental"></div>
     </div>
+  </div>
+
+  <!-- Preset Library Browser — shown after selecting a target slot -->
+  <div id="library-browser" class="preset-loader" style="display:none">
+    <h3>Preset Library <span id="target-label" style="color:var(--text-lo);font-size:0.6rem;letter-spacing:1px"></span></h3>
+    <div id="library-list"></div>
   </div>
 
 </div>
@@ -381,17 +345,17 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 
   <div class="card">
     <h3>Modulation FX</h3>
-    <div class="toggle-row">
-      <span>Phaser</span>
-      <label class="toggle"><input type="checkbox" id="phaser"><span class="slider"></span></label>
+    <div class="form-group">
+      <label>Phaser <span class="range-val" id="phaser-mix-val">0%</span></label>
+      <input type="range" id="phaser-mix" min="0" max="100" value="0" oninput="updateRange('phaser-mix')">
     </div>
-    <div class="toggle-row">
-      <span>Chorus</span>
-      <label class="toggle"><input type="checkbox" id="chorus"><span class="slider"></span></label>
+    <div class="form-group">
+      <label>Chorus <span class="range-val" id="chorus-mix-val">0%</span></label>
+      <input type="range" id="chorus-mix" min="0" max="100" value="0" oninput="updateRange('chorus-mix')">
     </div>
-    <div class="toggle-row">
-      <span>Flanger</span>
-      <label class="toggle"><input type="checkbox" id="flanger"><span class="slider"></span></label>
+    <div class="form-group">
+      <label>Flanger <span class="range-val" id="flanger-mix-val">0%</span></label>
+      <input type="range" id="flanger-mix" min="0" max="100" value="0" oninput="updateRange('flanger-mix')">
     </div>
   </div>
 
@@ -456,6 +420,8 @@ let allPresets = {};
 let libraryByCategory = {};  // { category: [{name, index}, ...] }
 let activeBank = 0;
 let activePreset = 0;
+let targetBank = null;   // selected target slot bank name
+let targetSlot = null;   // selected target slot index
 const BANK_NAMES = ['user', 'standard', 'experimental'];
 
 // ─── Tab Navigation ─────────────────────────────────────────────────
@@ -485,9 +451,7 @@ function esc(s) {
 }
 
 // ─── Dropdown Handlers ──────────────────────────────────────────────
-function onReverbTypeChange() {
-  // No extra logic needed — value captured on apply
-}
+function onReverbTypeChange() {}
 function onDelayTypeChange() {
   const val = parseInt(document.getElementById('delay-type').value);
   document.getElementById('tape-params').style.display = val === 0 ? 'block' : 'none';
@@ -497,13 +461,56 @@ function updateRange(id) {
   document.getElementById(id + '-val').textContent = document.getElementById(id).value + '%';
 }
 
+// ─── Target Slot Selection ──────────────────────────────────────────
+function selectTargetSlot(bank, slot) {
+  // Deselect if tapping same slot
+  if (targetBank === bank && targetSlot === slot) {
+    targetBank = null; targetSlot = null;
+    document.querySelectorAll('.slot.target-slot').forEach(el => el.classList.remove('target-slot'));
+    document.getElementById('library-browser').style.display = 'none';
+    document.getElementById('target-hint').textContent = 'Tap a slot to select it, then pick a preset below';
+    return;
+  }
+  targetBank = bank; targetSlot = slot;
+  // Update visual
+  document.querySelectorAll('.slot.target-slot').forEach(el => el.classList.remove('target-slot'));
+  const el = document.getElementById('slot-' + bank + '-' + slot);
+  if (el) el.classList.add('target-slot');
+  document.getElementById('target-hint').textContent =
+    'Target: ' + bank.toUpperCase() + ' slot ' + (slot + 1) + ' — pick a preset below';
+  // Show library browser
+  document.getElementById('target-label').textContent =
+    '→ ' + bank.toUpperCase() + ' SLOT ' + (slot + 1);
+  document.getElementById('library-browser').style.display = 'block';
+  renderLibrary();
+}
+
+function renderLibrary() {
+  const list = document.getElementById('library-list');
+  let html = '';
+  Object.keys(libraryByCategory).forEach(cat => {
+    html += '<div class="lib-category">' + esc(cat) + '</div>';
+    libraryByCategory[cat].forEach(p => {
+      html += '<div class="lib-preset">' +
+        '<span class="lib-name">' + esc(p.name) + '</span>' +
+        '<div class="lib-actions">' +
+          '<div class="lib-btn" onclick="event.stopPropagation();doPreviewPreset(' + p.index + ')">Preview</div>' +
+          '<div class="lib-btn primary" onclick="event.stopPropagation();doLoadPreset(' + p.index + ',\'' + esc(p.name) + '\')">Load</div>' +
+        '</div></div>';
+    });
+  });
+  list.innerHTML = html;
+}
+
 // ─── Bank Slot Rendering ────────────────────────────────────────────
 function renderBankSlots(bankName, presets, gridId) {
   const grid = document.getElementById(gridId);
   const bankIdx = BANK_NAMES.indexOf(bankName);
   grid.innerHTML = presets.map((p, i) => {
     const isActive = activeBank === bankIdx && activePreset === i;
-    return `<div class="slot${isActive ? ' active-slot' : ''}" id="slot-${bankName}-${i}">
+    const isTarget = targetBank === bankName && targetSlot === i;
+    return `<div class="slot${isActive ? ' active-slot' : ''}${isTarget ? ' target-slot' : ''}"
+                 id="slot-${bankName}-${i}" onclick="selectTargetSlot('${bankName}',${i})">
       <div class="slot-num">
         <div class="led${isActive ? ' active' : ''}"></div>
         <span>0${i + 1}</span>
@@ -515,8 +522,9 @@ function renderBankSlots(bankName, presets, gridId) {
         <div class="slot-btn" onclick="event.stopPropagation();showSaveInput('${bankName}',${i})">Save</div>
       </div>
       <div class="save-inline" id="save-inline-${bankName}-${i}">
-        <input type="text" placeholder="Name" id="save-name-${bankName}-${i}" value="${esc(p.name || '')}" onkeydown="if(event.key==='Enter')doSave('${bankName}',${i})">
-        <button onclick="doSave('${bankName}',${i})">OK</button>
+        <input type="text" placeholder="Name" id="save-name-${bankName}-${i}" value="${esc(p.name || '')}"
+               onclick="event.stopPropagation()" onkeydown="if(event.key==='Enter')doSave('${bankName}',${i})">
+        <button onclick="event.stopPropagation();doSave('${bankName}',${i})">OK</button>
       </div>
     </div>`;
   }).join('');
@@ -552,7 +560,7 @@ async function doSave(bank, slot) {
   } catch (e) { toast('Error: ' + e, true); }
 }
 
-// ─── Preset Loader (dropdown-based) ─────────────────────────────────
+// ─── Preset Library ─────────────────────────────────────────────────
 function buildCategoryDropdown(data) {
   libraryByCategory = {};
   (data.library || []).forEach(p => {
@@ -560,65 +568,26 @@ function buildCategoryDropdown(data) {
     if (!libraryByCategory[cat]) libraryByCategory[cat] = [];
     libraryByCategory[cat].push(p);
   });
-
-  const sel = document.getElementById('load-category');
-  sel.innerHTML = '<option value="">-- Select Category --</option>';
-  Object.keys(libraryByCategory).forEach(cat => {
-    const opt = document.createElement('option');
-    opt.value = cat;
-    opt.textContent = cat + ' (' + libraryByCategory[cat].length + ')';
-    sel.appendChild(opt);
-  });
-  // Clear preset dropdown
-  document.getElementById('load-preset').innerHTML = '<option value="">-- Select Category First --</option>';
+  // Re-render library if browser is open
+  if (targetBank !== null) renderLibrary();
 }
 
-function onCategoryChange() {
-  const cat = document.getElementById('load-category').value;
-  const sel = document.getElementById('load-preset');
-  sel.innerHTML = '';
-  if (!cat || !libraryByCategory[cat]) {
-    sel.innerHTML = '<option value="">-- Select Category First --</option>';
-    return;
+async function doLoadPreset(index, name) {
+  if (targetBank === null || targetSlot === null) {
+    toast('Select a target slot first', true); return;
   }
-  libraryByCategory[cat].forEach(p => {
-    const opt = document.createElement('option');
-    opt.value = p.index;
-    opt.textContent = p.name;
-    sel.appendChild(opt);
-  });
-}
-
-function onTargetBankChange() {
-  // All banks have 4 slots, so no change needed
-}
-
-async function doLoadPreset() {
-  const category = document.getElementById('load-category').value;
-  const presetSel = document.getElementById('load-preset');
-  const index = presetSel.value;
-  const bank = document.getElementById('load-bank').value;
-  const slot = document.getElementById('load-slot').value;
-
-  if (!category || index === '') { toast('Select a preset first', true); return; }
-
   try {
     const r = await fetch('/api/presets/bank/load', { method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `bank=${bank}&slot=${slot}&category=library&index=${index}` });
+      body: `bank=${targetBank}&slot=${targetSlot}&category=library&index=${index}` });
     if (r.ok) {
-      const name = presetSel.options[presetSel.selectedIndex].textContent;
-      toast('Loaded "' + name + '" to ' + bank + ' slot ' + (parseInt(slot) + 1));
+      toast('Loaded "' + name + '" → ' + targetBank.toUpperCase() + ' slot ' + (targetSlot + 1));
       loadPresets();
     } else toast('Load failed', true);
   } catch (e) { toast('Error: ' + e, true); }
 }
 
-async function doPreviewPreset() {
-  const category = document.getElementById('load-category').value;
-  const index = document.getElementById('load-preset').value;
-  if (!category || index === '') { toast('Select a preset first', true); return; }
-
+async function doPreviewPreset(index) {
   try {
     const r = await fetch('/api/presets/apply', { method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -656,9 +625,10 @@ async function loadOptions() {
     document.getElementById('lfo-link').checked = d.lfo_pitch_link !== false;
     document.getElementById('super-drip').checked = d.super_drip !== false;
     document.getElementById('sweep-dir').value = d.sweep_dir || -1;
-    document.getElementById('phaser').checked = !!d.phaser;
-    document.getElementById('chorus').checked = !!d.chorus;
-    document.getElementById('flanger').checked = !!d.flanger;
+    document.getElementById('phaser-mix').value = Math.round((d.phaser_mix || 0) * 100);
+    document.getElementById('chorus-mix').value = Math.round((d.chorus_mix || 0) * 100);
+    document.getElementById('flanger-mix').value = Math.round((d.flanger_mix || 0) * 100);
+    updateRange('phaser-mix'); updateRange('chorus-mix'); updateRange('flanger-mix');
   } catch (e) { console.error(e); }
 }
 
@@ -673,9 +643,9 @@ async function applyOptions() {
     'lfo_pitch_link=' + (document.getElementById('lfo-link').checked ? '1' : '0'),
     'super_drip=' + (document.getElementById('super-drip').checked ? '1' : '0'),
     'sweep_dir=' + document.getElementById('sweep-dir').value,
-    'phaser=' + (document.getElementById('phaser').checked ? '1' : '0'),
-    'chorus=' + (document.getElementById('chorus').checked ? '1' : '0'),
-    'flanger=' + (document.getElementById('flanger').checked ? '1' : '0')
+    'phaser_mix=' + (document.getElementById('phaser-mix').value / 100),
+    'chorus_mix=' + (document.getElementById('chorus-mix').value / 100),
+    'flanger_mix=' + (document.getElementById('flanger-mix').value / 100)
   ].join('&');
   try {
     const r = await fetch('/api/siren/options', { method: 'POST',
