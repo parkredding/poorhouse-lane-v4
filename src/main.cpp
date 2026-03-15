@@ -1520,10 +1520,7 @@ static void check_ap_combo(AudioEngine& audio)
     bool s = g_btn_shift.load();
     bool p = g_btn_preset.load();
 
-    // Debug: print whenever any button is held (throttled)
-    static int dbg_count = 0;
-    if ((t || s || p) && (++dbg_count % 20 == 0))
-        printf("  [combo] T=%d S=%d P=%d\n", t, s, p);
+    // (debug removed — button callback now logs state)
 
     bool all = t && s && p;
 
@@ -2377,6 +2374,12 @@ int main(int argc, char *argv[])
         case 1: g_btn_shift.store(pressed); break;
         case 2: g_btn_preset.store(pressed); break;
         }
+
+        // Always log button state for AP combo debugging
+        printf("  [btn] %s %s  (T=%d S=%d P=%d)\n",
+               btn_name[id], pressed ? "DOWN" : "UP",
+               g_btn_trigger.load(), g_btn_shift.load(),
+               g_btn_preset.load());
 
         // Skip normal button handling when in AP mode
         if (g_ap_mode.load()) return;
