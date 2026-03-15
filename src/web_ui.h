@@ -344,6 +344,18 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
   </div>
 
   <div class="card">
+    <h3>Tape Saturator</h3>
+    <div class="form-group">
+      <label>Mix <span class="range-val" id="saturator-mix-val">0%</span></label>
+      <input type="range" id="saturator-mix" min="0" max="100" value="0" oninput="updateRange('saturator-mix')">
+    </div>
+    <div class="form-group">
+      <label>Drive <span class="range-val" id="saturator-drive-val">50%</span></label>
+      <input type="range" id="saturator-drive" min="0" max="100" value="50" oninput="updateRange('saturator-drive')">
+    </div>
+  </div>
+
+  <div class="card">
     <h3>Modulation FX</h3>
     <div class="form-group">
       <label>Phaser <span class="range-val" id="phaser-mix-val">0%</span></label>
@@ -625,6 +637,9 @@ async function loadOptions() {
     document.getElementById('lfo-link').checked = d.lfo_pitch_link !== false;
     document.getElementById('super-drip').checked = d.super_drip !== false;
     document.getElementById('sweep-dir').value = d.sweep_dir || -1;
+    document.getElementById('saturator-mix').value = Math.round((d.saturator_mix || 0) * 100);
+    document.getElementById('saturator-drive').value = Math.round((d.saturator_drive != null ? d.saturator_drive : 0.5) * 100);
+    updateRange('saturator-mix'); updateRange('saturator-drive');
     document.getElementById('phaser-mix').value = Math.round((d.phaser_mix || 0) * 100);
     document.getElementById('chorus-mix').value = Math.round((d.chorus_mix || 0) * 100);
     document.getElementById('flanger-mix').value = Math.round((d.flanger_mix || 0) * 100);
@@ -643,6 +658,8 @@ async function applyOptions() {
     'lfo_pitch_link=' + (document.getElementById('lfo-link').checked ? '1' : '0'),
     'super_drip=' + (document.getElementById('super-drip').checked ? '1' : '0'),
     'sweep_dir=' + document.getElementById('sweep-dir').value,
+    'saturator_mix=' + (document.getElementById('saturator-mix').value / 100),
+    'saturator_drive=' + (document.getElementById('saturator-drive').value / 100),
     'phaser_mix=' + (document.getElementById('phaser-mix').value / 100),
     'chorus_mix=' + (document.getElementById('chorus-mix').value / 100),
     'flanger_mix=' + (document.getElementById('flanger-mix').value / 100)

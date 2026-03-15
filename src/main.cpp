@@ -68,6 +68,7 @@
 #include "phaser.h"
 #include "chorus.h"
 #include "flanger.h"
+#include "tape_saturator.h"
 #include "ap_mode.h"
 #include "web_server.h"
 
@@ -124,6 +125,10 @@ static std::atomic<int>   g_fx_chain{0};
 static std::atomic<float> g_phaser_mix{0.0f};   // 0–1
 static std::atomic<float> g_chorus_mix{0.0f};   // 0–1
 static std::atomic<float> g_flanger_mix{0.0f};  // 0–1
+
+// Tape saturator
+static std::atomic<float> g_saturator_mix{0.0f};   // 0–1 wet/dry (0=off)
+static std::atomic<float> g_saturator_drive{0.5f};  // 0–1 drive amount
 
 // AP mode flag
 static std::atomic<bool>  g_ap_mode{false};
@@ -879,6 +884,8 @@ static void save_siren_config()
     fprintf(f, "phaser_mix=%.6f\n",    g_phaser_mix.load());
     fprintf(f, "chorus_mix=%.6f\n",   g_chorus_mix.load());
     fprintf(f, "flanger_mix=%.6f\n",  g_flanger_mix.load());
+    fprintf(f, "saturator_mix=%.6f\n", g_saturator_mix.load());
+    fprintf(f, "saturator_drive=%.6f\n", g_saturator_drive.load());
     fprintf(f, "active_bank=%d\n",    g_bank_mode.load());
     fprintf(f, "active_preset=%d\n",  g_preset.load());
 
@@ -966,6 +973,10 @@ static void load_siren_config()
             g_chorus_mix.store(static_cast<float>(atof(val)));
         else if (strcmp(key, "flanger_mix") == 0)
             g_flanger_mix.store(static_cast<float>(atof(val)));
+        else if (strcmp(key, "saturator_mix") == 0)
+            g_saturator_mix.store(static_cast<float>(atof(val)));
+        else if (strcmp(key, "saturator_drive") == 0)
+            g_saturator_drive.store(static_cast<float>(atof(val)));
         // backwards compat: old boolean phaser/chorus/flanger keys
         else if (strcmp(key, "phaser") == 0)
             g_phaser_mix.store(atoi(val) != 0 ? 0.5f : 0.0f);
@@ -2029,21 +2040,23 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.get_siren_options = []() -> std::string {
-        char buf[512];
+        char buf[640];
         snprintf(buf, sizeof(buf),
             "{\"reverb_type\":%d,\"delay_type\":%d,"
             "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
             "\"fx_chain\":%d,"
             "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
             "\"sweep_dir\":%.0f,"
-            "\"phaser_mix\":%.2f,\"chorus_mix\":%.2f,\"flanger_mix\":%.2f}",
+            "\"phaser_mix\":%.2f,\"chorus_mix\":%.2f,\"flanger_mix\":%.2f,"
+            "\"saturator_mix\":%.2f,\"saturator_drive\":%.2f}",
             g_reverb_type.load(), g_delay_type.load(),
             g_tape_wobble.load(), g_tape_flutter.load(),
             g_fx_chain.load(),
             g_lfo_pitch_link.load() ? "true" : "false",
             g_super_drip.load() ? "true" : "false",
             g_sweep_dir.load(),
-            g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load());
+            g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load(),
+            g_saturator_mix.load(), g_saturator_drive.load());
         return std::string(buf);
     };
 
@@ -2080,6 +2093,10 @@ static web_server::Callbacks build_web_callbacks()
         if (!cm.empty()) g_chorus_mix.store(std::stof(cm));
         auto fm = get_val("flanger_mix");
         if (!fm.empty()) g_flanger_mix.store(std::stof(fm));
+        auto sm = get_val("saturator_mix");
+        if (!sm.empty()) g_saturator_mix.store(std::stof(sm));
+        auto sdr = get_val("saturator_drive");
+        if (!sdr.empty()) g_saturator_drive.store(std::stof(sdr));
 
         save_siren_config();
         return true;
@@ -2221,13 +2238,15 @@ static web_server::Callbacks build_web_callbacks()
             "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
             "\"fx_chain\":%d,"
             "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
-            "\"phaser_mix\":%.2f,\"chorus_mix\":%.2f,\"flanger_mix\":%.2f",
+            "\"phaser_mix\":%.2f,\"chorus_mix\":%.2f,\"flanger_mix\":%.2f,"
+            "\"saturator_mix\":%.2f,\"saturator_drive\":%.2f",
             g_reverb_type.load(), g_delay_type.load(),
             g_tape_wobble.load(), g_tape_flutter.load(),
             g_fx_chain.load(),
             g_lfo_pitch_link.load() ? "true" : "false",
             g_super_drip.load() ? "true" : "false",
-            g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load());
+            g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load(),
+            g_saturator_mix.load(), g_saturator_drive.load());
         json += cfg;
         json += "}}";
         return json;
@@ -2289,6 +2308,10 @@ static web_server::Callbacks build_web_callbacks()
                 float fmix = json_float(cfg, "flanger_mix");
                 if (fmix != -999.0f) g_flanger_mix.store(fmix);
                 else g_flanger_mix.store(json_bool(cfg, "flanger") ? 0.5f : 0.0f);
+                float smix = json_float(cfg, "saturator_mix");
+                if (smix != -999.0f) g_saturator_mix.store(smix);
+                float sdrive = json_float(cfg, "saturator_drive");
+                if (sdrive != -999.0f) g_saturator_drive.store(sdrive);
             }
         }
 
@@ -2454,6 +2477,7 @@ int main(int argc, char *argv[])
     Phaser          phaser;
     Chorus          chorus;
     Flanger         flanger;
+    TapeSaturator   saturator;
 
     float env_level      = 0.0f;
     float attack_rate    = 0.0f;
@@ -2509,6 +2533,8 @@ int main(int argc, char *argv[])
         float phaser_mix = g_phaser_mix.load(rlx);
         float chorus_mix = g_chorus_mix.load(rlx);
         float flanger_mix = g_flanger_mix.load(rlx);
+        float sat_mix   = g_saturator_mix.load(rlx);
+        float sat_drive = g_saturator_drive.load(rlx);
 
         // Update DSP modules (once per frame)
         // lfo rate set per-sample below (optionally tracks pitch envelope)
@@ -2635,6 +2661,13 @@ int main(int argc, char *argv[])
             case 5:  s = do_reverb(s); s = do_delay(s);  s = do_filter(s); break;
             }
 
+            // Tape saturator (post-chain, pre-modulation)
+            if (sat_mix > 0.0f) {
+                saturator.setDrive(sat_drive);
+                saturator.setMix(sat_mix);
+                s = saturator.process(s);
+            }
+
             // Modulation effects (post-chain, pre-limiter)
             if (phaser_mix > 0.0f) {
                 phaser.setMix(phaser_mix);
@@ -2676,6 +2709,7 @@ int main(int argc, char *argv[])
         phaser.init(sr);
         chorus.init(sr);
         flanger.init(sr);
+        saturator.init(sr);
 
         attack_rate  = 1.0f / (0.005f * sr);           // ~5 ms
         release_rate = 1.0f / (0.050f * sr);            // ~50 ms
