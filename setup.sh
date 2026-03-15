@@ -368,6 +368,7 @@ LimitRTPRIO=99
 LimitMEMLOCK=infinity
 User=${REAL_USER}
 Environment=HOME=${REAL_HOME}
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

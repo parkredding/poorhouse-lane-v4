@@ -2964,8 +2964,13 @@ int main(int argc, char *argv[])
     {
         auto cb = build_web_callbacks();
         if (!web_server::start(80, cb)) {
-            fprintf(stderr, "WEB: Failed to start web server on port 80\n");
-            // Non-fatal — siren still works without web config
+            fprintf(stderr, "WEB: Port 80 failed — trying port 8080 (needs CAP_NET_BIND_SERVICE for 80)\n");
+            if (!web_server::start(8080, cb)) {
+                fprintf(stderr, "WEB: Failed to start web server on port 8080\n");
+                // Non-fatal — siren still works without web config
+            } else {
+                printf("WEB: Server running on port 8080 (http://poorhouse.local:8080/config)\n");
+            }
         }
     }
 
