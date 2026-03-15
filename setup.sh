@@ -183,7 +183,21 @@ install_deps() {
         git \
         libasound2-dev \
         libgpiod-dev \
-        gpiod
+        gpiod \
+        hostapd \
+        dnsmasq \
+        avahi-daemon \
+        avahi-utils
+    # Disable hostapd/dnsmasq at boot — AP mode starts them on demand
+    systemctl disable hostapd 2>/dev/null || true
+    systemctl stop hostapd 2>/dev/null || true
+    systemctl disable dnsmasq 2>/dev/null || true
+    systemctl stop dnsmasq 2>/dev/null || true
+    # Enable avahi for mDNS — the siren process publishes poorhouse.local
+    # as an mDNS alias at runtime via avahi-publish, so the system hostname
+    # set by Pi Imager (e.g. poorhouse34) is preserved for SSH access.
+    systemctl enable avahi-daemon 2>/dev/null || true
+    systemctl start avahi-daemon 2>/dev/null || true
     success "Dependencies installed."
 }
 
@@ -310,8 +324,9 @@ ALSA_EOF
 create_data_dirs() {
     mkdir -p "${INSTALL_DIR}/data/mp3s"
     mkdir -p "${INSTALL_DIR}/data/presets"
+    mkdir -p "${INSTALL_DIR}/data/config"
     chown -R "${REAL_USER}:${REAL_USER}" "${INSTALL_DIR}/data"
-    success "Data directories created at ${INSTALL_DIR}/data/{mp3s,presets}"
+    success "Data directories created at ${INSTALL_DIR}/data/{mp3s,presets,config}"
 }
 
 # --- install_service() -------------------------------------------------------
@@ -350,6 +365,7 @@ LimitRTPRIO=99
 LimitMEMLOCK=infinity
 User=${REAL_USER}
 Environment=HOME=${REAL_HOME}
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
@@ -554,6 +570,7 @@ print_summary() {
     echo "  Data folder:  ${INSTALL_DIR}/data/"
     echo "    MP3s:       ${INSTALL_DIR}/data/mp3s/"
     echo "    Presets:    ${INSTALL_DIR}/data/presets/"
+    echo "    Config:     ${INSTALL_DIR}/data/config/"
     echo ""
 
     if [[ "$ENABLE_AUTOSTART" == true ]]; then

@@ -18,6 +18,8 @@ public:
     void  setFeedback(float fb);         // 0 – 0.95
     void  setMix(float mix);             // 0 – 1.0
     void  setRepitchRate(float rate);     // 0 – 1.0 (higher = more overshoot)
+    void  setWobbleAmount(float amt);    // 0 – 1.0 (tape transport drift)
+    void  setFlutterAmount(float amt);   // 0 – 1.0 (tape tension variation)
     float process(float input);
     void  reset();
 
@@ -42,8 +44,10 @@ private:
     float flutterPhase_ = 0.0f;          // ~3.5 Hz variation
     float wobbleInc_    = 0.0f;
     float flutterInc_   = 0.0f;
-    float wobbleDepth_  = 0.0f;          // amplitude in samples
+    float wobbleDepth_  = 0.0f;          // amplitude in samples (max)
     float flutterDepth_ = 0.0f;
+    float wobbleAmt_    = 1.0f;          // 0–1 user control
+    float flutterAmt_   = 1.0f;         // 0–1 user control
 
     // Feedback path 1-pole filters
     float hpState_      = 0.0f;          // HP at 80 Hz

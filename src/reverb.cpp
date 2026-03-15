@@ -73,7 +73,7 @@ void Reverb::init(float sampleRate)
         dispersion_[i].pos = 0;
     }
 
-    float lp = 1.0f - std::exp(-2.0f * 3.14159265f * SPRING_LP_HZ
+    float lp = 1.0f - std::exp(-2.0f * dsp::PI_F * SPRING_LP_HZ
                                 / sampleRate);
 
     for (int i = 0; i < NUM_SPRINGS; i++) {
@@ -126,7 +126,7 @@ void Reverb::setSuperDrip(bool on)
     drip_ = on;
 
     float lpHz = on ? DRIP_LP_HZ : SPRING_LP_HZ;
-    float lp   = 1.0f - std::exp(-2.0f * 3.14159265f * lpHz / sampleRate_);
+    float lp   = 1.0f - std::exp(-2.0f * dsp::PI_F * lpHz / sampleRate_);
     for (auto& s : springs_) s.lpCoeff = lp;
 
     inputGain_ = on ? DRIP_IN_GAIN : NORMAL_IN_GAIN;

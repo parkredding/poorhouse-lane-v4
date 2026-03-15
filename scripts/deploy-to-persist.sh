@@ -85,5 +85,30 @@ cp "${SCRIPT_DIR}/scripts/ensure-persist.sh" "$SCRIPT_DEST/ensure-persist.sh"
 chmod 755 "$SCRIPT_DEST/ensure-persist.sh"
 echo "Deployed ensure-persist.sh → ${SCRIPT_DEST}/"
 
+# --- Sync source tree to persistent disk ------------------------------------
+# Update the git repo on the real disk so that after reboot the overlay
+# lower layer matches the version we just built.  Without this, the repo
+# would revert to the pre-update state on every reboot.
+PERSIST_REPO="${PERSIST_MNT}${SCRIPT_DIR}"
+if [[ -d "${PERSIST_REPO}/.git" ]]; then
+    echo "Syncing source tree to persistent disk..."
+    # Sync git objects so the persistent repo has the same history
+    rsync -a --delete "${SCRIPT_DIR}/.git/" "${PERSIST_REPO}/.git/"
+    # Checkout the working tree to match (but preserve data/ dir)
+    (cd "${PERSIST_REPO}" && git checkout -f HEAD -- . 2>/dev/null) || true
+    echo "Source tree synced."
+else
+    echo "Note: No git repo on persistent disk — source not synced."
+fi
+
+# --- Preserve user data (safety measure) ------------------------------------
+# The data/ directory is bind-mounted from persistent storage, so it's already
+# durable.  Just verify it exists on the persist mount.
+PERSIST_DATA="${PERSIST_MNT}${SCRIPT_DIR}/data"
+if [[ ! -d "${PERSIST_DATA}/presets" ]]; then
+    mkdir -p "${PERSIST_DATA}/presets" "${PERSIST_DATA}/config"
+    echo "Created data directories on persistent storage."
+fi
+
 sync
 echo "Deploy complete — changes will survive reboot."

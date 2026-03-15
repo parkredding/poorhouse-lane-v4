@@ -80,6 +80,16 @@ void TapeDelay::setRepitchRate(float rate)
     damp_   = 2.0f * zeta * omega;
 }
 
+void TapeDelay::setWobbleAmount(float amt)
+{
+    wobbleAmt_ = std::clamp(amt, 0.0f, 1.0f);
+}
+
+void TapeDelay::setFlutterAmount(float amt)
+{
+    flutterAmt_ = std::clamp(amt, 0.0f, 1.0f);
+}
+
 void TapeDelay::reset()
 {
     std::fill(buf_.begin(), buf_.end(), 0.0f);
@@ -94,8 +104,8 @@ void TapeDelay::reset()
 float TapeDelay::process(float input)
 {
     // ── Tape modulation ──────────────────────────────────────────────
-    float wobble  = std::sin(wobblePhase_  * TWO_PI) * wobbleDepth_;
-    float flutter = std::sin(flutterPhase_ * TWO_PI) * flutterDepth_;
+    float wobble  = std::sin(wobblePhase_  * TWO_PI) * wobbleDepth_ * wobbleAmt_;
+    float flutter = std::sin(flutterPhase_ * TWO_PI) * flutterDepth_ * flutterAmt_;
     wobblePhase_  += wobbleInc_;
     flutterPhase_ += flutterInc_;
     if (wobblePhase_  >= 1.0f) wobblePhase_  -= 1.0f;
