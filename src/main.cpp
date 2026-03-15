@@ -1511,8 +1511,8 @@ static std::chrono::steady_clock::time_point g_combo_start{};
 static bool g_combo_feedback_given = false;
 
 // Forward declarations for AP mode
-static void enter_ap_mode(AudioEngine& audio);
-static void exit_ap_mode(AudioEngine& audio);
+static void enter_ap_mode();
+static void exit_ap_mode();
 
 static void check_ap_combo(AudioEngine& audio)
 {
@@ -1552,30 +1552,32 @@ static void check_ap_combo(AudioEngine& audio)
         printf("  >>> AP COMBO: 3s reached — %s AP mode\n",
                g_ap_mode.load() ? "exiting" : "entering");
         if (g_ap_mode.load()) {
-            exit_ap_mode(audio);
+            exit_ap_mode();
         } else {
-            enter_ap_mode(audio);
+            enter_ap_mode();
         }
     }
 }
 
 // ─── AP mode entry / exit ───────────────────────────────────────────
 
-static void enter_ap_mode(AudioEngine& audio)
+// Flag set by web UI "exit AP" button, checked in main loop
+static std::atomic<bool> g_ap_exit_requested{false};
+
+static void enter_ap_mode()
 {
     if (g_ap_mode.load()) return;
 
     printf("\n>>> ENTERING AP CONFIG MODE <<<\n\n");
+    printf("  Audio engine stays active — presets can be previewed live\n");
 
-    // Stop audio
-    audio.stop();
+    // Audio keeps running so users can preview presets via trigger button
     g_ap_mode.store(true);
 
     // Start the access point
     if (!ap_mode::start_ap()) {
         fprintf(stderr, "!!! Failed to start AP mode\n");
         g_ap_mode.store(false);
-        audio.start();
         return;
     }
 
@@ -2005,10 +2007,9 @@ static void enter_ap_mode(AudioEngine& audio)
         return true;
     };
 
-    static AudioEngine* s_audio_ptr = nullptr;
-    s_audio_ptr = &audio;
     cb.exit_ap = []() {
-        if (s_audio_ptr) exit_ap_mode(*s_audio_ptr);
+        printf("AP: Exit requested via web UI\n");
+        g_ap_exit_requested.store(true);
     };
 
     // Start web server on port 80
@@ -2016,7 +2017,6 @@ static void enter_ap_mode(AudioEngine& audio)
         fprintf(stderr, "!!! Failed to start web server\n");
         ap_mode::stop_ap();
         g_ap_mode.store(false);
-        audio.start();
         return;
     }
 
@@ -2026,7 +2026,7 @@ static void enter_ap_mode(AudioEngine& audio)
            ap_mode::get_ip());
 }
 
-static void exit_ap_mode(AudioEngine& audio)
+static void exit_ap_mode()
 {
     if (!g_ap_mode.load()) return;
 
@@ -2035,9 +2035,9 @@ static void exit_ap_mode(AudioEngine& audio)
     web_server::stop();
     ap_mode::stop_ap();
     g_ap_mode.store(false);
+    g_ap_exit_requested.store(false);
 
-    // Resume audio
-    audio.start();
+    // Audio was never stopped — siren is immediately usable
     printf(">>> SIREN MODE RESTORED <<<\n\n");
 }
 
@@ -2614,6 +2614,11 @@ int main(int argc, char *argv[])
     // ── Main loop ───────────────────────────────────────────────────
     while (g_running) {
         hw.poll();
+
+        // Check for web UI exit request
+        if (g_ap_exit_requested.load() && g_ap_mode.load()) {
+            exit_ap_mode();
+        }
 
         // Check for 3-button AP mode combo
         check_ap_combo(audio);
