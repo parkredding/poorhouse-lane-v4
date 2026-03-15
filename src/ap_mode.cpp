@@ -18,7 +18,8 @@
 #include <sys/stat.h>
 
 static const char* AP_IP        = "192.168.4.1";
-static const char* AP_IFACE     = "wlan0";
+static const char* AP_IFACE     = "ap0";       // virtual AP interface (keeps wlan0 for SSH)
+static const char* AP_PHY_IFACE = "wlan0";     // physical interface to base ap0 on
 static const char* HOSTAPD_CONF = "/tmp/dubsiren_hostapd.conf";
 static const char* DNSMASQ_CONF = "/tmp/dubsiren_dnsmasq.conf";
 
@@ -32,7 +33,7 @@ static std::string g_ssid;
 static std::string read_mac()
 {
     char path[128];
-    snprintf(path, sizeof(path), "/sys/class/net/%s/address", AP_IFACE);
+    snprintf(path, sizeof(path), "/sys/class/net/%s/address", AP_PHY_IFACE);
 
     std::ifstream f(path);
     if (!f.is_open()) return "00:00:00:00:00:00";
@@ -146,28 +147,25 @@ bool ap_mode::start_ap()
 
     printf("AP: Starting access point '%s' on %s\n", g_ssid.c_str(), AP_IFACE);
 
-    // 1. Tell NetworkManager to release the interface
+    // 1. Clean up any previous AP state
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "nmcli device disconnect %s 2>/dev/null", AP_IFACE);
-    system(cmd);
-    snprintf(cmd, sizeof(cmd), "nmcli device set %s managed no 2>/dev/null", AP_IFACE);
-    system(cmd);
-
-    // 2. Stop anything that might hold the interface
     system("killall hostapd 2>/dev/null");
     system("killall dnsmasq 2>/dev/null");
-    system("killall wpa_supplicant 2>/dev/null");
-    system("systemctl stop wpa_supplicant 2>/dev/null");
-    usleep(1000000);  // 1s — let processes fully exit
+    usleep(500000);
 
-    // 3. Configure the interface
-    snprintf(cmd, sizeof(cmd), "ip addr flush dev %s 2>/dev/null", AP_IFACE);
-    system(cmd);
-    snprintf(cmd, sizeof(cmd), "ip link set %s down", AP_IFACE);
+    // 2. Create virtual AP interface (keeps wlan0 intact for SSH)
+    snprintf(cmd, sizeof(cmd), "iw dev %s interface add %s type __ap", AP_PHY_IFACE, AP_IFACE);
+    int ret = system(cmd);
+    if (ret != 0) {
+        fprintf(stderr, "AP: Failed to create virtual interface %s\n", AP_IFACE);
+        return false;
+    }
+    // Tell NetworkManager to ignore the virtual interface
+    snprintf(cmd, sizeof(cmd), "nmcli device set %s managed no 2>/dev/null", AP_IFACE);
     system(cmd);
     usleep(200000);
-    snprintf(cmd, sizeof(cmd), "iw dev %s set type __ap", AP_IFACE);
-    system(cmd);
+
+    // 3. Configure the virtual interface
     snprintf(cmd, sizeof(cmd), "ip addr add %s/24 dev %s", AP_IP, AP_IFACE);
     system(cmd);
     snprintf(cmd, sizeof(cmd), "ip link set %s up", AP_IFACE);
@@ -222,19 +220,9 @@ void ap_mode::stop_ap()
     unlink(DNSMASQ_CONF);
     unlink("/tmp/dubsiren_dnsmasq.pid");
 
-    // Restore interface to managed mode
+    // Remove the virtual AP interface (wlan0 stays connected)
     char cmd[256];
-    snprintf(cmd, sizeof(cmd), "ip addr flush dev %s 2>/dev/null", AP_IFACE);
-    system(cmd);
-    snprintf(cmd, sizeof(cmd), "ip link set %s down", AP_IFACE);
-    system(cmd);
-    snprintf(cmd, sizeof(cmd), "iw dev %s set type managed", AP_IFACE);
-    system(cmd);
-    snprintf(cmd, sizeof(cmd), "ip link set %s up", AP_IFACE);
-    system(cmd);
-
-    // Hand interface back to NetworkManager
-    snprintf(cmd, sizeof(cmd), "nmcli device set %s managed yes 2>/dev/null", AP_IFACE);
+    snprintf(cmd, sizeof(cmd), "iw dev %s del", AP_IFACE);
     system(cmd);
 
     g_active = false;
