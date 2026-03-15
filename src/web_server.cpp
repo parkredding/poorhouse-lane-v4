@@ -144,6 +144,35 @@ static void setup_api(httplib::Server& svr)
         }
     });
 
+    // ── Bank slot operations ───────────────────────────────────────
+
+    svr.Post("/api/presets/bank/load", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.load_to_bank_slot) { json_error(res, "not implemented", 501); return; }
+        auto bank = req.get_param_value("bank");
+        int slot = 0, index = 0;
+        try { slot = std::stoi(req.get_param_value("slot")); } catch (...) {}
+        try { index = std::stoi(req.get_param_value("index")); } catch (...) {}
+        auto category = req.get_param_value("category");
+        if (g_callbacks.load_to_bank_slot(bank, slot, category, index)) {
+            json_ok(res, "loaded");
+        } else {
+            json_error(res, "failed to load preset to bank slot");
+        }
+    });
+
+    svr.Post("/api/presets/bank/save", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.save_to_bank_slot) { json_error(res, "not implemented", 501); return; }
+        auto bank = req.get_param_value("bank");
+        int slot = 0;
+        try { slot = std::stoi(req.get_param_value("slot")); } catch (...) {}
+        auto name = req.get_param_value("name");
+        if (g_callbacks.save_to_bank_slot(bank, slot, name)) {
+            json_ok(res, "saved");
+        } else {
+            json_error(res, "failed to save to bank slot");
+        }
+    });
+
     // ── Siren options ───────────────────────────────────────────────
 
     svr.Get("/api/siren/options", [](const httplib::Request&, httplib::Response& res) {

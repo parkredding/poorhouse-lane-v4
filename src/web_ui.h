@@ -234,13 +234,14 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 <div class="content">
 <div id="presets" class="panel active">
 
-  <div class="section">Active Slots</div>
+  <div class="section">User Bank</div>
+  <div class="slot-grid" id="slot-grid-user"></div>
 
-  <div id="swap-banner" class="swap-banner" onclick="cancelSwap()">
-    Select slot to swap with &mdash; tap to cancel
-  </div>
+  <div class="section">Standard Bank</div>
+  <div class="slot-grid" id="slot-grid-standard"></div>
 
-  <div class="slot-grid" id="slot-grid"></div>
+  <div class="section">Experimental Bank</div>
+  <div class="slot-grid" id="slot-grid-experimental"></div>
 
   <div class="section">Preset Browser</div>
   <div id="preset-browser"></div>
@@ -373,7 +374,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 <script>
 // ─── State ──────────────────────────────────────────────────────────
 let allPresets = {};
-let swapMode = -1; // -1 = off, 0-3 = source slot
+let activeBank = 0;   // 0=user, 1=standard, 2=experimental
+let activePreset = 0;
+let browserTargetBank = '';
+let browserTargetSlot = -1;
+const BANK_NAMES = ['user', 'standard', 'experimental'];
 
 // ─── Tab Navigation ─────────────────────────────────────────────────
 function showTab(id) {
@@ -409,111 +414,84 @@ function updateRange(id) {
   document.getElementById(id + '-val').textContent = document.getElementById(id).value + '%';
 }
 
-// ─── Preset Slots ───────────────────────────────────────────────────
-function renderSlots(presets) {
-  const grid = document.getElementById('slot-grid');
-  grid.innerHTML = presets.map((p, i) => {
-    const isSwapSrc = swapMode === i;
-    const isSwapTgt = swapMode >= 0 && swapMode !== i;
-    const cls = isSwapSrc ? ' swap-source' : (isSwapTgt ? ' swap-target' : '');
-    return `<div class="slot${cls}" onclick="slotClick(${i})" id="slot-${i}">
-      <div class="slot-num">
-        <div class="led${p.active ? ' active' : ''}"></div>
-        <span>0${i + 1}</span>
-      </div>
-      <div class="slot-name">${esc(p.name)}</div>
-      <div class="slot-cat">${p.saved ? 'User' : 'Factory'}</div>
-      <div class="slot-actions">
-        <div class="slot-btn" onclick="event.stopPropagation();openBrowserForSlot(${i})">Load</div>
-        <div class="slot-btn" onclick="event.stopPropagation();showSaveInput(${i})">Save</div>
-        <div class="slot-btn${isSwapSrc ? ' active' : ''}" onclick="event.stopPropagation();startSwap(${i})">Swap</div>
-      </div>
-      <div class="save-inline" id="save-inline-${i}">
-        <input type="text" placeholder="Name" id="save-name-${i}" onkeydown="if(event.key==='Enter')doSave(${i})">
-        <button onclick="doSave(${i})">OK</button>
-      </div>
-    </div>`;
-  }).join('');
-}
-
 function esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
 }
 
-function slotClick(i) {
-  if (swapMode >= 0 && swapMode !== i) {
-    doSwap(swapMode, i);
-  }
+// ─── Bank Slot Rendering ────────────────────────────────────────────
+function renderBankSlots(bankName, presets, gridId) {
+  const grid = document.getElementById(gridId);
+  const bankIdx = BANK_NAMES.indexOf(bankName);
+  grid.innerHTML = presets.map((p, i) => {
+    const isActive = activeBank === bankIdx && activePreset === i;
+    const activeCls = isActive ? ' style="border:2px solid var(--led-green)"' : '';
+    return `<div class="slot"${activeCls} id="slot-${bankName}-${i}">
+      <div class="slot-num">
+        <div class="led${isActive ? ' active' : ''}"></div>
+        <span>0${i + 1}</span>
+      </div>
+      <div class="slot-name">${esc(p.name || 'Empty')}</div>
+      <div class="slot-cat">${p.saved ? 'Saved' : 'Factory'}</div>
+      <div class="slot-actions">
+        <div class="slot-btn${isActive ? ' active' : ''}" onclick="event.stopPropagation();applyBankPreset('${bankName}',${i})">Apply</div>
+        <div class="slot-btn" onclick="event.stopPropagation();openBrowserForBankSlot('${bankName}',${i})">Load</div>
+        <div class="slot-btn" onclick="event.stopPropagation();showSaveInput('${bankName}',${i})">Save</div>
+      </div>
+      <div class="save-inline" id="save-inline-${bankName}-${i}">
+        <input type="text" placeholder="Name" id="save-name-${bankName}-${i}" onkeydown="if(event.key==='Enter')doSave('${bankName}',${i})">
+        <button onclick="doSave('${bankName}',${i})">OK</button>
+      </div>
+    </div>`;
+  }).join('');
 }
 
-// ─── Swap ───────────────────────────────────────────────────────────
-function startSwap(i) {
-  if (swapMode === i) { cancelSwap(); return; }
-  swapMode = i;
-  document.getElementById('swap-banner').classList.add('show');
-  refreshSlots();
-}
-
-function cancelSwap() {
-  swapMode = -1;
-  document.getElementById('swap-banner').classList.remove('show');
-  refreshSlots();
-}
-
-async function doSwap(a, b) {
+// ─── Apply Preset ───────────────────────────────────────────────────
+async function applyBankPreset(bank, index) {
   try {
-    const r = await fetch('/api/presets/swap', { method: 'POST',
+    const r = await fetch('/api/presets/apply', { method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `a=${a}&b=${b}` });
-    if (r.ok) { toast('Swapped'); cancelSwap(); loadPresets(); }
-    else toast('Swap failed', true);
+      body: `category=${bank}&index=${index}` });
+    if (r.ok) { toast('Applied'); loadPresets(); }
+    else toast('Apply failed', true);
   } catch (e) { toast('Error: ' + e, true); }
 }
 
 // ─── Save ───────────────────────────────────────────────────────────
-function showSaveInput(i) {
-  // hide all others
-  for (let j = 0; j < 4; j++) {
-    const el = document.getElementById('save-inline-' + j);
-    if (el) el.classList.remove('show');
-  }
-  const el = document.getElementById('save-inline-' + i);
+function showSaveInput(bank, i) {
+  document.querySelectorAll('.save-inline.show').forEach(el => el.classList.remove('show'));
+  const el = document.getElementById('save-inline-' + bank + '-' + i);
   if (el) { el.classList.add('show'); el.querySelector('input').focus(); }
 }
 
-async function doSave(slot) {
-  const input = document.getElementById('save-name-' + slot);
-  const name = input ? input.value || 'User Preset' : 'User Preset';
+async function doSave(bank, slot) {
+  const input = document.getElementById('save-name-' + bank + '-' + slot);
+  const name = input ? input.value || 'Preset' : 'Preset';
   try {
-    const r = await fetch('/api/presets/save', { method: 'POST',
+    const r = await fetch('/api/presets/bank/save', { method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `slot=${slot}&name=${encodeURIComponent(name)}` });
-    if (r.ok) { toast('Saved to slot ' + (slot + 1)); loadPresets(); }
+      body: `bank=${bank}&slot=${slot}&name=${encodeURIComponent(name)}` });
+    if (r.ok) { toast('Saved to ' + bank + ' slot ' + (slot + 1)); loadPresets(); }
     else toast('Save failed', true);
   } catch (e) { toast('Error: ' + e, true); }
 }
 
 // ─── Preset Browser ─────────────────────────────────────────────────
-let browserTargetSlot = -1;
-
-function openBrowserForSlot(i) {
+function openBrowserForBankSlot(bank, i) {
+  browserTargetBank = bank;
   browserTargetSlot = i;
-  toast('Select a preset for slot ' + (i + 1));
+  toast('Select a preset for ' + bank + ' slot ' + (i + 1));
 }
 
 function renderBrowser(data) {
   const container = document.getElementById('preset-browser');
   const sections = [
-    { key: 'standard', label: 'Standard', items: data.standard || [] },
-    { key: 'experimental', label: 'Experimental', items: data.experimental || [] },
     { key: 'library', label: 'Library', items: data.library || [] }
   ];
 
   container.innerHTML = sections.map(s => {
     if (!s.items.length) return '';
-    // Group library by category
     let groups = {};
     s.items.forEach(p => {
       const cat = p.category || s.label;
@@ -532,13 +510,40 @@ function renderBrowser(data) {
             <div class="browser-item" onclick="browserItemClick(this,'${s.key}',${p.index !== undefined ? p.index : 0})">
               <span class="b-name">${esc(p.name)}</span>
               <div class="slot-picker" id="picker-${s.key}-${p.index}">
+                <span class="slot-picker-label">Bank:</span>
+                ${BANK_NAMES.map(b =>
+                  `<div class="slot-pick-btn" style="width:auto;padding:0 6px;font-size:0.55rem" onclick="event.stopPropagation();pickBankForLoad('${b}','${s.key}',${p.index},this)">${b.charAt(0).toUpperCase()}</div>`
+                ).join('')}
+              </div>
+              <div class="slot-picker" style="display:none">
                 <span class="slot-picker-label">Slot:</span>
-                ${[0,1,2,3].map(j => `<div class="slot-pick-btn" onclick="event.stopPropagation();loadToSlot(${j},'${s.key}',${p.index})">${j+1}</div>`).join('')}
+                ${[0,1,2,3].map(j => `<div class="slot-pick-btn" onclick="event.stopPropagation();loadToBankSlot('','${s.key}',${p.index},${j})">${j+1}</div>`).join('')}
               </div>
             </div>`).join('')}
         </div>
       </div>`).join('');
   }).join('');
+}
+
+let pendingLoadBank = '';
+let pendingLoadCategory = '';
+let pendingLoadIndex = 0;
+
+function pickBankForLoad(bank, category, index, el) {
+  pendingLoadBank = bank;
+  pendingLoadCategory = category;
+  pendingLoadIndex = index;
+  // Show slot picker in the same browser-item
+  const item = el.closest('.browser-item');
+  const pickers = item.querySelectorAll('.slot-picker');
+  if (pickers.length > 1) {
+    pickers[0].style.display = 'none';
+    pickers[1].style.display = 'flex';
+    // Update slot picker onclick to use correct bank
+    pickers[1].querySelectorAll('.slot-pick-btn').forEach((btn, j) => {
+      btn.onclick = function(e) { e.stopPropagation(); loadToBankSlot(bank, category, index, j); };
+    });
+  }
 }
 
 function toggleBrowser(el) {
@@ -549,31 +554,30 @@ function toggleBrowser(el) {
 }
 
 function browserItemClick(el, category, index) {
-  // If a target slot is set from Load button, load directly
-  if (browserTargetSlot >= 0) {
-    loadToSlot(browserTargetSlot, category, index);
+  if (browserTargetSlot >= 0 && browserTargetBank) {
+    loadToBankSlot(browserTargetBank, category, index, browserTargetSlot);
+    browserTargetBank = '';
     browserTargetSlot = -1;
     return;
   }
-  // Otherwise show slot picker
   const picker = el.querySelector('.slot-picker');
-  // Close all other pickers first
-  document.querySelectorAll('.slot-picker.show').forEach(p => {
-    if (p !== picker) p.classList.remove('show');
+  document.querySelectorAll('.slot-picker.show,.slot-picker[style*="flex"]').forEach(p => {
+    if (p !== picker) { p.classList.remove('show'); p.style.display = ''; }
   });
   picker.classList.toggle('show');
 }
 
-async function loadToSlot(slot, category, index) {
+async function loadToBankSlot(bank, category, index, slot) {
   try {
-    const r = await fetch('/api/presets/load-to-slot', { method: 'POST',
+    const r = await fetch('/api/presets/bank/load', { method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `slot=${slot}&category=${category}&index=${index}` });
-    if (r.ok) { toast('Loaded to slot ' + (slot + 1)); loadPresets(); }
+      body: `bank=${bank}&slot=${slot}&category=${category}&index=${index}` });
+    if (r.ok) { toast('Loaded to ' + bank + ' slot ' + (slot + 1)); loadPresets(); }
     else toast('Load failed', true);
   } catch (e) { toast('Error: ' + e, true); }
-  // Close all pickers
-  document.querySelectorAll('.slot-picker.show').forEach(p => p.classList.remove('show'));
+  document.querySelectorAll('.slot-picker.show,.slot-picker[style*="flex"]').forEach(p => {
+    p.classList.remove('show'); p.style.display = '';
+  });
 }
 
 // ─── Data Loading ───────────────────────────────────────────────────
@@ -582,26 +586,13 @@ async function loadPresets() {
     const r = await fetch('/api/presets');
     const d = await r.json();
     allPresets = d;
-    const userPresets = (d.user || []).map((p, i) => ({
-      name: p.name || 'Empty',
-      saved: p.saved || false,
-      active: false, // TODO: poll current preset
-      slot: i
-    }));
-    renderSlots(userPresets);
+    activeBank = d.active_bank || 0;
+    activePreset = d.active_preset || 0;
+    renderBankSlots('user', d.user || [], 'slot-grid-user');
+    renderBankSlots('standard', d.standard || [], 'slot-grid-standard');
+    renderBankSlots('experimental', d.experimental || [], 'slot-grid-experimental');
     renderBrowser(d);
   } catch (e) { console.error(e); }
-}
-
-function refreshSlots() {
-  if (!allPresets.user) return;
-  const userPresets = allPresets.user.map((p, i) => ({
-    name: p.name || 'Empty',
-    saved: p.saved || false,
-    active: false,
-    slot: i
-  }));
-  renderSlots(userPresets);
 }
 
 async function loadOptions() {

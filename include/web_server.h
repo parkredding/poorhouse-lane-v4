@@ -31,6 +31,14 @@ struct Callbacks {
     // Load a library/factory preset into a user slot
     std::function<bool(int slot, const std::string& category, int index)> load_to_slot;
 
+    // Load a library/factory preset into any bank's slot
+    std::function<bool(const std::string& bank, int slot,
+                       const std::string& category, int index)> load_to_bank_slot;
+
+    // Save current DSP state to any bank's slot
+    std::function<bool(const std::string& bank, int slot,
+                       const std::string& name)> save_to_bank_slot;
+
     // Get/set siren options as JSON
     std::function<std::string()> get_siren_options;
     std::function<bool(const std::string& json)> set_siren_options;

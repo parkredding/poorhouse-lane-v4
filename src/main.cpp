@@ -44,6 +44,7 @@
 #include <algorithm>
 #include <chrono>
 #include <mutex>
+#include <map>
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -423,15 +424,9 @@ static void apply_dub_preset(const DubPreset& p)
     update_link_eff();
 }
 
-static void apply_preset(int idx)
-{
-    apply_dub_preset(PRESETS[idx % NUM_PRESETS]);
-}
-
-static void apply_experimental(int idx)
-{
-    apply_dub_preset(EXPERIMENTAL[idx % NUM_EXPERIMENTAL]);
-}
+// apply_preset and apply_experimental are defined after UserPreset/bank arrays
+static void apply_preset(int idx);
+static void apply_experimental(int idx);
 
 // ─── User preset bank ────────────────────────────────────────────────
 
@@ -465,6 +460,8 @@ struct UserPreset {
 };
 
 static UserPreset g_user_presets[NUM_USER_PRESETS];
+static UserPreset g_standard_presets[NUM_PRESETS];
+static UserPreset g_experimental_presets[NUM_EXPERIMENTAL];
 
 // Bank mode: USER (boot default), STANDARD (factory), EXPERIMENTAL
 enum class BankMode { USER, STANDARD, EXPERIMENTAL };
@@ -807,6 +804,8 @@ static void save_siren_config()
     fprintf(f, "lfo_pitch_link=%d\n", g_lfo_pitch_link.load() ? 1 : 0);
     fprintf(f, "super_drip=%d\n",     g_super_drip.load() ? 1 : 0);
     fprintf(f, "sweep_dir=%.6f\n",    g_sweep_dir.load());
+    fprintf(f, "active_bank=%d\n",    g_bank_mode.load());
+    fprintf(f, "active_preset=%d\n",  g_preset.load());
 
     fflush(f);
     fsync(fileno(f));
@@ -886,6 +885,10 @@ static void load_siren_config()
             g_super_drip.store(atoi(val) != 0);
         else if (strcmp(key, "sweep_dir") == 0)
             g_sweep_dir.store(static_cast<float>(atof(val)));
+        else if (strcmp(key, "active_bank") == 0)
+            g_bank_mode.store(atoi(val));
+        else if (strcmp(key, "active_preset") == 0)
+            g_preset.store(atoi(val));
     }
 
     fclose(f);
@@ -1223,6 +1226,182 @@ static void init_user_presets()
     load_user_presets();
 }
 
+// ─── Helper: copy DubPreset → UserPreset ────────────────────────────
+
+static void copy_dub_to_user(const DubPreset& f, UserPreset& u)
+{
+    u.saved         = true;
+    snprintf(u.name, sizeof(u.name), "%s", f.name);
+    u.waveform      = f.waveform;
+    u.lfo_wave      = f.lfo_wave;
+    u.freq          = f.freq;
+    u.lfo_rate      = f.lfo_rate;
+    u.lfo_depth     = f.lfo_depth;
+    u.filter_cutoff = f.filter_cutoff;
+    u.filter_reso   = f.filter_reso;
+    u.delay_time    = f.delay_time;
+    u.delay_feedback= f.delay_feedback;
+    u.delay_mix     = f.delay_mix;
+    u.reverb_mix    = f.reverb_mix;
+    u.release_time  = f.release_time;
+    u.sweep_dir     = f.sweep_dir;
+    u.pitch_env     = f.pitch_env;
+    u.super_drip    = false;
+    u.reverb_type   = f.reverb_type;
+    u.delay_type    = f.delay_type;
+    u.tape_wobble   = f.tape_wobble;
+    u.tape_flutter  = f.tape_flutter;
+}
+
+// ─── Bank preset file path helper ───────────────────────────────────
+
+static const char* bank_file_path(const char* filename)
+{
+    static char std_path[PATH_MAX] = {};
+    static char exp_path[PATH_MAX] = {};
+    char* buf;
+    if (strcmp(filename, "standard_presets.txt") == 0)
+        buf = std_path;
+    else
+        buf = exp_path;
+    if (buf[0]) return buf;
+
+    // Derive from preset_file_path() by replacing the filename
+    const char* ppath = preset_file_path();
+    char dir[PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s", ppath);
+    char* slash = strrchr(dir, '/');
+    if (slash) *slash = '\0';
+    snprintf(buf, PATH_MAX, "%s/%s", dir, filename);
+    return buf;
+}
+
+// ─── Save / load bank presets (standard + experimental) ─────────────
+
+static void save_bank_presets(UserPreset* bank, int count, const char* filename)
+{
+    std::lock_guard<std::mutex> lock(g_preset_save_mutex);
+    const char* path = bank_file_path(filename);
+
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+
+    FILE* f = fopen(tmp, "w");
+    if (!f) {
+        fprintf(stderr, "  !!! Failed to save bank presets: %s\n", tmp);
+        return;
+    }
+
+    fprintf(f, "%s\n", PRESET_V3_HEADER);
+    for (int i = 0; i < count; i++) {
+        const UserPreset& u = bank[i];
+        fprintf(f, "%d \"%s\" %d %d %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %d %d %d %d %.6f %.6f\n",
+                u.saved ? 1 : 0,
+                u.name,
+                u.waveform, u.lfo_wave,
+                u.freq, u.lfo_rate, u.lfo_depth,
+                u.filter_cutoff, u.filter_reso,
+                u.delay_time, u.delay_feedback, u.delay_mix,
+                u.reverb_mix, u.release_time, u.sweep_dir,
+                u.pitch_env,
+                u.super_drip ? 1 : 0,
+                u.reverb_type, u.delay_type,
+                u.tape_wobble, u.tape_flutter);
+    }
+
+    fflush(f);
+    fsync(fileno(f));
+    fclose(f);
+    if (rename(tmp, path) != 0) {
+        fprintf(stderr, "  !!! Failed to rename bank file: %s → %s (%s)\n",
+                tmp, path, strerror(errno));
+        return;
+    }
+
+    char dir[PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s", path);
+    char* sl = strrchr(dir, '/');
+    if (sl) {
+        *sl = '\0';
+        int dfd = open(dir, O_RDONLY);
+        if (dfd >= 0) { fsync(dfd); close(dfd); }
+    }
+    printf("  Bank presets written to %s\n", path);
+}
+
+static void load_bank_presets(UserPreset* bank, int count, const char* filename)
+{
+    const char* path = bank_file_path(filename);
+    FILE* f = fopen(path, "r");
+    if (!f) return;  // no saved file — keep defaults
+
+    char header[64];
+    if (!fgets(header, sizeof(header), f) ||
+        strncmp(header, PRESET_V3_HEADER, sizeof(PRESET_V3_HEADER) - 1) != 0) {
+        fclose(f);
+        return;
+    }
+
+    for (int i = 0; i < count; i++) {
+        int saved, pe, sd, rt, dt;
+        char name_buf[32] = {};
+        if (fscanf(f, " %d", &saved) != 1) break;
+        int ch;
+        while ((ch = fgetc(f)) != EOF && ch != '"') {}
+        if (ch == EOF) break;
+        int ni = 0;
+        while ((ch = fgetc(f)) != EOF && ch != '"' && ni < 31)
+            name_buf[ni++] = static_cast<char>(ch);
+        name_buf[ni] = '\0';
+        UserPreset& u = bank[i];
+        int n = fscanf(f, " %d %d %f %f %f %f %f %f %f %f %f %f %f %d %d %d %d %f %f",
+                       &u.waveform, &u.lfo_wave,
+                       &u.freq, &u.lfo_rate, &u.lfo_depth,
+                       &u.filter_cutoff, &u.filter_reso,
+                       &u.delay_time, &u.delay_feedback, &u.delay_mix,
+                       &u.reverb_mix, &u.release_time, &u.sweep_dir,
+                       &pe, &sd, &rt, &dt,
+                       &u.tape_wobble, &u.tape_flutter);
+        if (n == 19) {
+            if (!validate_preset(u, pe, i)) { u.saved = false; continue; }
+            u.saved       = (saved != 0);
+            snprintf(u.name, sizeof(u.name), "%s", name_buf);
+            u.pitch_env   = pe;
+            u.super_drip  = (sd != 0);
+            u.reverb_type = rt;
+            u.delay_type  = dt;
+        } else {
+            break;
+        }
+    }
+    fclose(f);
+    printf("  Bank presets loaded from %s\n", path);
+}
+
+static void save_standard_presets()
+{
+    save_bank_presets(g_standard_presets, NUM_PRESETS, "standard_presets.txt");
+}
+
+static void save_experimental_presets()
+{
+    save_bank_presets(g_experimental_presets, NUM_EXPERIMENTAL, "experimental_presets.txt");
+}
+
+static void init_bank_presets()
+{
+    // Initialize standard bank from factory defaults
+    for (int i = 0; i < NUM_PRESETS; i++)
+        copy_dub_to_user(PRESETS[i], g_standard_presets[i]);
+    // Initialize experimental bank from factory defaults
+    for (int i = 0; i < NUM_EXPERIMENTAL; i++)
+        copy_dub_to_user(EXPERIMENTAL[i], g_experimental_presets[i]);
+
+    // Override with saved data from disk (if any)
+    load_bank_presets(g_standard_presets, NUM_PRESETS, "standard_presets.txt");
+    load_bank_presets(g_experimental_presets, NUM_EXPERIMENTAL, "experimental_presets.txt");
+}
+
 // ─── Apply user preset ──────────────────────────────────────────────
 
 static void apply_user_preset(const UserPreset& u)
@@ -1250,6 +1429,16 @@ static void apply_user_preset(const UserPreset& u)
     update_link_eff();
 }
 
+static void apply_preset(int idx)
+{
+    apply_user_preset(g_standard_presets[idx % NUM_PRESETS]);
+}
+
+static void apply_experimental(int idx)
+{
+    apply_user_preset(g_experimental_presets[idx % NUM_EXPERIMENTAL]);
+}
+
 // ─── Bank name helper ─────────────────────────────────────────────────
 
 static const char* bank_name(BankMode m)
@@ -1270,7 +1459,6 @@ static void switch_bank(BankMode mode)
     int idx = g_preset.load();
     switch (mode) {
     case BankMode::USER:
-        // Clamp index to user preset count
         if (idx >= NUM_USER_PRESETS) { idx = 0; g_preset.store(idx); }
         apply_user_preset(g_user_presets[idx]);
         printf("  BANK: USER  slot %d%s\n",
@@ -1279,13 +1467,13 @@ static void switch_bank(BankMode mode)
         break;
     case BankMode::STANDARD:
         if (idx >= NUM_PRESETS) { idx = 0; g_preset.store(idx); }
-        apply_preset(idx);
-        printf("  BANK: STANDARD  \"%s\"\n", PRESETS[idx].name);
+        apply_user_preset(g_standard_presets[idx]);
+        printf("  BANK: STANDARD  \"%s\"\n", g_standard_presets[idx].name);
         break;
     case BankMode::EXPERIMENTAL:
         if (idx >= NUM_EXPERIMENTAL) { idx = 0; g_preset.store(idx); }
-        apply_experimental(idx);
-        printf("  BANK: EXPERIMENTAL  \"%s\"\n", EXPERIMENTAL[idx].name);
+        apply_user_preset(g_experimental_presets[idx]);
+        printf("  BANK: EXPERIMENTAL  \"%s\"\n", g_experimental_presets[idx].name);
         break;
     }
 }
@@ -1352,34 +1540,34 @@ static void cycle_preset()
         break;
     case BankMode::STANDARD: {
         apply_preset(idx);
-        const DubPreset& p = PRESETS[idx];
-        printf("  PRESET %d  \"%s\"\n", idx + 1, p.name);
+        const UserPreset& sp = g_standard_presets[idx];
+        printf("  PRESET %d  \"%s\"\n", idx + 1, sp.name);
         printf("    %s  LFO:%s %.1fHz@%.0f%%  "
                "Dly:%.0fms FB%.0f%% Mix%.0f%%  "
                "Rev:%.0f%%\n",
-               waveform_name(p.waveform),
-               lfo_wave_name(p.lfo_wave),
-               p.lfo_rate, p.lfo_depth * 100.0f,
-               p.delay_time * 1000.0f,
-               p.delay_feedback * 100.0f,
-               p.delay_mix * 100.0f,
-               p.reverb_mix * 100.0f);
+               waveform_name(sp.waveform),
+               lfo_wave_name(sp.lfo_wave),
+               sp.lfo_rate, sp.lfo_depth * 100.0f,
+               sp.delay_time * 1000.0f,
+               sp.delay_feedback * 100.0f,
+               sp.delay_mix * 100.0f,
+               sp.reverb_mix * 100.0f);
         break;
     }
     case BankMode::EXPERIMENTAL: {
         apply_experimental(idx);
-        const DubPreset& p = EXPERIMENTAL[idx];
-        printf("  EXP %d  \"%s\"\n", idx + 1, p.name);
+        const UserPreset& ep = g_experimental_presets[idx];
+        printf("  EXP %d  \"%s\"\n", idx + 1, ep.name);
         printf("    %s  LFO:%s %.1fHz@%.0f%%  "
                "Dly:%.0fms FB%.0f%% Mix%.0f%%  "
                "Rev:%.0f%%\n",
-               waveform_name(p.waveform),
-               lfo_wave_name(p.lfo_wave),
-               p.lfo_rate, p.lfo_depth * 100.0f,
-               p.delay_time * 1000.0f,
-               p.delay_feedback * 100.0f,
-               p.delay_mix * 100.0f,
-               p.reverb_mix * 100.0f);
+               waveform_name(ep.waveform),
+               lfo_wave_name(ep.lfo_wave),
+               ep.lfo_rate, ep.lfo_depth * 100.0f,
+               ep.delay_time * 1000.0f,
+               ep.delay_feedback * 100.0f,
+               ep.delay_mix * 100.0f,
+               ep.reverb_mix * 100.0f);
         break;
     }
     }
@@ -1576,31 +1764,27 @@ static web_server::Callbacks build_web_callbacks()
     web_server::Callbacks cb;
 
     cb.get_all_presets = []() -> std::string {
-        std::string json = "{\"user\":[";
-        for (int i = 0; i < NUM_USER_PRESETS; i++) {
-            const auto& u = g_user_presets[i];
-            if (i > 0) json += ",";
-            json += "{\"name\":\"" + std::string(u.name) + "\","
-                    "\"slot\":" + std::to_string(i) + ","
-                    "\"saved\":" + (u.saved ? "true" : "false") + ","
-                    "\"waveform\":" + std::to_string(u.waveform) + ","
-                    "\"freq\":" + std::to_string(u.freq) + "}";
-        }
-        json += "],\"standard\":[";
-        for (int i = 0; i < NUM_PRESETS; i++) {
-            if (i > 0) json += ",";
-            json += "{\"name\":\"" + std::string(PRESETS[i].name) + "\","
-                    "\"index\":" + std::to_string(i) + ","
-                    "\"category\":\"" + std::string(PRESETS[i].category) + "\"}";
-        }
-        json += "],\"experimental\":[";
-        for (int i = 0; i < NUM_EXPERIMENTAL; i++) {
-            if (i > 0) json += ",";
-            json += "{\"name\":\"" + std::string(EXPERIMENTAL[i].name) + "\","
-                    "\"index\":" + std::to_string(i) + ","
-                    "\"category\":\"" + std::string(EXPERIMENTAL[i].category) + "\"}";
-        }
-        json += "],\"library\":[";
+        auto bank_json = [](const UserPreset* bank, int count) -> std::string {
+            std::string j = "[";
+            for (int i = 0; i < count; i++) {
+                if (i > 0) j += ",";
+                j += "{\"name\":\"" + std::string(bank[i].name) + "\","
+                     "\"slot\":" + std::to_string(i) + ","
+                     "\"saved\":" + (bank[i].saved ? "true" : "false") + ","
+                     "\"waveform\":" + std::to_string(bank[i].waveform) + ","
+                     "\"freq\":" + std::to_string(bank[i].freq) + "}";
+            }
+            j += "]";
+            return j;
+        };
+        int active_bank = g_bank_mode.load();
+        int active_preset = g_preset.load();
+        std::string json = "{\"user\":" + bank_json(g_user_presets, NUM_USER_PRESETS) + ","
+            "\"standard\":" + bank_json(g_standard_presets, NUM_PRESETS) + ","
+            "\"experimental\":" + bank_json(g_experimental_presets, NUM_EXPERIMENTAL) + ","
+            "\"active_bank\":" + std::to_string(active_bank) + ","
+            "\"active_preset\":" + std::to_string(active_preset) + ","
+            "\"library\":[";
         for (int i = 0; i < NUM_LIBRARY_PRESETS; i++) {
             if (i > 0) json += ",";
             json += "{\"name\":\"" + std::string(PRESET_LIBRARY[i].name) + "\","
@@ -1633,20 +1817,26 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.apply_preset = [](const std::string& category, int index) -> bool {
-        if (category == "standard" && index >= 0 && index < NUM_PRESETS) {
-            apply_dub_preset(PRESETS[index]);
-            return true;
+        if (category == "user" && index >= 0 && index < NUM_USER_PRESETS) {
+            g_bank_mode.store(static_cast<int>(BankMode::USER));
+            g_preset.store(index);
+            apply_user_preset(g_user_presets[index]);
+        } else if (category == "standard" && index >= 0 && index < NUM_PRESETS) {
+            g_bank_mode.store(static_cast<int>(BankMode::STANDARD));
+            g_preset.store(index);
+            apply_user_preset(g_standard_presets[index]);
         } else if (category == "experimental" && index >= 0 && index < NUM_EXPERIMENTAL) {
-            apply_dub_preset(EXPERIMENTAL[index]);
-            return true;
+            g_bank_mode.store(static_cast<int>(BankMode::EXPERIMENTAL));
+            g_preset.store(index);
+            apply_user_preset(g_experimental_presets[index]);
         } else if (category == "library" && index >= 0 && index < NUM_LIBRARY_PRESETS) {
             apply_dub_preset(PRESET_LIBRARY[index]);
-            return true;
-        } else if (category == "user" && index >= 0 && index < NUM_USER_PRESETS) {
-            apply_user_preset(g_user_presets[index]);
-            return true;
+        } else {
+            return false;
         }
-        return false;
+        save_siren_config();
+        printf("  WEB: Applied preset %s[%d]\n", category.c_str(), index);
+        return true;
     };
 
     cb.save_to_slot = [](int slot, const std::string& name) -> bool {
@@ -1670,8 +1860,26 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.load_to_slot = [](int slot, const std::string& category, int index) -> bool {
+        // Legacy endpoint — delegates to bank slot load for user bank
         if (slot < 0 || slot >= NUM_USER_PRESETS) return false;
+        const DubPreset* src = nullptr;
+        if (category == "standard" && index >= 0 && index < NUM_PRESETS)
+            src = &PRESETS[index];
+        else if (category == "experimental" && index >= 0 && index < NUM_EXPERIMENTAL)
+            src = &EXPERIMENTAL[index];
+        else if (category == "library" && index >= 0 && index < NUM_LIBRARY_PRESETS)
+            src = &PRESET_LIBRARY[index];
+        else
+            return false;
+        copy_dub_to_user(*src, g_user_presets[slot]);
+        save_user_presets();
+        return true;
+    };
 
+    // Load a library/factory preset into any bank's slot
+    cb.load_to_bank_slot = [](const std::string& bank, int slot,
+                              const std::string& category, int index) -> bool {
+        // Determine source preset
         const DubPreset* src = nullptr;
         if (category == "standard" && index >= 0 && index < NUM_PRESETS)
             src = &PRESETS[index];
@@ -1682,30 +1890,53 @@ static web_server::Callbacks build_web_callbacks()
         else
             return false;
 
-        UserPreset& u = g_user_presets[slot];
-        u.saved = true;
-        snprintf(u.name, sizeof(u.name), "%s", src->name);
-        u.waveform      = src->waveform;
-        u.lfo_wave       = src->lfo_wave;
-        u.freq           = src->freq;
-        u.lfo_rate       = src->lfo_rate;
-        u.lfo_depth      = src->lfo_depth;
-        u.filter_cutoff  = src->filter_cutoff;
-        u.filter_reso    = src->filter_reso;
-        u.delay_time     = src->delay_time;
-        u.delay_feedback = src->delay_feedback;
-        u.delay_mix      = src->delay_mix;
-        u.reverb_mix     = src->reverb_mix;
-        u.release_time   = src->release_time;
-        u.sweep_dir      = src->sweep_dir;
-        u.pitch_env      = src->pitch_env;
-        u.super_drip     = false;
-        u.reverb_type    = src->reverb_type;
-        u.delay_type     = src->delay_type;
-        u.tape_wobble    = src->tape_wobble;
-        u.tape_flutter   = src->tape_flutter;
-        save_user_presets();
-        printf("AP: Loaded \"%s\" into slot %d\n", src->name, slot + 1);
+        UserPreset* target = nullptr;
+        int max_slot = 0;
+        if (bank == "user") {
+            target = g_user_presets; max_slot = NUM_USER_PRESETS;
+        } else if (bank == "standard") {
+            target = g_standard_presets; max_slot = NUM_PRESETS;
+        } else if (bank == "experimental") {
+            target = g_experimental_presets; max_slot = NUM_EXPERIMENTAL;
+        } else {
+            return false;
+        }
+        if (slot < 0 || slot >= max_slot) return false;
+
+        copy_dub_to_user(*src, target[slot]);
+
+        if (bank == "user") save_user_presets();
+        else if (bank == "standard") save_standard_presets();
+        else save_experimental_presets();
+
+        printf("AP: Loaded \"%s\" into %s slot %d\n", src->name, bank.c_str(), slot + 1);
+        return true;
+    };
+
+    // Save current DSP state to any bank's slot
+    cb.save_to_bank_slot = [](const std::string& bank, int slot,
+                              const std::string& name) -> bool {
+        UserPreset* target = nullptr;
+        int max_slot = 0;
+        if (bank == "user") {
+            target = g_user_presets; max_slot = NUM_USER_PRESETS;
+        } else if (bank == "standard") {
+            target = g_standard_presets; max_slot = NUM_PRESETS;
+        } else if (bank == "experimental") {
+            target = g_experimental_presets; max_slot = NUM_EXPERIMENTAL;
+        } else {
+            return false;
+        }
+        if (slot < 0 || slot >= max_slot) return false;
+
+        target[slot] = snapshot_current();
+        snprintf(target[slot].name, sizeof(target[slot].name), "%s", name.c_str());
+
+        if (bank == "user") save_user_presets();
+        else if (bank == "standard") save_standard_presets();
+        else save_experimental_presets();
+
+        printf("AP: Saved to %s slot %d as \"%s\"\n", bank.c_str(), slot + 1, name.c_str());
         return true;
     };
 
@@ -1762,31 +1993,40 @@ static web_server::Callbacks build_web_callbacks()
         // Run iwlist scan and parse results
         FILE* pipe = popen("sudo iwlist wlan0 scan 2>/dev/null | "
                            "grep -E 'ESSID:|Signal level' | "
-                           "paste - - | head -20", "r");
+                           "paste - - | head -40", "r");
         if (!pipe) return "{\"networks\":[]}";
 
-        std::string json = "{\"networks\":[";
+        // Deduplicate SSIDs — keep strongest signal per SSID
+        std::map<std::string, int> seen;  // ssid → best signal
         char line[512];
-        bool first = true;
         while (fgets(line, sizeof(line), pipe)) {
-            // Parse ESSID and signal from combined line
             char* essid = strstr(line, "ESSID:\"");
             char* signal = strstr(line, "Signal level=");
             if (essid && signal) {
-                essid += 7;  // skip 'ESSID:"'
+                essid += 7;
                 char* end = strchr(essid, '"');
                 if (end) *end = '\0';
 
-                signal += 13;  // skip 'Signal level='
+                signal += 13;
                 int level = atoi(signal);
 
-                if (!first) json += ",";
-                first = false;
-                json += "{\"ssid\":\"" + std::string(essid) + "\","
-                        "\"signal\":" + std::to_string(level) + "}";
+                std::string ssid_str(essid);
+                if (ssid_str.empty()) continue;  // skip hidden networks
+                auto it = seen.find(ssid_str);
+                if (it == seen.end() || level > it->second)
+                    seen[ssid_str] = level;
             }
         }
         pclose(pipe);
+
+        std::string json = "{\"networks\":[";
+        bool first = true;
+        for (const auto& kv : seen) {
+            if (!first) json += ",";
+            first = false;
+            json += "{\"ssid\":\"" + kv.first + "\","
+                    "\"signal\":" + std::to_string(kv.second) + "}";
+        }
         json += "]}";
         return json;
     };
@@ -2600,6 +2840,13 @@ int main(int argc, char *argv[])
 
     // Initialise user presets (factory defaults + saved overrides)
     init_user_presets();
+    init_bank_presets();
+
+    // Apply the saved active bank/preset
+    {
+        auto mode = static_cast<BankMode>(g_bank_mode.load());
+        switch_bank(mode);
+    }
 
     // Start web server (always-on for poorhouse.local/config access)
     {
