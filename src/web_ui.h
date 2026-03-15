@@ -47,82 +47,96 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);
 .tab:not(.active):hover{color:var(--text)}
 
 /* ── Content ────────────────────────────────────────────── */
-.content{padding:16px;max-width:540px;margin:0 auto}
+.content{padding:16px;margin:0 auto}
 .panel{display:none}.panel.active{display:block}
+
+/* Mobile: single column, max-width for readability */
+@media (max-width: 767px) {
+  .content{max-width:540px}
+}
+/* Desktop: wider container */
+@media (min-width: 768px) {
+  .content{max-width:960px}
+}
 
 /* ── Section Labels ─────────────────────────────────────── */
 .section{font-size:0.65rem;font-weight:700;color:var(--accent);
   letter-spacing:3px;text-transform:uppercase;padding:12px 0 8px;
   border-bottom:1px solid var(--border);margin-bottom:8px}
 
+/* ── Banks Layout ──────────────────────────────────────── */
+/* Desktop: 3 banks side-by-side */
+@media (min-width: 768px) {
+  .banks-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px}
+  .bank-col .slot-grid{grid-template-columns:1fr 1fr}
+}
+/* Mobile: stacked */
+@media (max-width: 767px) {
+  .banks-row{display:block}
+  .bank-col{margin-bottom:12px}
+}
+
 /* ── Slot Grid ──────────────────────────────────────────── */
 .slot-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;
-  background:var(--border);border:1px solid var(--border);margin-bottom:16px}
-.slot{background:var(--surface);padding:12px;position:relative;
-  min-height:120px;display:flex;flex-direction:column;transition:all 0.2s}
-.slot.swap-source{border:2px dashed var(--accent);background:#1a1000}
-.slot.swap-target{border:2px solid var(--accent)}
-.slot-num{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+  background:var(--border);border:1px solid var(--border);margin-bottom:8px}
+.slot{background:var(--surface);padding:10px;position:relative;
+  min-height:100px;display:flex;flex-direction:column;transition:all 0.2s}
+.slot.active-slot{border:2px solid var(--led-green)}
+.slot-num{display:flex;align-items:center;gap:6px;margin-bottom:6px}
 .slot-num span{font-size:0.65rem;font-weight:700;color:var(--text-lo);
   letter-spacing:2px}
 .led{width:6px;height:6px;border-radius:50%;background:var(--led-off);
   flex-shrink:0}
 .led.active{background:var(--led-green);box-shadow:0 0 6px var(--led-green)}
-.slot-name{font-size:0.95rem;font-weight:700;color:var(--text-hi);
+.slot-name{font-size:0.85rem;font-weight:700;color:var(--text-hi);
   margin-bottom:2px;word-break:break-word;flex:1}
-.slot-cat{font-size:0.6rem;color:var(--text-lo);letter-spacing:1px;
-  text-transform:uppercase;margin-bottom:8px}
-.slot-actions{display:flex;gap:4px;margin-top:auto}
-.slot-btn{font-family:var(--font);font-size:0.6rem;font-weight:700;
-  letter-spacing:1px;text-transform:uppercase;padding:4px 8px;
+.slot-cat{font-size:0.55rem;color:var(--text-lo);letter-spacing:1px;
+  text-transform:uppercase;margin-bottom:6px}
+.slot-actions{display:flex;gap:3px;margin-top:auto;flex-wrap:wrap}
+.slot-btn{font-family:var(--font);font-size:0.55rem;font-weight:700;
+  letter-spacing:1px;text-transform:uppercase;padding:3px 6px;
   background:var(--bg);color:var(--text-lo);border:1px solid var(--border);
   cursor:pointer;transition:all 0.15s}
 .slot-btn:hover{color:var(--text-hi);border-color:var(--text-lo)}
 .slot-btn.active{color:var(--accent);border-color:var(--accent)}
 
 /* Inline save */
-.save-inline{display:none;margin-top:8px}
+.save-inline{display:none;margin-top:6px}
 .save-inline.show{display:flex;gap:4px}
-.save-inline input{font-family:var(--font);font-size:0.75rem;
+.save-inline input{font-family:var(--font);font-size:0.7rem;
   background:var(--bg);color:var(--text-hi);border:1px solid var(--accent);
-  padding:4px 6px;flex:1;outline:none;min-width:0}
-.save-inline button{font-family:var(--font);font-size:0.6rem;font-weight:700;
-  background:var(--accent);color:var(--bg);border:none;padding:4px 8px;
+  padding:3px 6px;flex:1;outline:none;min-width:0}
+.save-inline button{font-family:var(--font);font-size:0.55rem;font-weight:700;
+  background:var(--accent);color:var(--bg);border:none;padding:3px 8px;
   cursor:pointer;letter-spacing:1px}
 
-/* ── Swap Banner ────────────────────────────────────────── */
-.swap-banner{display:none;padding:8px 12px;background:var(--accent);
-  color:var(--bg);font-size:0.7rem;font-weight:700;letter-spacing:1px;
-  text-align:center;text-transform:uppercase;cursor:pointer;margin-bottom:8px}
-.swap-banner.show{display:block}
+/* ── Preset Loader (dropdown-based) ────────────────────── */
+.preset-loader{background:var(--surface);border:1px solid var(--border);
+  padding:16px;margin-bottom:16px}
+.preset-loader h3{font-size:0.7rem;font-weight:700;color:var(--accent);
+  letter-spacing:2px;text-transform:uppercase;margin-bottom:12px}
+.loader-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.loader-group{flex:1;min-width:120px}
+.loader-group label{display:block;font-size:0.55rem;font-weight:700;
+  color:var(--text-lo);letter-spacing:2px;text-transform:uppercase;
+  margin-bottom:4px}
+.loader-group select{width:100%;padding:8px;font-family:var(--font);
+  font-size:0.75rem;background:var(--bg);color:var(--text-hi);
+  border:1px solid var(--border);outline:none}
+.loader-group select:focus{border-color:var(--accent)}
+.loader-actions{display:flex;gap:6px;padding-bottom:1px}
 
-/* ── Preset Browser ─────────────────────────────────────── */
-.browser-section{margin-bottom:4px}
-.browser-header{display:flex;align-items:center;justify-content:space-between;
-  padding:8px 0;cursor:pointer;border-bottom:1px solid var(--border)}
-.browser-header span{font-size:0.6rem;font-weight:700;color:var(--text-lo);
-  letter-spacing:2px;text-transform:uppercase}
-.browser-header .arrow{color:var(--text-lo);font-size:0.7rem;transition:transform 0.2s}
-.browser-header .arrow.open{transform:rotate(90deg)}
-.browser-list{display:none;border-bottom:1px solid var(--border)}
-.browser-list.open{display:block}
-.browser-item{display:flex;justify-content:space-between;align-items:center;
-  padding:8px 4px;border-bottom:1px solid #111;cursor:pointer;transition:background 0.1s}
-.browser-item:hover{background:#1a1a1a}
-.browser-item .b-name{font-size:0.8rem;color:var(--text)}
-.browser-item .b-cat{font-size:0.55rem;color:var(--text-lo);letter-spacing:1px;
-  text-transform:uppercase}
-
-/* Slot selector (appears when clicking a browser item) */
-.slot-picker{display:none;gap:4px;padding:4px 0 4px 8px;align-items:center}
-.slot-picker.show{display:flex}
-.slot-picker-label{font-size:0.55rem;color:var(--accent);letter-spacing:1px;
-  text-transform:uppercase;white-space:nowrap}
-.slot-pick-btn{font-family:var(--font);font-size:0.7rem;font-weight:700;
-  width:28px;height:28px;display:flex;align-items:center;justify-content:center;
-  background:var(--bg);color:var(--text-lo);border:1px solid var(--border);
-  cursor:pointer;transition:all 0.15s}
-.slot-pick-btn:hover{color:var(--accent);border-color:var(--accent)}
+/* Desktop: loader row is horizontal */
+@media (min-width: 768px) {
+  .loader-row{flex-wrap:nowrap}
+  .loader-group{min-width:0}
+}
+/* Mobile: loader wraps */
+@media (max-width: 767px) {
+  .loader-group{min-width:100%}
+  .loader-actions{width:100%;margin-top:4px}
+  .loader-actions .btn{flex:1}
+}
 
 /* ── Cards / Form Elements ──────────────────────────────── */
 .card{background:var(--surface);border:1px solid var(--border);
@@ -179,6 +193,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 .btn{font-family:var(--font);font-size:0.7rem;font-weight:700;
   letter-spacing:1px;text-transform:uppercase;padding:10px 20px;
   border:none;cursor:pointer;transition:all 0.15s}
+.btn-sm{font-size:0.6rem;padding:8px 12px}
 .btn-primary{background:var(--accent);color:var(--bg)}
 .btn-primary:hover{background:#e55a00}
 .btn-secondary{background:var(--bg);color:var(--text);border:1px solid var(--border)}
@@ -234,17 +249,61 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 <div class="content">
 <div id="presets" class="panel active">
 
-  <div class="section">User Bank</div>
-  <div class="slot-grid" id="slot-grid-user"></div>
+  <!-- Preset Loader -->
+  <div class="preset-loader">
+    <h3>Load Preset</h3>
+    <div class="loader-row">
+      <div class="loader-group">
+        <label>Category</label>
+        <select id="load-category" onchange="onCategoryChange()">
+          <option value="">-- Select --</option>
+        </select>
+      </div>
+      <div class="loader-group">
+        <label>Preset</label>
+        <select id="load-preset">
+          <option value="">-- Select --</option>
+        </select>
+      </div>
+      <div class="loader-group">
+        <label>Target Bank</label>
+        <select id="load-bank" onchange="onTargetBankChange()">
+          <option value="user">User</option>
+          <option value="standard">Standard</option>
+          <option value="experimental">Experimental</option>
+        </select>
+      </div>
+      <div class="loader-group">
+        <label>Slot</label>
+        <select id="load-slot">
+          <option value="0">1</option>
+          <option value="1">2</option>
+          <option value="2">3</option>
+          <option value="3">4</option>
+        </select>
+      </div>
+      <div class="loader-actions">
+        <button class="btn btn-primary btn-sm" onclick="doLoadPreset()">Load</button>
+        <button class="btn btn-secondary btn-sm" onclick="doPreviewPreset()">Preview</button>
+      </div>
+    </div>
+  </div>
 
-  <div class="section">Standard Bank</div>
-  <div class="slot-grid" id="slot-grid-standard"></div>
-
-  <div class="section">Experimental Bank</div>
-  <div class="slot-grid" id="slot-grid-experimental"></div>
-
-  <div class="section">Preset Browser</div>
-  <div id="preset-browser"></div>
+  <!-- Bank Grids -->
+  <div class="banks-row">
+    <div class="bank-col">
+      <div class="section">User Bank</div>
+      <div class="slot-grid" id="slot-grid-user"></div>
+    </div>
+    <div class="bank-col">
+      <div class="section">Standard Bank</div>
+      <div class="slot-grid" id="slot-grid-standard"></div>
+    </div>
+    <div class="bank-col">
+      <div class="section">Experimental Bank</div>
+      <div class="slot-grid" id="slot-grid-experimental"></div>
+    </div>
+  </div>
 
 </div>
 
@@ -285,12 +344,12 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
     <h3>Effects Chain</h3>
     <div class="form-group">
       <select id="fx-chain">
-        <option value="0">Filter → Delay → Reverb</option>
-        <option value="1">Filter → Reverb → Delay</option>
-        <option value="2">Delay → Filter → Reverb</option>
-        <option value="3">Delay → Reverb → Filter</option>
-        <option value="4">Reverb → Filter → Delay</option>
-        <option value="5">Reverb → Delay → Filter</option>
+        <option value="0">Filter &rarr; Delay &rarr; Reverb</option>
+        <option value="1">Filter &rarr; Reverb &rarr; Delay</option>
+        <option value="2">Delay &rarr; Filter &rarr; Reverb</option>
+        <option value="3">Delay &rarr; Reverb &rarr; Filter</option>
+        <option value="4">Reverb &rarr; Filter &rarr; Delay</option>
+        <option value="5">Reverb &rarr; Delay &rarr; Filter</option>
       </select>
     </div>
   </div>
@@ -374,10 +433,9 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 <script>
 // ─── State ──────────────────────────────────────────────────────────
 let allPresets = {};
-let activeBank = 0;   // 0=user, 1=standard, 2=experimental
+let libraryByCategory = {};  // { category: [{name, index}, ...] }
+let activeBank = 0;
 let activePreset = 0;
-let browserTargetBank = '';
-let browserTargetSlot = -1;
 const BANK_NAMES = ['user', 'standard', 'experimental'];
 
 // ─── Tab Navigation ─────────────────────────────────────────────────
@@ -400,6 +458,12 @@ function toast(msg, err) {
   setTimeout(() => t.classList.remove('show'), 2500);
 }
 
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
 // ─── Segmented Controls ─────────────────────────────────────────────
 function setSeg(group, val) {
   document.querySelectorAll('#' + group + ' .seg-btn').forEach(b => {
@@ -414,20 +478,13 @@ function updateRange(id) {
   document.getElementById(id + '-val').textContent = document.getElementById(id).value + '%';
 }
 
-function esc(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
-
 // ─── Bank Slot Rendering ────────────────────────────────────────────
 function renderBankSlots(bankName, presets, gridId) {
   const grid = document.getElementById(gridId);
   const bankIdx = BANK_NAMES.indexOf(bankName);
   grid.innerHTML = presets.map((p, i) => {
     const isActive = activeBank === bankIdx && activePreset === i;
-    const activeCls = isActive ? ' style="border:2px solid var(--led-green)"' : '';
-    return `<div class="slot"${activeCls} id="slot-${bankName}-${i}">
+    return `<div class="slot${isActive ? ' active-slot' : ''}" id="slot-${bankName}-${i}">
       <div class="slot-num">
         <div class="led${isActive ? ' active' : ''}"></div>
         <span>0${i + 1}</span>
@@ -436,11 +493,10 @@ function renderBankSlots(bankName, presets, gridId) {
       <div class="slot-cat">${p.saved ? 'Saved' : 'Factory'}</div>
       <div class="slot-actions">
         <div class="slot-btn${isActive ? ' active' : ''}" onclick="event.stopPropagation();applyBankPreset('${bankName}',${i})">Apply</div>
-        <div class="slot-btn" onclick="event.stopPropagation();openBrowserForBankSlot('${bankName}',${i})">Load</div>
         <div class="slot-btn" onclick="event.stopPropagation();showSaveInput('${bankName}',${i})">Save</div>
       </div>
       <div class="save-inline" id="save-inline-${bankName}-${i}">
-        <input type="text" placeholder="Name" id="save-name-${bankName}-${i}" onkeydown="if(event.key==='Enter')doSave('${bankName}',${i})">
+        <input type="text" placeholder="Name" id="save-name-${bankName}-${i}" value="${esc(p.name || '')}" onkeydown="if(event.key==='Enter')doSave('${bankName}',${i})">
         <button onclick="doSave('${bankName}',${i})">OK</button>
       </div>
     </div>`;
@@ -477,107 +533,79 @@ async function doSave(bank, slot) {
   } catch (e) { toast('Error: ' + e, true); }
 }
 
-// ─── Preset Browser ─────────────────────────────────────────────────
-function openBrowserForBankSlot(bank, i) {
-  browserTargetBank = bank;
-  browserTargetSlot = i;
-  toast('Select a preset for ' + bank + ' slot ' + (i + 1));
+// ─── Preset Loader (dropdown-based) ─────────────────────────────────
+function buildCategoryDropdown(data) {
+  libraryByCategory = {};
+  (data.library || []).forEach(p => {
+    const cat = p.category || 'Other';
+    if (!libraryByCategory[cat]) libraryByCategory[cat] = [];
+    libraryByCategory[cat].push(p);
+  });
+
+  const sel = document.getElementById('load-category');
+  sel.innerHTML = '<option value="">-- Select Category --</option>';
+  Object.keys(libraryByCategory).forEach(cat => {
+    const opt = document.createElement('option');
+    opt.value = cat;
+    opt.textContent = cat + ' (' + libraryByCategory[cat].length + ')';
+    sel.appendChild(opt);
+  });
+  // Clear preset dropdown
+  document.getElementById('load-preset').innerHTML = '<option value="">-- Select Category First --</option>';
 }
 
-function renderBrowser(data) {
-  const container = document.getElementById('preset-browser');
-  const sections = [
-    { key: 'library', label: 'Library', items: data.library || [] }
-  ];
-
-  container.innerHTML = sections.map(s => {
-    if (!s.items.length) return '';
-    let groups = {};
-    s.items.forEach(p => {
-      const cat = p.category || s.label;
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(p);
-    });
-
-    return Object.entries(groups).map(([cat, items]) => `
-      <div class="browser-section">
-        <div class="browser-header" onclick="toggleBrowser(this)">
-          <span>${esc(cat)}</span>
-          <span class="arrow">&#9654;</span>
-        </div>
-        <div class="browser-list">
-          ${items.map(p => `
-            <div class="browser-item" onclick="browserItemClick(this,'${s.key}',${p.index !== undefined ? p.index : 0})">
-              <span class="b-name">${esc(p.name)}</span>
-              <div class="slot-picker" id="picker-${s.key}-${p.index}">
-                <span class="slot-picker-label">Bank:</span>
-                ${BANK_NAMES.map(b =>
-                  `<div class="slot-pick-btn" style="width:auto;padding:0 6px;font-size:0.55rem" onclick="event.stopPropagation();pickBankForLoad('${b}','${s.key}',${p.index},this)">${b.charAt(0).toUpperCase()}</div>`
-                ).join('')}
-              </div>
-              <div class="slot-picker" style="display:none">
-                <span class="slot-picker-label">Slot:</span>
-                ${[0,1,2,3].map(j => `<div class="slot-pick-btn" onclick="event.stopPropagation();loadToBankSlot('','${s.key}',${p.index},${j})">${j+1}</div>`).join('')}
-              </div>
-            </div>`).join('')}
-        </div>
-      </div>`).join('');
-  }).join('');
-}
-
-let pendingLoadBank = '';
-let pendingLoadCategory = '';
-let pendingLoadIndex = 0;
-
-function pickBankForLoad(bank, category, index, el) {
-  pendingLoadBank = bank;
-  pendingLoadCategory = category;
-  pendingLoadIndex = index;
-  // Show slot picker in the same browser-item
-  const item = el.closest('.browser-item');
-  const pickers = item.querySelectorAll('.slot-picker');
-  if (pickers.length > 1) {
-    pickers[0].style.display = 'none';
-    pickers[1].style.display = 'flex';
-    // Update slot picker onclick to use correct bank
-    pickers[1].querySelectorAll('.slot-pick-btn').forEach((btn, j) => {
-      btn.onclick = function(e) { e.stopPropagation(); loadToBankSlot(bank, category, index, j); };
-    });
-  }
-}
-
-function toggleBrowser(el) {
-  const list = el.nextElementSibling;
-  const arrow = el.querySelector('.arrow');
-  list.classList.toggle('open');
-  arrow.classList.toggle('open');
-}
-
-function browserItemClick(el, category, index) {
-  if (browserTargetSlot >= 0 && browserTargetBank) {
-    loadToBankSlot(browserTargetBank, category, index, browserTargetSlot);
-    browserTargetBank = '';
-    browserTargetSlot = -1;
+function onCategoryChange() {
+  const cat = document.getElementById('load-category').value;
+  const sel = document.getElementById('load-preset');
+  sel.innerHTML = '';
+  if (!cat || !libraryByCategory[cat]) {
+    sel.innerHTML = '<option value="">-- Select Category First --</option>';
     return;
   }
-  const picker = el.querySelector('.slot-picker');
-  document.querySelectorAll('.slot-picker.show,.slot-picker[style*="flex"]').forEach(p => {
-    if (p !== picker) { p.classList.remove('show'); p.style.display = ''; }
+  libraryByCategory[cat].forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.index;
+    opt.textContent = p.name;
+    sel.appendChild(opt);
   });
-  picker.classList.toggle('show');
 }
 
-async function loadToBankSlot(bank, category, index, slot) {
+function onTargetBankChange() {
+  // All banks have 4 slots, so no change needed
+}
+
+async function doLoadPreset() {
+  const category = document.getElementById('load-category').value;
+  const presetSel = document.getElementById('load-preset');
+  const index = presetSel.value;
+  const bank = document.getElementById('load-bank').value;
+  const slot = document.getElementById('load-slot').value;
+
+  if (!category || index === '') { toast('Select a preset first', true); return; }
+
   try {
     const r = await fetch('/api/presets/bank/load', { method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `bank=${bank}&slot=${slot}&category=${category}&index=${index}` });
-    if (r.ok) { toast('Loaded to ' + bank + ' slot ' + (slot + 1)); loadPresets(); }
-    else toast('Load failed', true);
+      body: `bank=${bank}&slot=${slot}&category=library&index=${index}` });
+    if (r.ok) {
+      const name = presetSel.options[presetSel.selectedIndex].textContent;
+      toast('Loaded "' + name + '" to ' + bank + ' slot ' + (parseInt(slot) + 1));
+      loadPresets();
+    } else toast('Load failed', true);
   } catch (e) { toast('Error: ' + e, true); }
-  document.querySelectorAll('.slot-picker.show,.slot-picker[style*="flex"]').forEach(p => {
-    p.classList.remove('show'); p.style.display = '';
-  });
+}
+
+async function doPreviewPreset() {
+  const category = document.getElementById('load-category').value;
+  const index = document.getElementById('load-preset').value;
+  if (!category || index === '') { toast('Select a preset first', true); return; }
+
+  try {
+    const r = await fetch('/api/presets/apply', { method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `category=library&index=${index}` });
+    if (r.ok) toast('Previewing'); else toast('Preview failed', true);
+  } catch (e) { toast('Error: ' + e, true); }
 }
 
 // ─── Data Loading ───────────────────────────────────────────────────
@@ -591,7 +619,7 @@ async function loadPresets() {
     renderBankSlots('user', d.user || [], 'slot-grid-user');
     renderBankSlots('standard', d.standard || [], 'slot-grid-standard');
     renderBankSlots('experimental', d.experimental || [], 'slot-grid-experimental');
-    renderBrowser(d);
+    buildCategoryDropdown(d);
   } catch (e) { console.error(e); }
 }
 

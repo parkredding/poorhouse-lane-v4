@@ -242,7 +242,7 @@ static const DubPreset EXPERIMENTAL[NUM_EXPERIMENTAL] = {
 // Accessible via the AP mode web UI for browsing and loading into
 // user preset slots.
 
-static constexpr int NUM_LIBRARY_PRESETS = 28;
+static constexpr int NUM_LIBRARY_PRESETS = 40;
 
 static const DubPreset PRESET_LIBRARY[NUM_LIBRARY_PRESETS] = {
     // ── Classic Dub (8) ─────────────────────────────────────────────
@@ -395,6 +395,70 @@ static const DubPreset PRESET_LIBRARY[NUM_LIBRARY_PRESETS] = {
         "Sub Bass", 0, 0, 60.0f, 0.5f, 0.30f, 200.0f, 0.60f,
         0.500f, 0.40f, 0.25f, 0.20f, 2.000f, -1.0f, -1,
         0, 0, 0.5f, 0.3f, "Utility"
+    },
+
+    // ── Sirens & Alerts (8) ──────────────────────────────────────────
+    {
+        "Police Wail (US)", 1, 0, 700.0f, 0.5f, 0.95f, 5000.0f, 0.20f,
+        0.300f, 0.30f, 0.15f, 0.10f, 1.500f, 0.0f, 0,
+        0, 1, 0.0f, 0.0f, "Sirens & Alerts"
+    },
+    {
+        "Police Yelp", 1, 2, 900.0f, 6.0f, 0.90f, 6000.0f, 0.15f,
+        0.200f, 0.20f, 0.10f, 0.08f, 0.400f, 0.0f, 0,
+        0, 1, 0.0f, 0.0f, "Sirens & Alerts"
+    },
+    {
+        "European Two-Tone", 1, 2, 600.0f, 1.5f, 0.70f, 4000.0f, 0.15f,
+        0.250f, 0.20f, 0.10f, 0.05f, 0.800f, 0.0f, 0,
+        0, 1, 0.0f, 0.0f, "Sirens & Alerts"
+    },
+    {
+        "Tornado Siren", 2, 3, 400.0f, 0.08f, 1.00f, 3000.0f, 0.35f,
+        0.500f, 0.40f, 0.20f, 0.30f, 5.000f, 0.0f, 0,
+        0, 0, 0.8f, 0.6f, "Sirens & Alerts"
+    },
+    {
+        "Air Raid", 2, 0, 500.0f, 0.25f, 1.00f, 3500.0f, 0.40f,
+        0.400f, 0.50f, 0.25f, 0.35f, 4.000f, 0.0f, 0,
+        0, 0, 1.0f, 0.8f, "Sirens & Alerts"
+    },
+    {
+        "Ambulance", 1, 0, 800.0f, 1.0f, 0.80f, 4500.0f, 0.20f,
+        0.250f, 0.25f, 0.12f, 0.08f, 0.600f, 0.0f, 0,
+        0, 1, 0.0f, 0.0f, "Sirens & Alerts"
+    },
+    {
+        "Ship Horn", 2, 0, 85.0f, 0.15f, 0.40f, 800.0f, 0.65f,
+        0.600f, 0.55f, 0.40f, 0.70f, 3.500f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Sirens & Alerts"
+    },
+    {
+        "Nuclear Alert", 1, 2, 1200.0f, 2.5f, 1.00f, 8000.0f, 0.30f,
+        0.180f, 0.60f, 0.35f, 0.20f, 0.500f, +1.0f, 0,
+        3, 1, 0.0f, 0.0f, "Sirens & Alerts"
+    },
+
+    // ── Sound FX (4) ─────────────────────────────────────────────────
+    {
+        "Sonar Ping", 0, 0, 2400.0f, 0.8f, 0.00f, 3000.0f, 0.50f,
+        0.800f, 0.85f, 0.70f, 0.75f, 0.150f, 0.0f, -1,
+        2, 0, 0.5f, 0.3f, "Sound FX"
+    },
+    {
+        "Laser Zap", 2, 7, 3500.0f, 12.0f, 0.95f, 12000.0f, 0.60f,
+        0.100f, 0.70f, 0.40f, 0.25f, 0.080f, 0.0f, -1,
+        1, 1, 0.0f, 0.0f, "Sound FX"
+    },
+    {
+        "UFO Landing", 0, 0, 300.0f, 0.12f, 1.00f, 5000.0f, 0.70f,
+        0.450f, 0.80f, 0.55f, 0.65f, 3.000f, 0.0f, +1,
+        2, 0, 1.0f, 1.0f, "Sound FX"
+    },
+    {
+        "Geiger Counter", 1, 5, 1800.0f, 8.0f, 1.00f, 15000.0f, 0.10f,
+        0.050f, 0.70f, 0.30f, 0.10f, 0.010f, 0.0f, 0,
+        3, 1, 0.0f, 0.0f, "Sound FX"
     },
 };
 
