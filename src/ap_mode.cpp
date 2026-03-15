@@ -98,13 +98,15 @@ static bool write_dnsmasq_conf()
 
     fprintf(f,
         "interface=%s\n"
+        "bind-interfaces\n"          // only bind to ap0, not all interfaces
+        "listen-address=%s\n"        // only listen on the AP IP
         "dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h\n"
-        "address=/#/%s\n"      // captive portal: all DNS → device
+        "address=/#/%s\n"            // captive portal: all DNS on ap0 → device
         "no-resolv\n"
         "no-poll\n"
         "log-queries\n"
         "log-dhcp\n",
-        AP_IFACE, AP_IP);
+        AP_IFACE, AP_IP, AP_IP);
 
     fclose(f);
     return true;
