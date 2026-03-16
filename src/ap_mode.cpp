@@ -24,7 +24,9 @@
 static const char* AP_IP        = "192.168.4.1";
 static const char* AP_PHY_IFACE = "wlan0";     // physical interface
 static const char* HOSTAPD_CONF = "/tmp/dubsiren_hostapd.conf";
+static const char* HOSTAPD_PID  = "/tmp/dubsiren_hostapd.pid";
 static const char* DNSMASQ_CONF = "/tmp/dubsiren_dnsmasq.conf";
+static const char* DNSMASQ_PID  = "/tmp/dubsiren_dnsmasq.pid";
 
 static bool  g_active       = false;
 static std::string g_ssid;
@@ -127,7 +129,8 @@ static bool try_virtual_ap()
     usleep(300000);
 
     // Kill our own stale hostapd if it holds the phy lock (PID-file based)
-    system("pkill -F /tmp/dubsiren_hostapd.pid 2>/dev/null");
+    snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", HOSTAPD_PID);
+    system(cmd);
     usleep(200000);
 
     // Try iw dev first, then iw phy as fallback
@@ -209,8 +212,11 @@ bool ap_mode::start_ap()
     g_ssid = "Poorhouse-Siren-Config-" + suffix;
 
     // 1. Clean up any previous AP state
-    system("pkill -F /tmp/dubsiren_hostapd.pid 2>/dev/null");
-    system("pkill -F /tmp/dubsiren_dnsmasq.pid 2>/dev/null");
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", HOSTAPD_PID);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", DNSMASQ_PID);
+    system(cmd);
     usleep(500000);
 
     // 2. Try virtual ap0 first, fall back to wlan0
@@ -235,8 +241,7 @@ bool ap_mode::start_ap()
     if (!write_dnsmasq_conf(g_iface.c_str())) return false;
 
     // 4. Start hostapd (daemonized with -B)
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "hostapd %s -B -P /tmp/dubsiren_hostapd.pid", HOSTAPD_CONF);
+    snprintf(cmd, sizeof(cmd), "hostapd %s -B -P %s", HOSTAPD_CONF, HOSTAPD_PID);
     int ret = system(cmd);
     if (ret != 0) {
         slog("AP: Failed to start hostapd (exit %d)", ret);
@@ -246,12 +251,13 @@ bool ap_mode::start_ap()
     usleep(1000000);  // 1s — let hostapd fully settle
 
     // 5. Start dnsmasq
-    snprintf(cmd, sizeof(cmd), "dnsmasq -C %s --pid-file=/tmp/dubsiren_dnsmasq.pid",
-             DNSMASQ_CONF);
+    snprintf(cmd, sizeof(cmd), "dnsmasq -C %s --pid-file=%s",
+             DNSMASQ_CONF, DNSMASQ_PID);
     ret = system(cmd);
     if (ret != 0) {
         slog("AP: Failed to start dnsmasq (exit %d)", ret);
-        system("pkill -F /tmp/dubsiren_hostapd.pid 2>/dev/null");
+        snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", HOSTAPD_PID);
+        system(cmd);
         if (g_using_wlan0) restore_wlan0();
         return false;
     }
@@ -267,15 +273,18 @@ void ap_mode::stop_ap()
     slog("AP: Stopping access point");
 
     // Kill hostapd and dnsmasq using PID files (avoids killing unrelated processes)
-    system("pkill -F /tmp/dubsiren_hostapd.pid 2>/dev/null");
-    system("pkill -F /tmp/dubsiren_dnsmasq.pid 2>/dev/null");
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", HOSTAPD_PID);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", DNSMASQ_PID);
+    system(cmd);
     usleep(500000);
 
     // Clean up config and PID files
     unlink(HOSTAPD_CONF);
     unlink(DNSMASQ_CONF);
-    unlink("/tmp/dubsiren_hostapd.pid");
-    unlink("/tmp/dubsiren_dnsmasq.pid");
+    unlink(HOSTAPD_PID);
+    unlink(DNSMASQ_PID);
 
     if (g_using_wlan0) {
         // Restore wlan0 to managed mode so it reconnects to WiFi
