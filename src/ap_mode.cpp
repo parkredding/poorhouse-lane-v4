@@ -6,6 +6,7 @@
 // to the configuration portal automatically.
 
 #include "ap_mode.h"
+#include "siren_log.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -63,7 +64,7 @@ static bool write_hostapd_conf(const std::string& ssid)
 {
     FILE* f = fopen(HOSTAPD_CONF, "w");
     if (!f) {
-        fprintf(stderr, "AP: Failed to write %s\n", HOSTAPD_CONF);
+        slog("AP: Failed to write %s", HOSTAPD_CONF);
         return false;
     }
 
@@ -89,7 +90,7 @@ static bool write_dnsmasq_conf()
 {
     FILE* f = fopen(DNSMASQ_CONF, "w");
     if (!f) {
-        fprintf(stderr, "AP: Failed to write %s\n", DNSMASQ_CONF);
+        slog("AP: Failed to write %s", DNSMASQ_CONF);
         return false;
     }
 
@@ -118,7 +119,7 @@ bool ap_mode::start_ap()
     std::string suffix = get_mac_suffix();
     g_ssid = "Poorhouse-Siren-Config-" + suffix;
 
-    printf("AP: Starting access point '%s' on %s\n", g_ssid.c_str(), AP_IFACE);
+    slog("AP: Starting access point '%s' on %s", g_ssid.c_str(), AP_IFACE);
 
     // 1. Clean up any previous AP state (use PID files to avoid killing unrelated processes)
     char cmd[512];
@@ -133,7 +134,7 @@ bool ap_mode::start_ap()
     snprintf(cmd, sizeof(cmd), "iw dev %s interface add %s type __ap", AP_PHY_IFACE, AP_IFACE);
     int ret = system(cmd);
     if (ret != 0) {
-        fprintf(stderr, "AP: Failed to create virtual interface %s\n", AP_IFACE);
+        slog("AP: Failed to create virtual interface %s", AP_IFACE);
         return false;
     }
     // Tell NetworkManager to ignore the virtual interface
@@ -155,7 +156,7 @@ bool ap_mode::start_ap()
     snprintf(cmd, sizeof(cmd), "hostapd %s -B", HOSTAPD_CONF);
     ret = system(cmd);
     if (ret != 0) {
-        fprintf(stderr, "AP: Failed to start hostapd (exit %d)\n", ret);
+        slog("AP: Failed to start hostapd (exit %d)", ret);
         return false;
     }
     usleep(1000000);  // 1s — let hostapd fully settle
@@ -165,11 +166,11 @@ bool ap_mode::start_ap()
              DNSMASQ_CONF);
     ret = system(cmd);
     if (ret != 0) {
-        fprintf(stderr, "AP: Failed to start dnsmasq (exit %d)\n", ret);
+        slog("AP: Failed to start dnsmasq (exit %d)", ret);
         return false;
     }
     g_active = true;
-    printf("AP: Access point active — SSID: %s  IP: %s\n", g_ssid.c_str(), AP_IP);
+    slog("AP: Access point active — SSID: %s  IP: %s", g_ssid.c_str(), AP_IP);
     return true;
 }
 
@@ -177,7 +178,7 @@ void ap_mode::stop_ap()
 {
     if (!g_active) return;
 
-    printf("AP: Stopping access point\n");
+    slog("AP: Stopping access point");
 
     // Kill hostapd and dnsmasq using PID files (avoids killing unrelated processes)
     system("pkill -F /tmp/dubsiren_hostapd.pid 2>/dev/null");
@@ -196,7 +197,7 @@ void ap_mode::stop_ap()
     system(cmd);
 
     g_active = false;
-    printf("AP: Access point stopped\n");
+    slog("AP: Access point stopped");
 }
 
 bool ap_mode::is_active()

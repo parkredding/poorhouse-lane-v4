@@ -3065,8 +3065,7 @@ static void enter_ap_mode()
 {
     if (g_ap_mode.load()) return;
 
-    printf("\n>>> ENTERING AP CONFIG MODE <<<\n\n");
-    printf("  Audio engine stays active — presets can be previewed live\n");
+    slog("ENTERING AP CONFIG MODE");
 
     // Clear gate stuck from 3-button combo hold
     g_gate.store(false);
@@ -3076,24 +3075,21 @@ static void enter_ap_mode()
 
     // Start the access point
     if (!ap_mode::start_ap()) {
-        fprintf(stderr, "!!! Failed to start AP mode\n");
+        slog("!!! Failed to start AP mode");
         g_ap_mode.store(false);
         return;
     }
 
     // Web server is already running (started at boot) — no need to start it here
-
-    printf(">>> AP MODE ACTIVE — Connect to '%s' WiFi <<<\n",
-           ap_mode::get_ssid().c_str());
-    printf(">>> Open http://%s/ in your browser <<<\n\n",
-           ap_mode::get_ip());
+    slog("AP MODE ACTIVE — Connect to '%s' at %s",
+         ap_mode::get_ssid().c_str(), ap_mode::get_ip());
 }
 
 static void exit_ap_mode()
 {
     if (!g_ap_mode.load()) return;
 
-    printf("\n>>> EXITING AP CONFIG MODE <<<\n\n");
+    slog("EXITING AP CONFIG MODE");
 
     // Only stop the AP infrastructure — web server keeps running
     ap_mode::stop_ap();
@@ -3101,7 +3097,7 @@ static void exit_ap_mode()
     g_ap_exit_requested.store(false);
 
     // Audio was never stopped — siren is immediately usable
-    printf(">>> SIREN MODE RESTORED <<<\n\n");
+    slog("SIREN MODE RESTORED");
 }
 
 // ─── main ───────────────────────────────────────────────────────────
