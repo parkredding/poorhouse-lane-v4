@@ -536,7 +536,7 @@ function confirmAction(msg, cb) {
   confirmCallback = cb;
 }
 function closeConfirm() { document.getElementById('confirm-overlay').style.display = 'none'; confirmCallback = null; }
-function doConfirm() { closeConfirm(); if (confirmCallback) confirmCallback(); }
+function doConfirm() { const cb = confirmCallback; closeConfirm(); if (cb) cb(); }
 
 // Debounced button helper
 function debounceBtn(btn, ms) {
@@ -560,12 +560,12 @@ function showTab(id) {
 }
 
 // Toast
-function toast(msg, err) {
+function toast(msg, err, duration) {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.style.background = err ? 'var(--danger)' : 'var(--accent)';
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2500);
+  setTimeout(() => t.classList.remove('show'), duration||2500);
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -1028,7 +1028,7 @@ async function pollUpdateStatus() {
       document.getElementById('update-bar').style.background = 'var(--accent)';
       document.getElementById('btn-check').disabled = false;
       document.getElementById('update-reboot').style.display = 'block';
-      toast('Update installed \u2014 reboot to apply');
+      toast('Update installed \u2014 reboot to apply', false, 5000);
       return;
     }
     updatePollTimer = setTimeout(pollUpdateStatus, 1500);
