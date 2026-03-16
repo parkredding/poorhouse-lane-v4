@@ -459,6 +459,9 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       </div>
       <pre id="update-log" style="display:none;background:var(--bg);border:1px solid var(--border);padding:10px;margin-top:4px;max-height:300px;overflow:auto;font-family:var(--font);font-size:0.65rem;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-all"></pre>
     </div>
+    <div id="update-reboot" style="display:none;margin-top:12px">
+      <button class="btn btn-danger" onclick="confirmAction('Reboot the device? This will take ~30 seconds.',rebootDevice)" style="width:100%">Reboot Device</button>
+    </div>
   </div>
   <div class="card">
     <h3>Theme</h3>
@@ -994,6 +997,7 @@ async function installUpdate() {
   document.getElementById('btn-check').disabled = true;
   document.getElementById('update-log-section').style.display = 'block';
   document.getElementById('update-log').textContent = '';
+  document.getElementById('update-reboot').style.display = 'none';
   try {
     const r = await fetch('/api/update/install', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'branch='+encodeURIComponent(branch)});
     if (!r.ok) { toast('Update failed',true); document.getElementById('update-progress').style.display='none'; document.getElementById('btn-check').disabled=false; return; }
@@ -1023,7 +1027,8 @@ async function pollUpdateStatus() {
     if (stage === 'done') {
       document.getElementById('update-bar').style.background = 'var(--accent)';
       document.getElementById('btn-check').disabled = false;
-      toast('Update installed \u2014 restart to apply');
+      document.getElementById('update-reboot').style.display = 'block';
+      toast('Update installed \u2014 reboot to apply');
       return;
     }
     updatePollTimer = setTimeout(pollUpdateStatus, 1500);
