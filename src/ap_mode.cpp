@@ -33,6 +33,9 @@ static std::string g_ssid;
 static std::string g_iface;   // actual interface used (ap0 or wlan0)
 static bool g_using_wlan0 = false;  // true if we fell back to wlan0
 
+// "sudo " when not root, "" when root — prefixed to privileged commands
+static const char* SUDO = (geteuid() == 0) ? "" : "sudo ";
+
 // ─── Read MAC address from sysfs ────────────────────────────────────
 
 static std::string read_mac()
@@ -125,22 +128,24 @@ static bool try_virtual_ap()
     char cmd[512];
 
     // Remove stale virtual interface from previous run
-    system("iw dev ap0 del 2>/dev/null");
+    snprintf(cmd, sizeof(cmd), "%siw dev ap0 del 2>/dev/null", SUDO);
+    system(cmd);
     usleep(300000);
 
     // Kill our own stale hostapd if it holds the phy lock (PID-file based)
-    snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", HOSTAPD_PID);
+    snprintf(cmd, sizeof(cmd), "%spkill -F %s 2>/dev/null", SUDO, HOSTAPD_PID);
     system(cmd);
     usleep(200000);
 
     // Try iw dev first, then iw phy as fallback
-    snprintf(cmd, sizeof(cmd), "iw dev %s interface add ap0 type __ap", AP_PHY_IFACE);
+    snprintf(cmd, sizeof(cmd), "%siw dev %s interface add ap0 type __ap", SUDO, AP_PHY_IFACE);
     int ret = system(cmd);
     if (ret != 0) {
         slog("AP: 'iw dev' failed — trying 'iw phy'");
         // Find the phy name for wlan0 and try phy-based creation
-        ret = system("iw phy $(iw dev wlan0 info | awk '/wiphy/{print \"phy\"$2}') "
-                      "interface add ap0 type __ap 2>/dev/null");
+        snprintf(cmd, sizeof(cmd), "%siw phy $(%siw dev wlan0 info | awk '/wiphy/{print \"phy\"$2}') "
+                      "interface add ap0 type __ap 2>/dev/null", SUDO, SUDO);
+        ret = system(cmd);
         if (ret != 0) {
             slog("AP: 'iw phy' also failed (exit %d)", ret);
             return false;
@@ -148,19 +153,22 @@ static bool try_virtual_ap()
     }
 
     // Tell NetworkManager to ignore the virtual interface
-    system("nmcli device set ap0 managed no 2>/dev/null");
+    snprintf(cmd, sizeof(cmd), "%snmcli device set ap0 managed no 2>/dev/null", SUDO);
+    system(cmd);
     usleep(200000);
 
     // Configure IP
-    snprintf(cmd, sizeof(cmd), "ip addr add %s/24 dev ap0", AP_IP);
+    snprintf(cmd, sizeof(cmd), "%sip addr add %s/24 dev ap0", SUDO, AP_IP);
     system(cmd);
-    system("ip link set ap0 up");
+    snprintf(cmd, sizeof(cmd), "%sip link set ap0 up", SUDO);
+    system(cmd);
 
     // Verify ap0 actually came up
     ret = system("ip link show ap0 2>/dev/null | grep -q 'state UP\\|state UNKNOWN'");
     if (ret != 0) {
         slog("AP: ap0 created but failed to come up");
-        system("iw dev ap0 del 2>/dev/null");
+        snprintf(cmd, sizeof(cmd), "%siw dev ap0 del 2>/dev/null", SUDO);
+        system(cmd);
         return false;
     }
 
@@ -173,18 +181,24 @@ static bool setup_wlan0_ap()
     slog("AP: Using wlan0 directly (WiFi will disconnect)");
 
     // Stop anything managing wlan0
-    system("wpa_cli -i wlan0 disconnect 2>/dev/null");
-    system("nmcli device disconnect wlan0 2>/dev/null");
-    system("systemctl stop wpa_supplicant 2>/dev/null");
-    system("nmcli device set wlan0 managed no 2>/dev/null");
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "%swpa_cli -i wlan0 disconnect 2>/dev/null", SUDO);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "%snmcli device disconnect wlan0 2>/dev/null", SUDO);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "%ssystemctl stop wpa_supplicant 2>/dev/null", SUDO);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "%snmcli device set wlan0 managed no 2>/dev/null", SUDO);
+    system(cmd);
     usleep(500000);
 
     // Flush existing IP and configure AP IP
-    char cmd[256];
-    system("ip addr flush dev wlan0");
-    snprintf(cmd, sizeof(cmd), "ip addr add %s/24 dev wlan0", AP_IP);
+    snprintf(cmd, sizeof(cmd), "%sip addr flush dev wlan0", SUDO);
     system(cmd);
-    system("ip link set wlan0 up");
+    snprintf(cmd, sizeof(cmd), "%sip addr add %s/24 dev wlan0", SUDO, AP_IP);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "%sip link set wlan0 up", SUDO);
+    system(cmd);
     usleep(200000);
 
     return true;
@@ -195,11 +209,16 @@ static void restore_wlan0()
 {
     slog("AP: Restoring wlan0 to managed mode");
 
-    system("ip addr flush dev wlan0 2>/dev/null");
-    system("nmcli device set wlan0 managed yes 2>/dev/null");
-    system("systemctl start wpa_supplicant 2>/dev/null");
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "%sip addr flush dev wlan0 2>/dev/null", SUDO);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "%snmcli device set wlan0 managed yes 2>/dev/null", SUDO);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "%ssystemctl start wpa_supplicant 2>/dev/null", SUDO);
+    system(cmd);
     // Give NetworkManager a kick to reconnect
-    system("nmcli device connect wlan0 2>/dev/null");
+    snprintf(cmd, sizeof(cmd), "%snmcli device connect wlan0 2>/dev/null", SUDO);
+    system(cmd);
 }
 
 // ─── Public interface ───────────────────────────────────────────────
@@ -213,9 +232,9 @@ bool ap_mode::start_ap()
 
     // 1. Clean up any previous AP state
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", HOSTAPD_PID);
+    snprintf(cmd, sizeof(cmd), "%spkill -F %s 2>/dev/null", SUDO, HOSTAPD_PID);
     system(cmd);
-    snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", DNSMASQ_PID);
+    snprintf(cmd, sizeof(cmd), "%spkill -F %s 2>/dev/null", SUDO, DNSMASQ_PID);
     system(cmd);
     usleep(500000);
 
@@ -241,7 +260,7 @@ bool ap_mode::start_ap()
     if (!write_dnsmasq_conf(g_iface.c_str())) return false;
 
     // 4. Start hostapd (daemonized with -B)
-    snprintf(cmd, sizeof(cmd), "hostapd %s -B -P %s", HOSTAPD_CONF, HOSTAPD_PID);
+    snprintf(cmd, sizeof(cmd), "%shostapd %s -B -P %s", SUDO, HOSTAPD_CONF, HOSTAPD_PID);
     int ret = system(cmd);
     if (ret != 0) {
         slog("AP: Failed to start hostapd (exit %d)", ret);
@@ -251,12 +270,12 @@ bool ap_mode::start_ap()
     usleep(1000000);  // 1s — let hostapd fully settle
 
     // 5. Start dnsmasq
-    snprintf(cmd, sizeof(cmd), "dnsmasq -C %s --pid-file=%s",
-             DNSMASQ_CONF, DNSMASQ_PID);
+    snprintf(cmd, sizeof(cmd), "%sdnsmasq -C %s --pid-file=%s",
+             SUDO, DNSMASQ_CONF, DNSMASQ_PID);
     ret = system(cmd);
     if (ret != 0) {
         slog("AP: Failed to start dnsmasq (exit %d)", ret);
-        snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", HOSTAPD_PID);
+        snprintf(cmd, sizeof(cmd), "%spkill -F %s 2>/dev/null", SUDO, HOSTAPD_PID);
         system(cmd);
         if (g_using_wlan0) restore_wlan0();
         return false;
@@ -274,9 +293,9 @@ void ap_mode::stop_ap()
 
     // Kill hostapd and dnsmasq using PID files (avoids killing unrelated processes)
     char cmd[256];
-    snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", HOSTAPD_PID);
+    snprintf(cmd, sizeof(cmd), "%spkill -F %s 2>/dev/null", SUDO, HOSTAPD_PID);
     system(cmd);
-    snprintf(cmd, sizeof(cmd), "pkill -F %s 2>/dev/null", DNSMASQ_PID);
+    snprintf(cmd, sizeof(cmd), "%spkill -F %s 2>/dev/null", SUDO, DNSMASQ_PID);
     system(cmd);
     usleep(500000);
 
@@ -291,7 +310,8 @@ void ap_mode::stop_ap()
         restore_wlan0();
     } else {
         // Remove the virtual AP interface
-        system("iw dev ap0 del");
+        snprintf(cmd, sizeof(cmd), "%siw dev ap0 del", SUDO);
+        system(cmd);
     }
 
     g_active = false;
