@@ -2342,6 +2342,23 @@ static web_server::Callbacks build_web_callbacks()
                ",\"ssid\":\"" + ssid + "\"}";
     };
 
+    // ── Repo root (derived from executable path) ─────────────────────
+    // /home/<user>/dubsiren/build/dubsiren → /home/<user>/dubsiren
+    static std::string repo_root;
+    {
+        char exe[PATH_MAX] = {};
+        ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+        if (len > 0) {
+            exe[len] = '\0';
+            char* slash = strrchr(exe, '/');  // strip binary name
+            if (slash) *slash = '\0';
+            slash = strrchr(exe, '/');        // strip "build"
+            if (slash) *slash = '\0';
+            repo_root = exe;
+        }
+        if (repo_root.empty()) repo_root = "/home/pi/dubsiren";  // fallback
+    }
+
     // ── Update: progress tracking state ─────────────────────────────
     // Shared between the background update thread and the status endpoint.
     static std::mutex              upd_mtx;
@@ -2368,9 +2385,9 @@ static web_server::Callbacks build_web_callbacks()
 
     cb.update_branches = []() -> std::string {
         // Fetch all remotes first
-        system("cd /home/pi/dubsiren && git fetch --all 2>/dev/null");
-        FILE* pipe = popen("cd /home/pi/dubsiren && "
-                           "git branch -r --format='%(refname:lstrip=3)' 2>/dev/null", "r");
+        system(("cd " + repo_root + " && git fetch --all 2>/dev/null").c_str());
+        FILE* pipe = popen(("cd " + repo_root + " && "
+                           "git branch -r --format='%(refname:lstrip=3)' 2>/dev/null").c_str(), "r");
         if (!pipe) return "{\"branches\":[\"main\"]}";
 
         std::string json = "{\"branches\":[";
@@ -2393,13 +2410,13 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.update_check = [](const std::string& branch) -> std::string {
-        std::string cmd = "cd /home/pi/dubsiren && git fetch origin "
+        std::string cmd = "cd " + repo_root + " && git fetch origin "
                           + branch + " 2>/dev/null";
         int ret = system(cmd.c_str());
         if (ret != 0)
             return "{\"available\":false,\"error\":\"fetch failed\"}";
 
-        std::string log_cmd = "cd /home/pi/dubsiren && "
+        std::string log_cmd = "cd " + repo_root + " && "
                               "git log HEAD..origin/" + branch +
                               " --oneline 2>/dev/null";
         FILE* pipe = popen(log_cmd.c_str(), "r");
@@ -2454,11 +2471,11 @@ static web_server::Callbacks build_web_callbacks()
             // persistent storage.  Copy settings to a safe location in case
             // the deploy overwrites the data dir structure.
             set_upd("backup", 5);
-            run("cp -a /home/pi/dubsiren/data /tmp/dubsiren-data-backup 2>/dev/null");
+            run("cp -a " + repo_root + "/data /tmp/dubsiren-data-backup 2>/dev/null");
 
             // Stage 1: Fetch (15%)
             set_upd("fetch", 15);
-            if (run("cd /home/pi/dubsiren && git fetch origin " + branch) != 0) {
+            if (run("cd " + repo_root + " && git fetch origin " + branch) != 0) {
                 set_upd("error", 0, "git fetch failed");
                 upd_running.store(false);
                 return;
@@ -2469,12 +2486,12 @@ static web_server::Callbacks build_web_callbacks()
             // local source changes on the Pi.  The data/ dir is bind-mounted
             // separately so it won't be affected by git operations.
             set_upd("pull", 25);
-            if (run("cd /home/pi/dubsiren && git checkout " + branch) != 0) {
+            if (run("cd " + repo_root + " && git checkout " + branch) != 0) {
                 set_upd("error", 0, "git checkout failed");
                 upd_running.store(false);
                 return;
             }
-            if (run("cd /home/pi/dubsiren && git reset --hard origin/" + branch) != 0) {
+            if (run("cd " + repo_root + " && git reset --hard origin/" + branch) != 0) {
                 set_upd("error", 0, "git reset failed");
                 upd_running.store(false);
                 return;
@@ -2482,7 +2499,7 @@ static web_server::Callbacks build_web_callbacks()
 
             // Stage 3: Build — cmake (40%)
             set_upd("build", 40);
-            if (run("cd /home/pi/dubsiren/build && cmake ..") != 0) {
+            if (run("cd " + repo_root + "/build && cmake ..") != 0) {
                 set_upd("error", 0, "cmake failed");
                 upd_running.store(false);
                 return;
@@ -2490,7 +2507,7 @@ static web_server::Callbacks build_web_callbacks()
 
             // Stage 3b: Build — make (40→85%)
             set_upd("build", 55);
-            if (run("cd /home/pi/dubsiren/build && make -j$(nproc)") != 0) {
+            if (run("cd " + repo_root + "/build && make -j$(nproc)") != 0) {
                 set_upd("error", 0, "build failed");
                 upd_running.store(false);
                 return;
@@ -2501,7 +2518,7 @@ static web_server::Callbacks build_web_callbacks()
             // deploy-to-persist.sh copies binary + syncs git repo to real disk
             // so updates survive reboot on kiosk/overlay FS devices.
             set_upd("deploy", 90);
-            if (run("cd /home/pi/dubsiren && sudo ./scripts/deploy-to-persist.sh") != 0) {
+            if (run("cd " + repo_root + " && sudo ./scripts/deploy-to-persist.sh") != 0) {
                 set_upd("error", 0, "deploy failed");
                 upd_running.store(false);
                 return;
@@ -2512,9 +2529,9 @@ static web_server::Callbacks build_web_callbacks()
             // restore from backup.  The bind mount makes this unlikely, but
             // this is a safety net.
             set_upd("deploy", 95);
-            run("if [ ! -f /home/pi/dubsiren/data/presets/user_presets.txt ] && "
+            run("if [ ! -f " + repo_root + "/data/presets/user_presets.txt ] && "
                 "[ -f /tmp/dubsiren-data-backup/presets/user_presets.txt ]; then "
-                "cp -a /tmp/dubsiren-data-backup/* /home/pi/dubsiren/data/ 2>/dev/null; fi");
+                "cp -a /tmp/dubsiren-data-backup/* " + repo_root + "/data/ 2>/dev/null; fi");
             run("rm -rf /tmp/dubsiren-data-backup 2>/dev/null");
 
             // Done (100%)
