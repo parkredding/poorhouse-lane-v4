@@ -1986,6 +1986,10 @@ static std::atomic<bool> g_btn_preset{false};
 static bool g_combo_active = false;
 static std::chrono::steady_clock::time_point g_combo_start{};
 static bool g_combo_feedback_given = false;
+// Set when combo activates, cleared when all buttons released — suppresses
+// normal button-release actions (save preset, bank toggle) so they don't
+// fire after the user releases a 3-button hold.
+static std::atomic<bool> g_combo_suppress{false};
 
 // Forward declarations for AP mode
 static void enter_ap_mode();
@@ -2003,13 +2007,17 @@ static void check_ap_combo(AudioEngine& audio)
 
     if (all && !g_combo_active) {
         g_combo_active = true;
+        g_combo_suppress.store(true);
         g_combo_start = std::chrono::steady_clock::now();
         g_combo_feedback_given = false;
-        printf("  >>> AP COMBO: All 3 buttons detected — hold for 3s\n");
+        slog("AP COMBO: All 3 buttons held — hold for 3s");
     } else if (!all) {
         if (g_combo_active)
-            printf("  >>> AP COMBO: Released (button dropped)\n");
+            slog("AP COMBO: Released (button dropped)");
         g_combo_active = false;
+        // Clear suppress once all buttons are released
+        if (!t && !s && !p)
+            g_combo_suppress.store(false);
         return;
     }
 
@@ -2020,14 +2028,14 @@ static void check_ap_combo(AudioEngine& audio)
 
     if (elapsed >= 1500 && !g_combo_feedback_given) {
         g_combo_feedback_given = true;
-        printf("  >>> AP MODE: Keep holding (%.1fs)...\n",
-               (3000 - elapsed) / 1000.0f);
+        slog("AP COMBO: Keep holding (%.1fs)...",
+             (3000 - elapsed) / 1000.0f);
     }
 
     if (elapsed >= 3000) {
         g_combo_active = false;
-        printf("  >>> AP COMBO: 3s reached — %s AP mode\n",
-               g_ap_mode.load() ? "exiting" : "entering");
+        slog("AP COMBO: 3s reached — %s AP mode",
+             g_ap_mode.load() ? "exiting" : "entering");
         if (g_ap_mode.load()) {
             exit_ap_mode();
         } else {
@@ -3448,11 +3456,11 @@ int main(int argc, char *argv[])
         case 2: g_btn_preset.store(pressed); break;
         }
 
-        // Always log button state for AP combo debugging
-        printf("  [btn] %s %s  (T=%d S=%d P=%d)\n",
-               btn_name[id], pressed ? "DOWN" : "UP",
-               g_btn_trigger.load(), g_btn_shift.load(),
-               g_btn_preset.load());
+        // Log button state for AP combo debugging (visible in system log)
+        slog("[btn] %s %s (T=%d S=%d P=%d)",
+             btn_name[id], pressed ? "DOWN" : "UP",
+             g_btn_trigger.load(), g_btn_shift.load(),
+             g_btn_preset.load());
 
         // Trigger gate always works (including AP mode for preview)
         if (id == 0) {
@@ -3461,8 +3469,13 @@ int main(int argc, char *argv[])
                    pressed ? "GATE ON" : "GATE OFF");
         }
 
-        // Skip other button handling when in AP mode
+        // Skip other button handling when in AP mode or 3-button combo active
         if (g_ap_mode.load()) return;
+        if (g_combo_suppress.load()) {
+            // Still track shift state so it's correct after combo ends
+            if (id == 1) g_shift.store(pressed);
+            return;
+        }
 
         switch (id) {
         case 0:
