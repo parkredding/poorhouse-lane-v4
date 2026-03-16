@@ -23,15 +23,24 @@ static const char* const INDEX_HTML = R"HTML(
   --font:'Space Mono',monospace;
 }
 
-/* Themes */
+/* Themes — Dark */
 [data-theme="midnight"]{--bg:#0a0a0a;--surface:#141414;--border:#2a2a2a;--accent:#ff6600;--accent-dim:#993d00;--led-green:#00ff88;--led-off:#1a1a1a;--text:#ccc;--text-hi:#fff;--text-lo:#555;--danger:#ff3333;--card:#141414}
 [data-theme="deep-dub"]{--bg:#05080f;--surface:#0c1220;--border:#1a2744;--accent:#00ccff;--accent-dim:#007799;--led-green:#00ff88;--led-off:#0a1020;--text:#8899bb;--text-hi:#ccddef;--text-lo:#3a4a66;--danger:#ff4466;--card:#0c1220}
 [data-theme="reggae"]{--bg:#0a0f06;--surface:#141e0c;--border:#2a3a18;--accent:#ffcc00;--accent-dim:#997a00;--led-green:#00ff44;--led-off:#111a08;--text:#b0c890;--text-hi:#e0f0c0;--text-lo:#4a5a38;--danger:#ff4444;--card:#141e0c}
 [data-theme="steppers"]{--bg:#0f0808;--surface:#1a1010;--border:#332020;--accent:#ff2222;--accent-dim:#991414;--led-green:#ff4444;--led-off:#1a0e0e;--text:#cc9999;--text-hi:#ffdddd;--text-lo:#664444;--danger:#ff6644;--card:#1a1010}
-[data-theme="silver"]{--bg:#f0f0f0;--surface:#ffffff;--border:#d0d0d0;--accent:#ff6600;--accent-dim:#cc5200;--led-green:#00cc66;--led-off:#e0e0e0;--text:#444;--text-hi:#111;--text-lo:#999;--danger:#dd2222;--card:#ffffff}
-[data-theme="concrete"]{--bg:#e8e4e0;--surface:#f5f2ee;--border:#c8c4c0;--accent:#2a6b4f;--accent-dim:#1a4a35;--led-green:#2a9b5f;--led-off:#d8d4d0;--text:#4a4640;--text-hi:#1a1816;--text-lo:#9a9690;--danger:#cc3333;--card:#f5f2ee}
 [data-theme="roots"]{--bg:#0e0a06;--surface:#1a1408;--border:#302410;--accent:#cc9933;--accent-dim:#8a6622;--led-green:#66cc44;--led-off:#14100a;--text:#aa9070;--text-hi:#ddccaa;--text-lo:#554433;--danger:#cc4422;--card:#1a1408}
 [data-theme="irie"]{--bg:#0a060e;--surface:#140e1a;--border:#28183a;--accent:#bb44ff;--accent-dim:#7722aa;--led-green:#44ff88;--led-off:#100a16;--text:#9980bb;--text-hi:#ddccff;--text-lo:#443366;--danger:#ff4466;--card:#140e1a}
+[data-theme="kingston"]{--bg:#08080c;--surface:#101018;--border:#22223a;--accent:#ff9900;--accent-dim:#aa6600;--led-green:#00ff66;--led-off:#0c0c14;--text:#9999aa;--text-hi:#ddddee;--text-lo:#444466;--danger:#ff4444;--card:#101018}
+[data-theme="dubplate"]{--bg:#0c0c08;--surface:#16160e;--border:#2c2c1c;--accent:#e0c040;--accent-dim:#a08820;--led-green:#88ee44;--led-off:#121210;--text:#aa9;--text-hi:#ddc;--text-lo:#554;--danger:#ee4422;--card:#16160e}
+[data-theme="soundsystem"]{--bg:#060a0a;--surface:#0e1616;--border:#1a2c2c;--accent:#00ee99;--accent-dim:#009960;--led-green:#00ffaa;--led-off:#0a1212;--text:#80aaa0;--text-hi:#bbeedc;--text-lo:#3a5550;--danger:#ff5544;--card:#0e1616}
+[data-theme="heavyweight"]{--bg:#080608;--surface:#120e12;--border:#261e26;--accent:#ff4488;--accent-dim:#aa2255;--led-green:#44ffaa;--led-off:#100c10;--text:#aa88aa;--text-hi:#eeccee;--text-lo:#553355;--danger:#ff3344;--card:#120e12}
+/* Themes — Light */
+[data-theme="silver"]{--bg:#f0f0f0;--surface:#ffffff;--border:#d0d0d0;--accent:#ff6600;--accent-dim:#cc5200;--led-green:#00cc66;--led-off:#e0e0e0;--text:#444;--text-hi:#111;--text-lo:#999;--danger:#dd2222;--card:#ffffff}
+[data-theme="concrete"]{--bg:#e8e4e0;--surface:#f5f2ee;--border:#c8c4c0;--accent:#2a6b4f;--accent-dim:#1a4a35;--led-green:#2a9b5f;--led-off:#d8d4d0;--text:#4a4640;--text-hi:#1a1816;--text-lo:#9a9690;--danger:#cc3333;--card:#f5f2ee}
+[data-theme="driftwood"]{--bg:#ece6dc;--surface:#f8f4ec;--border:#d0c8b8;--accent:#b87333;--accent-dim:#8a5522;--led-green:#55aa44;--led-off:#ddd6c8;--text:#5a5040;--text-hi:#2a2418;--text-lo:#a09880;--danger:#cc4433;--card:#f8f4ec}
+[data-theme="overcast"]{--bg:#e4e8ec;--surface:#f0f4f8;--border:#c4c8d0;--accent:#4477cc;--accent-dim:#2a5599;--led-green:#33aa66;--led-off:#d4d8e0;--text:#4a5060;--text-hi:#1a2030;--text-lo:#8a90a0;--danger:#dd3344;--card:#f0f4f8}
+[data-theme="bleached"]{--bg:#f4f0e8;--surface:#fffcf4;--border:#d8d0c0;--accent:#cc4400;--accent-dim:#993300;--led-green:#44bb55;--led-off:#e8e0d4;--text:#605848;--text-hi:#302820;--text-lo:#a09080;--danger:#dd2222;--card:#fffcf4}
+[data-theme="studio"]{--bg:#eaeaea;--surface:#f8f8f8;--border:#cccccc;--accent:#8833cc;--accent-dim:#6622aa;--led-green:#33cc77;--led-off:#dcdcdc;--text:#505050;--text-hi:#1a1a1a;--text-lo:#909090;--danger:#dd3333;--card:#f8f8f8}
 
 /* Theme Picker */
 .theme-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px}
@@ -465,7 +474,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
   </div>
   <div class="card">
     <h3>Theme</h3>
-    <div class="theme-grid" id="theme-grid"></div>
+    <div style="font-size:0.6rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text-lo);margin-bottom:6px">Dark</div>
+    <div class="theme-grid" id="theme-grid-dark"></div>
+    <div style="font-size:0.6rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text-lo);margin:12px 0 6px">Light</div>
+    <div class="theme-grid" id="theme-grid-light"></div>
+    <button class="btn btn-primary" id="btn-save-theme" onclick="saveTheme()" style="margin-top:12px;display:none;width:100%">Save Theme</button>
   </div>
   <div class="card">
     <h3>Backup &amp; Restore</h3>
@@ -829,6 +842,7 @@ async function loadOptions() {
     updateRange('phaser-mix'); updateRange('chorus-mix'); updateRange('flanger-mix');
     // Sync theme from server
     if (d.theme) {
+      savedTheme = d.theme;
       document.documentElement.setAttribute('data-theme', d.theme);
       try { localStorage.setItem('dubsiren-theme', d.theme); } catch(e) {}
       renderThemeGrid();
@@ -851,7 +865,7 @@ async function applyOptions() {
     'phaser_mix='+(document.getElementById('phaser-mix').value/100),
     'chorus_mix='+(document.getElementById('chorus-mix').value/100),
     'flanger_mix='+(document.getElementById('flanger-mix').value/100),
-    'theme='+(document.documentElement.getAttribute('data-theme')||'midnight')
+    'theme='+(savedTheme||'midnight')
   ].join('&');
   try {
     const r = await fetch('/api/siren/options', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
@@ -1081,38 +1095,63 @@ async function exitAP() {
 }
 
 // Theme
-const THEMES = [
+const DARK_THEMES = [
   {id:'midnight',name:'Midnight',colors:['#0a0a0a','#ff6600','#00ff88','#ccc']},
   {id:'deep-dub',name:'Deep Dub',colors:['#05080f','#00ccff','#00ff88','#8899bb']},
   {id:'reggae',name:'Reggae',colors:['#0a0f06','#ffcc00','#00ff44','#b0c890']},
   {id:'steppers',name:'Steppers',colors:['#0f0808','#ff2222','#ff4444','#cc9999']},
-  {id:'silver',name:'Silver',colors:['#f0f0f0','#ff6600','#00cc66','#444']},
-  {id:'concrete',name:'Concrete',colors:['#e8e4e0','#2a6b4f','#2a9b5f','#4a4640']},
   {id:'roots',name:'Roots',colors:['#0e0a06','#cc9933','#66cc44','#aa9070']},
   {id:'irie',name:'Irie',colors:['#0a060e','#bb44ff','#44ff88','#9980bb']},
+  {id:'kingston',name:'Kingston',colors:['#08080c','#ff9900','#00ff66','#9999aa']},
+  {id:'dubplate',name:'Dubplate',colors:['#0c0c08','#e0c040','#88ee44','#aa9']},
+  {id:'soundsystem',name:'Sound System',colors:['#060a0a','#00ee99','#00ffaa','#80aaa0']},
+  {id:'heavyweight',name:'Heavyweight',colors:['#080608','#ff4488','#44ffaa','#aa88aa']},
 ];
+const LIGHT_THEMES = [
+  {id:'silver',name:'Silver',colors:['#f0f0f0','#ff6600','#00cc66','#444']},
+  {id:'concrete',name:'Concrete',colors:['#e8e4e0','#2a6b4f','#2a9b5f','#4a4640']},
+  {id:'driftwood',name:'Driftwood',colors:['#ece6dc','#b87333','#55aa44','#5a5040']},
+  {id:'overcast',name:'Overcast',colors:['#e4e8ec','#4477cc','#33aa66','#4a5060']},
+  {id:'bleached',name:'Bleached',colors:['#f4f0e8','#cc4400','#44bb55','#605848']},
+  {id:'studio',name:'Studio',colors:['#eaeaea','#8833cc','#33cc77','#505050']},
+];
+const ALL_THEMES = DARK_THEMES.concat(LIGHT_THEMES);
+let savedTheme = null;
 
-function renderThemeGrid() {
-  const cur = document.documentElement.getAttribute('data-theme')||'midnight';
-  document.getElementById('theme-grid').innerHTML = THEMES.map(t =>
-    '<div class="theme-swatch'+(t.id===cur?' active':'')+'" onclick="setTheme(\''+t.id+'\')">'+
+function renderThemeSwatches(container, themes, cur) {
+  document.getElementById(container).innerHTML = themes.map(t =>
+    '<div class="theme-swatch'+(t.id===cur?' active':'')+'" onclick="previewTheme(\''+t.id+'\')">'+
       '<div class="swatch-bar">'+t.colors.map(c=>'<span style="background:'+c+'"></span>').join('')+'</div>'+
       '<div class="swatch-label">'+t.name+'</div></div>'
   ).join('');
 }
 
-async function setTheme(id) {
-  document.documentElement.setAttribute('data-theme',id);
-  try { localStorage.setItem('dubsiren-theme',id); } catch(e) {}
+function renderThemeGrid() {
+  const cur = document.documentElement.getAttribute('data-theme')||'midnight';
+  renderThemeSwatches('theme-grid-dark', DARK_THEMES, cur);
+  renderThemeSwatches('theme-grid-light', LIGHT_THEMES, cur);
+  const changed = savedTheme && cur !== savedTheme;
+  document.getElementById('btn-save-theme').style.display = changed ? 'block' : 'none';
+}
+
+function previewTheme(id) {
+  document.documentElement.setAttribute('data-theme', id);
   renderThemeGrid();
-  // Save to siren (server-side persistence)
+}
+
+async function saveTheme() {
+  const id = document.documentElement.getAttribute('data-theme')||'midnight';
+  savedTheme = id;
+  try { localStorage.setItem('dubsiren-theme', id); } catch(e) {}
+  renderThemeGrid();
   try {
     await fetch('/api/siren/options', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'theme='+id});
   } catch(e) {}
+  toast('Theme saved');
 }
 
 // Apply saved theme — try localStorage first for instant render, then sync from server
-(function(){try{const s=localStorage.getItem('dubsiren-theme');document.documentElement.setAttribute('data-theme',s||'midnight');}catch(e){document.documentElement.setAttribute('data-theme','midnight');}})();
+(function(){try{const s=localStorage.getItem('dubsiren-theme');savedTheme=s||'midnight';document.documentElement.setAttribute('data-theme',savedTheme);}catch(e){savedTheme='midnight';document.documentElement.setAttribute('data-theme','midnight');}})();
 
 // Init
 loadPresets();
