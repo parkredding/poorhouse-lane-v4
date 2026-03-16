@@ -549,6 +549,7 @@ function showTab(id) {
   const tabEls = document.querySelectorAll('.tab');
   tabs.forEach((t, i) => { if (t === id && tabEls[i]) tabEls[i].classList.add('active'); });
   if (id === 'live') loadDspState();
+  if (id === 'wifi') { loadWifiStatus(); }
   if (id === 'system') { loadSystemInfo(); loadBranches(); }
   if (id === 'options') { loadEncoderMap(); }
 }
@@ -899,6 +900,13 @@ function resetEncoderMap() {
 }
 
 // WiFi
+async function loadWifiStatus() {
+  try {
+    const r = await fetch('/api/wifi/status');
+    const wifi = await r.json();
+    document.getElementById('wifi-status').textContent = wifi.connected ? 'Connected: '+wifi.ssid : 'Not connected';
+  } catch(e) {}
+}
 async function scanWifi() {
   document.getElementById('wifi-networks').innerHTML = '<div class="loading"><div class="spinner"></div> Scanning...</div>';
   try {
@@ -932,7 +940,9 @@ async function loadSystemInfo() {
     up += sys.uptime_hours+'h '+sys.uptime_mins+'m';
     document.getElementById('sys-uptime').textContent = up;
     document.getElementById('sys-mem').textContent = sys.mem_used_mb+'MB / '+sys.mem_total_mb+'MB';
-    document.getElementById('sys-wifi').textContent = wifi.connected ? 'Connected: '+wifi.ssid : 'Not connected';
+    const wifiText = wifi.connected ? 'Connected: '+wifi.ssid : 'Not connected';
+    document.getElementById('sys-wifi').textContent = wifiText;
+    document.getElementById('wifi-status').textContent = wifiText;
   } catch(e) {
     document.getElementById('sys-cpu').textContent = 'Error';
   }
