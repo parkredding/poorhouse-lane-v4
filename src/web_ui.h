@@ -469,7 +469,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       <pre id="update-log" style="display:none;background:var(--bg);border:1px solid var(--border);padding:10px;margin-top:4px;max-height:300px;overflow:auto;font-family:var(--font);font-size:0.65rem;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-all"></pre>
     </div>
     <div id="update-reboot" style="display:none;margin-top:12px">
-      <button class="btn btn-danger" onclick="confirmAction('Reboot the device? This will take ~30 seconds.',rebootDevice)" style="width:100%">Reboot Device</button>
+      <button class="btn btn-primary" onclick="confirmAction('Restart the service to apply the update?',restartService)" style="width:100%">Restart to Apply</button>
     </div>
   </div>
   <div class="card">
@@ -971,7 +971,40 @@ async function restartService() {
   try { await fetch('/api/system/restart',{method:'POST'}); toast('Restarting...'); } catch(e) { toast('Error',true); }
 }
 async function rebootDevice() {
-  try { await fetch('/api/system/reboot',{method:'POST'}); toast('Rebooting...'); } catch(e) { toast('Error',true); }
+  try {
+    const r = await fetch('/api/system/reboot',{method:'POST'});
+    if (!r.ok) { toast('Reboot failed',true); return; }
+  } catch(e) { /* server may already be going down — that's ok */ }
+  showReconnecting();
+}
+
+async function restartService() {
+  try {
+    const r = await fetch('/api/system/restart',{method:'POST'});
+    if (!r.ok) { toast('Restart failed',true); return; }
+  } catch(e) { /* server may already be going down */ }
+  showReconnecting();
+}
+
+function showReconnecting() {
+  document.getElementById('toast').classList.remove('show');
+  const overlay = document.createElement('div');
+  overlay.id = 'reconnect-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:999;display:flex;align-items:center;justify-content:center;flex-direction:column';
+  overlay.innerHTML = '<div class="spinner" style="width:32px;height:32px;margin-bottom:16px"></div>'
+    +'<div style="color:#fff;font-size:0.9rem;font-weight:700">Restarting...</div>'
+    +'<div style="color:#888;font-size:0.7rem;margin-top:8px" id="reconnect-status">Waiting for device</div>';
+  document.body.appendChild(overlay);
+  let attempts = 0;
+  const poll = setInterval(async () => {
+    attempts++;
+    const el = document.getElementById('reconnect-status');
+    if (el) el.textContent = 'Reconnecting... ('+attempts+')';
+    try {
+      const r = await fetch('/api/system/info',{signal:AbortSignal.timeout(3000)});
+      if (r.ok) { clearInterval(poll); location.reload(); }
+    } catch(e) {}
+  }, 3000);
 }
 
 const STAGE_LABELS = {idle:'Ready',backup:'Backing up...',fetch:'Fetching updates...',pull:'Pulling code...',build:'Building firmware...',deploy:'Deploying...',done:'Complete!',error:'Error'};
