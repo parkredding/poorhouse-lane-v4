@@ -84,8 +84,7 @@ static bool write_hostapd_conf(const std::string& ssid, const char* iface)
         "macaddr_acl=0\n"
         "auth_algs=1\n"
         "ignore_broadcast_ssid=0\n"
-        "wpa=0\n"
-        "pid_file=/tmp/dubsiren_hostapd.pid\n",
+        "wpa=0\n",
         iface, ssid.c_str());
 
     fclose(f);
@@ -237,7 +236,7 @@ bool ap_mode::start_ap()
 
     // 4. Start hostapd (daemonized with -B)
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "hostapd %s -B", HOSTAPD_CONF);
+    snprintf(cmd, sizeof(cmd), "hostapd %s -B -P /tmp/dubsiren_hostapd.pid", HOSTAPD_CONF);
     int ret = system(cmd);
     if (ret != 0) {
         slog("AP: Failed to start hostapd (exit %d)", ret);
