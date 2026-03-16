@@ -1990,6 +1990,10 @@ static bool g_combo_feedback_given = false;
 // normal button-release actions (save preset, bank toggle) so they don't
 // fire after the user releases a 3-button hold.
 static std::atomic<bool> g_combo_suppress{false};
+// Grace period: after a combo fires (enter/exit AP), ignore new combos
+// until all buttons have been released for at least 2 seconds.
+static std::chrono::steady_clock::time_point g_combo_release_time{};
+static bool g_combo_cooldown = false;
 
 // Forward declarations for AP mode
 static void enter_ap_mode();
@@ -2000,10 +2004,25 @@ static void check_ap_combo(AudioEngine& audio)
     bool t = g_btn_trigger.load();
     bool s = g_btn_shift.load();
     bool p = g_btn_preset.load();
+    bool none = !t && !s && !p;
+    bool all  = t && s && p;
 
-    // (debug removed — button callback now logs state)
-
-    bool all = t && s && p;
+    // Grace period: after a combo fires, require all buttons released for 2s
+    // before accepting a new combo.  This prevents the enter-AP hold from
+    // immediately starting the exit-AP countdown on release.
+    if (g_combo_cooldown) {
+        if (!none) {
+            // Buttons still held/pressed — keep resetting the release clock
+            g_combo_release_time = std::chrono::steady_clock::now();
+            return;
+        }
+        auto since_release = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - g_combo_release_time).count();
+        if (since_release < 2000) return;
+        g_combo_cooldown = false;
+        g_combo_suppress.store(false);
+        slog("AP COMBO: Cooldown cleared — ready for new combo");
+    }
 
     if (all && !g_combo_active) {
         g_combo_active = true;
@@ -2016,7 +2035,7 @@ static void check_ap_combo(AudioEngine& audio)
             slog("AP COMBO: Released (button dropped)");
         g_combo_active = false;
         // Clear suppress once all buttons are released
-        if (!t && !s && !p)
+        if (none)
             g_combo_suppress.store(false);
         return;
     }
@@ -2034,6 +2053,8 @@ static void check_ap_combo(AudioEngine& audio)
 
     if (elapsed >= 3000) {
         g_combo_active = false;
+        g_combo_cooldown = true;
+        g_combo_release_time = std::chrono::steady_clock::now();
         slog("AP COMBO: 3s reached — %s AP mode",
              g_ap_mode.load() ? "exiting" : "entering");
         if (g_ap_mode.load()) {
