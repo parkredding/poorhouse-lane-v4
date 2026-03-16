@@ -125,11 +125,25 @@ static bool try_virtual_ap()
 
     // Remove stale virtual interface from previous run
     system("iw dev ap0 del 2>/dev/null");
+    usleep(300000);
+
+    // Stop anything that might hold the phy lock
+    system("pkill -x hostapd 2>/dev/null");
     usleep(200000);
 
+    // Try iw dev first, then iw phy as fallback
     snprintf(cmd, sizeof(cmd), "iw dev %s interface add ap0 type __ap", AP_PHY_IFACE);
     int ret = system(cmd);
-    if (ret != 0) return false;
+    if (ret != 0) {
+        slog("AP: 'iw dev' failed — trying 'iw phy'");
+        // Find the phy name for wlan0 and try phy-based creation
+        ret = system("iw phy $(iw dev wlan0 info | awk '/wiphy/{print \"phy\"$2}') "
+                      "interface add ap0 type __ap 2>/dev/null");
+        if (ret != 0) {
+            slog("AP: 'iw phy' also failed (exit %d)", ret);
+            return false;
+        }
+    }
 
     // Tell NetworkManager to ignore the virtual interface
     system("nmcli device set ap0 managed no 2>/dev/null");
@@ -139,6 +153,14 @@ static bool try_virtual_ap()
     snprintf(cmd, sizeof(cmd), "ip addr add %s/24 dev ap0", AP_IP);
     system(cmd);
     system("ip link set ap0 up");
+
+    // Verify ap0 actually came up
+    ret = system("ip link show ap0 2>/dev/null | grep -q 'state UP\\|state UNKNOWN'");
+    if (ret != 0) {
+        slog("AP: ap0 created but failed to come up");
+        system("iw dev ap0 del 2>/dev/null");
+        return false;
+    }
 
     return true;
 }
