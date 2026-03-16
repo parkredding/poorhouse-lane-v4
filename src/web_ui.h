@@ -454,6 +454,14 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
     <pre id="syslog-content" style="background:var(--bg);border:1px solid var(--border);padding:10px;max-height:250px;overflow:auto;font-family:var(--font);font-size:0.6rem;line-height:1.6;color:var(--text);white-space:pre-wrap;word-break:break-all"></pre>
   </div>
   <div class="card">
+    <h3>Shell</h3>
+    <pre id="shell-output" style="background:#111;border:1px solid var(--border);padding:10px;max-height:300px;min-height:80px;overflow:auto;font-family:monospace;font-size:0.65rem;line-height:1.5;color:#0f0;white-space:pre-wrap;word-break:break-all"></pre>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input type="text" id="shell-cmd" placeholder="Enter command..." style="flex:1;padding:8px;font-family:monospace;font-size:0.8rem;background:var(--bg);border:1px solid var(--border);color:var(--text)" onkeydown="if(event.key==='Enter')runShell()" autocomplete="off" autocorrect="off" spellcheck="false">
+      <button class="btn btn-primary btn-sm" onclick="runShell()" id="btn-shell-run">Run</button>
+    </div>
+  </div>
+  <div class="card">
     <h3>Updates</h3>
     <p id="version-info" style="color:var(--text-lo);margin-bottom:8px;font-size:0.75rem">--</p>
     <div class="form-group">
@@ -1006,6 +1014,36 @@ function toggleSyslogAuto() {
   if (document.getElementById('syslog-auto').checked) startSyslogPoll();
   else stopSyslogPoll();
 }
+
+// Shell
+let shellHistory = [];
+let shellHistIdx = -1;
+async function runShell() {
+  const input = document.getElementById('shell-cmd');
+  const cmd = input.value.trim();
+  if (!cmd) return;
+  shellHistory.push(cmd);
+  shellHistIdx = shellHistory.length;
+  const out = document.getElementById('shell-output');
+  out.textContent += (out.textContent ? '\n' : '') + '$ ' + cmd + '\n';
+  input.value = '';
+  document.getElementById('btn-shell-run').disabled = true;
+  try {
+    const r = await fetch('/api/system/shell', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
+    const d = await r.json();
+    if (d.output) out.textContent += d.output;
+    if (d.exit !== 0) out.textContent += '\n[exit ' + d.exit + ']';
+  } catch(e) { out.textContent += '\n[error: ' + e.message + ']'; }
+  out.scrollTop = out.scrollHeight;
+  document.getElementById('btn-shell-run').disabled = false;
+  input.focus();
+}
+document.addEventListener('keydown', function(e) {
+  const input = document.getElementById('shell-cmd');
+  if (document.activeElement !== input) return;
+  if (e.key === 'ArrowUp' && shellHistory.length) { e.preventDefault(); shellHistIdx = Math.max(0, shellHistIdx-1); input.value = shellHistory[shellHistIdx] || ''; }
+  if (e.key === 'ArrowDown' && shellHistory.length) { e.preventDefault(); shellHistIdx = Math.min(shellHistory.length, shellHistIdx+1); input.value = shellHistory[shellHistIdx] || ''; }
+});
 
 async function restartService() {
   try { await fetch('/api/system/restart',{method:'POST'}); toast('Restarting...'); } catch(e) { toast('Error',true); }
