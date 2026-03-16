@@ -41,10 +41,12 @@
 #include <cmath>
 #include <cstdlib>
 #include <sys/wait.h>
+#include <array>
 #include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <map>
 
@@ -137,10 +139,10 @@ static std::atomic<bool>  g_ap_mode{false};
 
 // Theme (server-side, persisted to config)
 static std::atomic<int>   g_theme{0};  // index into theme list
-static const char* const THEME_IDS[] = {
+static constexpr std::array<const char*, 6> THEME_IDS = {
     "midnight", "deep-dub", "reggae", "steppers", "silver", "concrete"
 };
-static constexpr int NUM_THEMES = sizeof(THEME_IDS) / sizeof(THEME_IDS[0]);
+static constexpr int NUM_THEMES = THEME_IDS.size();
 
 // ─── Encoder parameter mapping ──────────────────────────────────────
 //
@@ -188,24 +190,19 @@ static int g_encoder_map_b[5] = {5, 6, 7, 8, 9};  // lfo_depth, release, reso, d
 static std::mutex g_encoder_map_mutex;
 
 static std::atomic<float>* param_atomic_for(const char* name) {
-    if (strcmp(name, "freq") == 0) return &g_freq;
-    if (strcmp(name, "lfo_rate") == 0) return &g_lfo_rate;
-    if (strcmp(name, "filter_cutoff") == 0) return &g_filter_cutoff;
-    if (strcmp(name, "delay_time") == 0) return &g_delay_time;
-    if (strcmp(name, "delay_feedback") == 0) return &g_delay_feedback;
-    if (strcmp(name, "lfo_depth") == 0) return &g_lfo_depth;
-    if (strcmp(name, "release_time") == 0) return &g_release_time;
-    if (strcmp(name, "filter_reso") == 0) return &g_filter_reso;
-    if (strcmp(name, "delay_mix") == 0) return &g_delay_mix;
-    if (strcmp(name, "reverb_mix") == 0) return &g_reverb_mix;
-    if (strcmp(name, "phaser_mix") == 0) return &g_phaser_mix;
-    if (strcmp(name, "chorus_mix") == 0) return &g_chorus_mix;
-    if (strcmp(name, "flanger_mix") == 0) return &g_flanger_mix;
-    if (strcmp(name, "saturator_mix") == 0) return &g_saturator_mix;
-    if (strcmp(name, "saturator_drive") == 0) return &g_saturator_drive;
-    if (strcmp(name, "tape_wobble") == 0) return &g_tape_wobble;
-    if (strcmp(name, "tape_flutter") == 0) return &g_tape_flutter;
-    return nullptr;
+    static const std::map<std::string, std::atomic<float>*> param_map = {
+        {"freq", &g_freq}, {"lfo_rate", &g_lfo_rate},
+        {"filter_cutoff", &g_filter_cutoff}, {"delay_time", &g_delay_time},
+        {"delay_feedback", &g_delay_feedback}, {"lfo_depth", &g_lfo_depth},
+        {"release_time", &g_release_time}, {"filter_reso", &g_filter_reso},
+        {"delay_mix", &g_delay_mix}, {"reverb_mix", &g_reverb_mix},
+        {"phaser_mix", &g_phaser_mix}, {"chorus_mix", &g_chorus_mix},
+        {"flanger_mix", &g_flanger_mix}, {"saturator_mix", &g_saturator_mix},
+        {"saturator_drive", &g_saturator_drive},
+        {"tape_wobble", &g_tape_wobble}, {"tape_flutter", &g_tape_flutter},
+    };
+    auto it = param_map.find(name);
+    return (it != param_map.end()) ? it->second : nullptr;
 }
 
 static int find_param_index(const char* name) {
@@ -273,12 +270,12 @@ struct DubPreset {
     float       tape_wobble;    // tape wobble amount (0–1)
     float       tape_flutter;   // tape flutter amount (0–1)
     const char* category;       // preset category for web UI grouping
-    // Extended fields — modulation & saturator (0 = leave unchanged)
+    // Extended fields — modulation & saturator
     float       phaser_mix;     // 0–1 (0=off)
     float       chorus_mix;     // 0–1 (0=off)
     float       flanger_mix;    // 0–1 (0=off)
     float       saturator_mix;  // 0–1 (0=off)
-    float       saturator_drive;// 0–1
+    float       saturator_drive;// 0–1 (-1 = use default 0.5)
     int         fx_chain;       // -1 = leave unchanged, 0–5 = set chain order
 };
 
@@ -640,7 +637,7 @@ static void apply_dub_preset(const DubPreset& p)
     g_chorus_mix.store(p.chorus_mix);
     g_flanger_mix.store(p.flanger_mix);
     g_saturator_mix.store(p.saturator_mix);
-    g_saturator_drive.store(p.saturator_drive > 0.0f ? p.saturator_drive : 0.5f);
+    g_saturator_drive.store(p.saturator_drive >= 0.0f ? p.saturator_drive : 0.5f);
     if (p.fx_chain >= 0) g_fx_chain.store(p.fx_chain);
 
     update_link_eff();
@@ -2069,24 +2066,22 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.get_preset_state = []() -> std::string {
-        char buf[512];
-        snprintf(buf, sizeof(buf),
-            "{\"freq\":%.1f,\"waveform\":%d,\"lfo_rate\":%.2f,\"lfo_depth\":%.2f,"
-            "\"filter_cutoff\":%.0f,\"filter_reso\":%.2f,"
-            "\"delay_time\":%.3f,\"delay_feedback\":%.2f,\"delay_mix\":%.2f,"
-            "\"reverb_mix\":%.2f,\"release_time\":%.3f,"
-            "\"reverb_type\":%d,\"delay_type\":%d,"
-            "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
-            "\"fx_chain\":%d}",
-            g_freq.load(), g_waveform.load(),
-            g_lfo_rate.load(), g_lfo_depth.load(),
-            g_filter_cutoff.load(), g_filter_reso.load(),
-            g_delay_time.load(), g_delay_feedback.load(), g_delay_mix.load(),
-            g_reverb_mix.load(), g_release_time.load(),
-            g_reverb_type.load(), g_delay_type.load(),
-            g_tape_wobble.load(), g_tape_flutter.load(),
-            g_fx_chain.load());
-        return std::string(buf);
+        return "{\"freq\":" + std::to_string(g_freq.load()) +
+            ",\"waveform\":" + std::to_string(g_waveform.load()) +
+            ",\"lfo_rate\":" + std::to_string(g_lfo_rate.load()) +
+            ",\"lfo_depth\":" + std::to_string(g_lfo_depth.load()) +
+            ",\"filter_cutoff\":" + std::to_string(g_filter_cutoff.load()) +
+            ",\"filter_reso\":" + std::to_string(g_filter_reso.load()) +
+            ",\"delay_time\":" + std::to_string(g_delay_time.load()) +
+            ",\"delay_feedback\":" + std::to_string(g_delay_feedback.load()) +
+            ",\"delay_mix\":" + std::to_string(g_delay_mix.load()) +
+            ",\"reverb_mix\":" + std::to_string(g_reverb_mix.load()) +
+            ",\"release_time\":" + std::to_string(g_release_time.load()) +
+            ",\"reverb_type\":" + std::to_string(g_reverb_type.load()) +
+            ",\"delay_type\":" + std::to_string(g_delay_type.load()) +
+            ",\"tape_wobble\":" + std::to_string(g_tape_wobble.load()) +
+            ",\"tape_flutter\":" + std::to_string(g_tape_flutter.load()) +
+            ",\"fx_chain\":" + std::to_string(g_fx_chain.load()) + "}";
     };
 
     cb.apply_preset = [](const std::string& category, int index) -> bool {
@@ -2214,27 +2209,21 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.get_siren_options = []() -> std::string {
-        char buf[768];
-        int theme_idx = g_theme.load();
-        snprintf(buf, sizeof(buf),
-            "{\"reverb_type\":%d,\"delay_type\":%d,"
-            "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
-            "\"fx_chain\":%d,"
-            "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
-            "\"sweep_dir\":%.0f,"
-            "\"phaser_mix\":%.2f,\"chorus_mix\":%.2f,\"flanger_mix\":%.2f,"
-            "\"saturator_mix\":%.2f,\"saturator_drive\":%.2f,"
-            "\"theme\":\"%s\"}",
-            g_reverb_type.load(), g_delay_type.load(),
-            g_tape_wobble.load(), g_tape_flutter.load(),
-            g_fx_chain.load(),
-            g_lfo_pitch_link.load() ? "true" : "false",
-            g_super_drip.load() ? "true" : "false",
-            g_sweep_dir.load(),
-            g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load(),
-            g_saturator_mix.load(), g_saturator_drive.load(),
-            (theme_idx >= 0 && theme_idx < NUM_THEMES) ? THEME_IDS[theme_idx] : "midnight");
-        return std::string(buf);
+        int theme_idx = std::clamp(g_theme.load(), 0, NUM_THEMES - 1);
+        return "{\"reverb_type\":" + std::to_string(g_reverb_type.load()) +
+            ",\"delay_type\":" + std::to_string(g_delay_type.load()) +
+            ",\"tape_wobble\":" + std::to_string(g_tape_wobble.load()) +
+            ",\"tape_flutter\":" + std::to_string(g_tape_flutter.load()) +
+            ",\"fx_chain\":" + std::to_string(g_fx_chain.load()) +
+            ",\"lfo_pitch_link\":" + (g_lfo_pitch_link.load() ? "true" : "false") +
+            ",\"super_drip\":" + (g_super_drip.load() ? "true" : "false") +
+            ",\"sweep_dir\":" + std::to_string(static_cast<int>(g_sweep_dir.load())) +
+            ",\"phaser_mix\":" + std::to_string(g_phaser_mix.load()) +
+            ",\"chorus_mix\":" + std::to_string(g_chorus_mix.load()) +
+            ",\"flanger_mix\":" + std::to_string(g_flanger_mix.load()) +
+            ",\"saturator_mix\":" + std::to_string(g_saturator_mix.load()) +
+            ",\"saturator_drive\":" + std::to_string(g_saturator_drive.load()) +
+            ",\"theme\":\"" + THEME_IDS[theme_idx] + "\"}";
     };
 
     cb.set_siren_options = [](const std::string& body) -> bool {
@@ -2595,24 +2584,19 @@ static web_server::Callbacks build_web_callbacks()
             json += buf;
         }
         json += "],\"config\":{";
-        char cfg[256];
-        snprintf(cfg, sizeof(cfg),
-            "\"reverb_type\":%d,\"delay_type\":%d,"
-            "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
-            "\"fx_chain\":%d,"
-            "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
-            "\"phaser_mix\":%.2f,\"chorus_mix\":%.2f,\"flanger_mix\":%.2f,"
-            "\"saturator_mix\":%.2f,\"saturator_drive\":%.2f,"
-            "\"theme\":\"%s\"",
-            g_reverb_type.load(), g_delay_type.load(),
-            g_tape_wobble.load(), g_tape_flutter.load(),
-            g_fx_chain.load(),
-            g_lfo_pitch_link.load() ? "true" : "false",
-            g_super_drip.load() ? "true" : "false",
-            g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load(),
-            g_saturator_mix.load(), g_saturator_drive.load(),
-            THEME_IDS[std::clamp(g_theme.load(), 0, NUM_THEMES - 1)]);
-        json += cfg;
+        json += "\"reverb_type\":" + std::to_string(g_reverb_type.load()) +
+            ",\"delay_type\":" + std::to_string(g_delay_type.load()) +
+            ",\"tape_wobble\":" + std::to_string(g_tape_wobble.load()) +
+            ",\"tape_flutter\":" + std::to_string(g_tape_flutter.load()) +
+            ",\"fx_chain\":" + std::to_string(g_fx_chain.load()) +
+            ",\"lfo_pitch_link\":" + (g_lfo_pitch_link.load() ? "true" : "false") +
+            ",\"super_drip\":" + (g_super_drip.load() ? "true" : "false") +
+            ",\"phaser_mix\":" + std::to_string(g_phaser_mix.load()) +
+            ",\"chorus_mix\":" + std::to_string(g_chorus_mix.load()) +
+            ",\"flanger_mix\":" + std::to_string(g_flanger_mix.load()) +
+            ",\"saturator_mix\":" + std::to_string(g_saturator_mix.load()) +
+            ",\"saturator_drive\":" + std::to_string(g_saturator_drive.load()) +
+            ",\"theme\":\"" + THEME_IDS[std::clamp(g_theme.load(), 0, NUM_THEMES - 1)] + "\"";
         json += "}}";
         return json;
     };
@@ -2747,36 +2731,34 @@ static web_server::Callbacks build_web_callbacks()
 
     // ── Live DSP state ─────────────────────────────────────────────
     cb.get_dsp_state = []() -> std::string {
-        char buf[1024];
-        snprintf(buf, sizeof(buf),
-            "{\"freq\":%.2f,\"lfo_rate\":%.4f,\"lfo_depth\":%.4f,"
-            "\"filter_cutoff\":%.2f,\"filter_reso\":%.4f,"
-            "\"delay_time\":%.4f,\"delay_feedback\":%.4f,\"delay_mix\":%.4f,"
-            "\"reverb_mix\":%.4f,\"release_time\":%.4f,"
-            "\"waveform\":%d,\"lfo_waveform\":%d,"
-            "\"pitch_env\":%d,\"sweep_dir\":%.1f,"
-            "\"reverb_type\":%d,\"delay_type\":%d,"
-            "\"tape_wobble\":%.4f,\"tape_flutter\":%.4f,"
-            "\"fx_chain\":%d,"
-            "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
-            "\"phaser_mix\":%.4f,\"chorus_mix\":%.4f,\"flanger_mix\":%.4f,"
-            "\"saturator_mix\":%.4f,\"saturator_drive\":%.4f,"
-            "\"active_bank\":%d,\"active_preset\":%d}",
-            g_freq.load(), g_lfo_rate.load(), g_lfo_depth.load(),
-            g_filter_cutoff.load(), g_filter_reso.load(),
-            g_delay_time.load(), g_delay_feedback.load(), g_delay_mix.load(),
-            g_reverb_mix.load(), g_release_time.load(),
-            g_waveform.load(), g_lfo_waveform.load(),
-            g_pitch_env.load(), g_sweep_dir.load(),
-            g_reverb_type.load(), g_delay_type.load(),
-            g_tape_wobble.load(), g_tape_flutter.load(),
-            g_fx_chain.load(),
-            g_lfo_pitch_link.load() ? "true" : "false",
-            g_super_drip.load() ? "true" : "false",
-            g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load(),
-            g_saturator_mix.load(), g_saturator_drive.load(),
-            g_bank_mode.load(), g_preset.load());
-        return std::string(buf);
+        return "{\"freq\":" + std::to_string(g_freq.load()) +
+            ",\"lfo_rate\":" + std::to_string(g_lfo_rate.load()) +
+            ",\"lfo_depth\":" + std::to_string(g_lfo_depth.load()) +
+            ",\"filter_cutoff\":" + std::to_string(g_filter_cutoff.load()) +
+            ",\"filter_reso\":" + std::to_string(g_filter_reso.load()) +
+            ",\"delay_time\":" + std::to_string(g_delay_time.load()) +
+            ",\"delay_feedback\":" + std::to_string(g_delay_feedback.load()) +
+            ",\"delay_mix\":" + std::to_string(g_delay_mix.load()) +
+            ",\"reverb_mix\":" + std::to_string(g_reverb_mix.load()) +
+            ",\"release_time\":" + std::to_string(g_release_time.load()) +
+            ",\"waveform\":" + std::to_string(g_waveform.load()) +
+            ",\"lfo_waveform\":" + std::to_string(g_lfo_waveform.load()) +
+            ",\"pitch_env\":" + std::to_string(g_pitch_env.load()) +
+            ",\"sweep_dir\":" + std::to_string(g_sweep_dir.load()) +
+            ",\"reverb_type\":" + std::to_string(g_reverb_type.load()) +
+            ",\"delay_type\":" + std::to_string(g_delay_type.load()) +
+            ",\"tape_wobble\":" + std::to_string(g_tape_wobble.load()) +
+            ",\"tape_flutter\":" + std::to_string(g_tape_flutter.load()) +
+            ",\"fx_chain\":" + std::to_string(g_fx_chain.load()) +
+            ",\"lfo_pitch_link\":" + (g_lfo_pitch_link.load() ? "true" : "false") +
+            ",\"super_drip\":" + (g_super_drip.load() ? "true" : "false") +
+            ",\"phaser_mix\":" + std::to_string(g_phaser_mix.load()) +
+            ",\"chorus_mix\":" + std::to_string(g_chorus_mix.load()) +
+            ",\"flanger_mix\":" + std::to_string(g_flanger_mix.load()) +
+            ",\"saturator_mix\":" + std::to_string(g_saturator_mix.load()) +
+            ",\"saturator_drive\":" + std::to_string(g_saturator_drive.load()) +
+            ",\"active_bank\":" + std::to_string(g_bank_mode.load()) +
+            ",\"active_preset\":" + std::to_string(g_preset.load()) + "}";
     };
 
     cb.set_dsp_param = [](const std::string& name, float value) -> bool {
