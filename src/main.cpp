@@ -135,6 +135,13 @@ static std::atomic<float> g_saturator_drive{0.5f};  // 0–1 drive amount
 // AP mode flag
 static std::atomic<bool>  g_ap_mode{false};
 
+// Theme (server-side, persisted to config)
+static std::atomic<int>   g_theme{0};  // index into theme list
+static const char* const THEME_IDS[] = {
+    "midnight", "deep-dub", "reggae", "steppers", "silver", "concrete"
+};
+static constexpr int NUM_THEMES = sizeof(THEME_IDS) / sizeof(THEME_IDS[0]);
+
 // ─── Encoder parameter mapping ──────────────────────────────────────
 //
 // Table-driven encoder → parameter assignment.  Each encoder (0–4) in
@@ -150,16 +157,27 @@ struct EncoderParam {
 };
 
 static const EncoderParam PARAM_TABLE[] = {
-    {"freq",           "Frequency",       30.0f,   8000.0f,  440.0f,  true,  1.0594630943592953f},
-    {"lfo_rate",       "LFO Rate",        0.1f,    20.0f,    0.35f,   true,  1.12f},
-    {"filter_cutoff",  "Filter Cutoff",   20.0f,   20000.0f, 8000.0f, true,  1.122462048309373f},
-    {"delay_time",     "Delay Time",      0.001f,  1.0f,     0.375f,  true,  1.10f},
-    {"delay_feedback", "Delay Feedback",  0.0f,    0.95f,    0.55f,   false, 0.04f},
-    {"lfo_depth",      "LFO Depth",       0.0f,    1.0f,     0.35f,   false, 0.04f},
-    {"release_time",   "Release Time",    0.01f,   5.0f,     0.05f,   true,  1.15f},
-    {"filter_reso",    "Filter Resonance",0.0f,    0.95f,    0.0f,    false, 0.03f},
-    {"delay_mix",      "Delay Mix",       0.0f,    1.0f,     0.30f,   false, 0.05f},
-    {"reverb_mix",     "Reverb Mix",      0.0f,    1.0f,     0.35f,   false, 0.05f},
+    // Original 10 parameters (indices 0–9)
+    {"freq",           "Frequency",        30.0f,   8000.0f,  440.0f,  true,  1.0594630943592953f},
+    {"lfo_rate",       "LFO Rate",         0.1f,    20.0f,    0.35f,   true,  1.12f},
+    {"filter_cutoff",  "Filter Cutoff",    20.0f,   20000.0f, 8000.0f, true,  1.122462048309373f},
+    {"delay_time",     "Delay Time",       0.001f,  1.0f,     0.375f,  true,  1.10f},
+    {"delay_feedback", "Delay Feedback",   0.0f,    0.95f,    0.55f,   false, 0.04f},
+    {"lfo_depth",      "LFO Depth",        0.0f,    1.0f,     0.35f,   false, 0.04f},
+    {"release_time",   "Release Time",     0.01f,   5.0f,     0.05f,   true,  1.15f},
+    {"filter_reso",    "Filter Resonance", 0.0f,    0.95f,    0.0f,    false, 0.03f},
+    {"delay_mix",      "Delay Mix",        0.0f,    1.0f,     0.30f,   false, 0.05f},
+    {"reverb_mix",     "Reverb Mix",       0.0f,    1.0f,     0.35f,   false, 0.05f},
+    // Modulation effects (indices 10–12)
+    {"phaser_mix",     "Phaser Wet/Dry",   0.0f,    1.0f,     0.0f,    false, 0.05f},
+    {"chorus_mix",     "Chorus Wet/Dry",   0.0f,    1.0f,     0.0f,    false, 0.05f},
+    {"flanger_mix",    "Flanger Wet/Dry",  0.0f,    1.0f,     0.0f,    false, 0.05f},
+    // Tape saturator (indices 13–14)
+    {"saturator_mix",  "Saturator Wet/Dry",0.0f,    1.0f,     0.0f,    false, 0.05f},
+    {"saturator_drive","Saturator Drive",  0.0f,    1.0f,     0.5f,    false, 0.04f},
+    // Tape delay parameters (indices 15–16)
+    {"tape_wobble",    "Tape Wobble",      0.0f,    1.0f,     1.0f,    false, 0.05f},
+    {"tape_flutter",   "Tape Flutter",     0.0f,    1.0f,     1.0f,    false, 0.05f},
 };
 static constexpr int NUM_PARAMS = sizeof(PARAM_TABLE) / sizeof(PARAM_TABLE[0]);
 
@@ -180,6 +198,13 @@ static std::atomic<float>* param_atomic_for(const char* name) {
     if (strcmp(name, "filter_reso") == 0) return &g_filter_reso;
     if (strcmp(name, "delay_mix") == 0) return &g_delay_mix;
     if (strcmp(name, "reverb_mix") == 0) return &g_reverb_mix;
+    if (strcmp(name, "phaser_mix") == 0) return &g_phaser_mix;
+    if (strcmp(name, "chorus_mix") == 0) return &g_chorus_mix;
+    if (strcmp(name, "flanger_mix") == 0) return &g_flanger_mix;
+    if (strcmp(name, "saturator_mix") == 0) return &g_saturator_mix;
+    if (strcmp(name, "saturator_drive") == 0) return &g_saturator_drive;
+    if (strcmp(name, "tape_wobble") == 0) return &g_tape_wobble;
+    if (strcmp(name, "tape_flutter") == 0) return &g_tape_flutter;
     return nullptr;
 }
 
@@ -248,6 +273,13 @@ struct DubPreset {
     float       tape_wobble;    // tape wobble amount (0–1)
     float       tape_flutter;   // tape flutter amount (0–1)
     const char* category;       // preset category for web UI grouping
+    // Extended fields — modulation & saturator (0 = leave unchanged)
+    float       phaser_mix;     // 0–1 (0=off)
+    float       chorus_mix;     // 0–1 (0=off)
+    float       flanger_mix;    // 0–1 (0=off)
+    float       saturator_mix;  // 0–1 (0=off)
+    float       saturator_drive;// 0–1
+    int         fx_chain;       // -1 = leave unchanged, 0–5 = set chain order
 };
 
 static constexpr int NUM_PRESETS = 4;
@@ -311,7 +343,7 @@ static const DubPreset EXPERIMENTAL[NUM_EXPERIMENTAL] = {
 // Accessible via the AP mode web UI for browsing and loading into
 // user preset slots.
 
-static constexpr int NUM_LIBRARY_PRESETS = 40;
+static constexpr int NUM_LIBRARY_PRESETS = 48;
 
 static const DubPreset PRESET_LIBRARY[NUM_LIBRARY_PRESETS] = {
     // ── Classic Dub (8) ─────────────────────────────────────────────
@@ -529,6 +561,56 @@ static const DubPreset PRESET_LIBRARY[NUM_LIBRARY_PRESETS] = {
         0.050f, 0.70f, 0.30f, 0.10f, 0.010f, 0.0f, 0,
         3, 1, 0.0f, 0.0f, "Sound FX"
     },
+
+    // ── Dub FX (8) — modulation/saturator showcase ─────────────────
+    {
+        "Phase Dub", 2, 0, 440.0f, 0.15f, 0.80f, 2500.0f, 0.35f,
+        0.400f, 0.65f, 0.45f, 0.50f, 2.000f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Dub FX",
+        0.65f, 0.0f, 0.0f, 0.0f, 0.5f, 0
+    },
+    {
+        "Chorus Siren", 1, 1, 700.0f, 3.0f, 0.70f, 3500.0f, 0.40f,
+        0.350f, 0.55f, 0.35f, 0.40f, 1.200f, -1.0f, -1,
+        0, 0, 0.8f, 0.7f, "Dub FX",
+        0.0f, 0.70f, 0.0f, 0.0f, 0.5f, 0
+    },
+    {
+        "Flange Madness", 1, 4, 900.0f, 5.0f, 0.85f, 4000.0f, 0.50f,
+        0.250f, 0.70f, 0.50f, 0.35f, 0.800f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Dub FX",
+        0.0f, 0.0f, 0.75f, 0.0f, 0.5f, 0
+    },
+    {
+        "Tape Warmth", 2, 0, 350.0f, 0.2f, 0.60f, 2000.0f, 0.45f,
+        0.450f, 0.70f, 0.50f, 0.55f, 2.500f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Dub FX",
+        0.0f, 0.0f, 0.0f, 0.75f, 0.70f, 0
+    },
+    {
+        "Full FX Stack", 1, 0, 550.0f, 0.12f, 0.90f, 3000.0f, 0.30f,
+        0.400f, 0.60f, 0.40f, 0.50f, 2.000f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Dub FX",
+        0.40f, 0.35f, 0.0f, 0.50f, 0.55f, 0
+    },
+    {
+        "Phaser Steppa", 1, 4, 800.0f, 4.0f, 0.75f, 2800.0f, 0.50f,
+        0.300f, 0.65f, 0.45f, 0.40f, 1.000f, -1.0f, -1,
+        0, 0, 0.9f, 0.8f, "Dub FX",
+        0.80f, 0.0f, 0.0f, 0.30f, 0.45f, 2
+    },
+    {
+        "Saturated Echo", 2, 3, 500.0f, 1.5f, 0.65f, 2200.0f, 0.55f,
+        0.500f, 0.80f, 0.60f, 0.45f, 1.800f, -1.0f, -1,
+        0, 0, 0.7f, 0.6f, "Dub FX",
+        0.0f, 0.0f, 0.0f, 0.85f, 0.80f, 1
+    },
+    {
+        "Chorus Flange Dub", 0, 0, 300.0f, 0.08f, 1.00f, 1800.0f, 0.60f,
+        0.600f, 0.75f, 0.55f, 0.65f, 3.000f, -1.0f, -1,
+        0, 0, 1.0f, 1.0f, "Dub FX",
+        0.0f, 0.55f, 0.50f, 0.0f, 0.5f, 0
+    },
 };
 
 static std::atomic<int> g_preset{0};    // current preset index (0–3)
@@ -553,6 +635,13 @@ static void apply_dub_preset(const DubPreset& p)
     g_delay_type.store(p.delay_type);
     g_tape_wobble.store(p.tape_wobble);
     g_tape_flutter.store(p.tape_flutter);
+    // Extended FX fields
+    g_phaser_mix.store(p.phaser_mix);
+    g_chorus_mix.store(p.chorus_mix);
+    g_flanger_mix.store(p.flanger_mix);
+    g_saturator_mix.store(p.saturator_mix);
+    g_saturator_drive.store(p.saturator_drive > 0.0f ? p.saturator_drive : 0.5f);
+    if (p.fx_chain >= 0) g_fx_chain.store(p.fx_chain);
 
     update_link_eff();
 }
@@ -948,6 +1037,7 @@ static void save_siren_config()
     fprintf(f, "saturator_drive=%.6f\n", g_saturator_drive.load());
     fprintf(f, "active_bank=%d\n",    g_bank_mode.load());
     fprintf(f, "active_preset=%d\n",  g_preset.load());
+    fprintf(f, "theme=%d\n",          g_theme.load());
 
     // Encoder mapping
     {
@@ -1057,6 +1147,10 @@ static void load_siren_config()
             g_bank_mode.store(atoi(val));
         else if (strcmp(key, "active_preset") == 0)
             g_preset.store(atoi(val));
+        else if (strcmp(key, "theme") == 0) {
+            int t = atoi(val);
+            if (t >= 0 && t < NUM_THEMES) g_theme.store(t);
+        }
         // Encoder mapping
         else if (strncmp(key, "enc_a", 5) == 0 && key[5] >= '0' && key[5] <= '4') {
             int idx = key[5] - '0';
@@ -2120,7 +2214,8 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.get_siren_options = []() -> std::string {
-        char buf[640];
+        char buf[768];
+        int theme_idx = g_theme.load();
         snprintf(buf, sizeof(buf),
             "{\"reverb_type\":%d,\"delay_type\":%d,"
             "\"tape_wobble\":%.2f,\"tape_flutter\":%.2f,"
@@ -2128,7 +2223,8 @@ static web_server::Callbacks build_web_callbacks()
             "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
             "\"sweep_dir\":%.0f,"
             "\"phaser_mix\":%.2f,\"chorus_mix\":%.2f,\"flanger_mix\":%.2f,"
-            "\"saturator_mix\":%.2f,\"saturator_drive\":%.2f}",
+            "\"saturator_mix\":%.2f,\"saturator_drive\":%.2f,"
+            "\"theme\":\"%s\"}",
             g_reverb_type.load(), g_delay_type.load(),
             g_tape_wobble.load(), g_tape_flutter.load(),
             g_fx_chain.load(),
@@ -2136,7 +2232,8 @@ static web_server::Callbacks build_web_callbacks()
             g_super_drip.load() ? "true" : "false",
             g_sweep_dir.load(),
             g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load(),
-            g_saturator_mix.load(), g_saturator_drive.load());
+            g_saturator_mix.load(), g_saturator_drive.load(),
+            (theme_idx >= 0 && theme_idx < NUM_THEMES) ? THEME_IDS[theme_idx] : "midnight");
         return std::string(buf);
     };
 
@@ -2177,6 +2274,12 @@ static web_server::Callbacks build_web_callbacks()
         if (!sm.empty()) g_saturator_mix.store(std::stof(sm));
         auto sdr = get_val("saturator_drive");
         if (!sdr.empty()) g_saturator_drive.store(std::stof(sdr));
+        auto th = get_val("theme");
+        if (!th.empty()) {
+            for (int i = 0; i < NUM_THEMES; i++) {
+                if (th == THEME_IDS[i]) { g_theme.store(i); break; }
+            }
+        }
 
         save_siren_config();
         return true;
@@ -2499,14 +2602,16 @@ static web_server::Callbacks build_web_callbacks()
             "\"fx_chain\":%d,"
             "\"lfo_pitch_link\":%s,\"super_drip\":%s,"
             "\"phaser_mix\":%.2f,\"chorus_mix\":%.2f,\"flanger_mix\":%.2f,"
-            "\"saturator_mix\":%.2f,\"saturator_drive\":%.2f",
+            "\"saturator_mix\":%.2f,\"saturator_drive\":%.2f,"
+            "\"theme\":\"%s\"",
             g_reverb_type.load(), g_delay_type.load(),
             g_tape_wobble.load(), g_tape_flutter.load(),
             g_fx_chain.load(),
             g_lfo_pitch_link.load() ? "true" : "false",
             g_super_drip.load() ? "true" : "false",
             g_phaser_mix.load(), g_chorus_mix.load(), g_flanger_mix.load(),
-            g_saturator_mix.load(), g_saturator_drive.load());
+            g_saturator_mix.load(), g_saturator_drive.load(),
+            THEME_IDS[std::clamp(g_theme.load(), 0, NUM_THEMES - 1)]);
         json += cfg;
         json += "}}";
         return json;
@@ -2572,6 +2677,18 @@ static web_server::Callbacks build_web_callbacks()
                 if (smix != -999.0f) g_saturator_mix.store(smix);
                 float sdrive = json_float(cfg, "saturator_drive");
                 if (sdrive != -999.0f) g_saturator_drive.store(sdrive);
+                // Restore theme
+                auto tpos = cfg.find("\"theme\":\"");
+                if (tpos != std::string::npos) {
+                    auto ts = tpos + 9;
+                    auto te = cfg.find('"', ts);
+                    if (te != std::string::npos) {
+                        std::string tid = cfg.substr(ts, te - ts);
+                        for (int i = 0; i < NUM_THEMES; i++) {
+                            if (tid == THEME_IDS[i]) { g_theme.store(i); break; }
+                        }
+                    }
+                }
             }
         }
 

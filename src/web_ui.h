@@ -821,6 +821,12 @@ async function loadOptions() {
     document.getElementById('chorus-mix').value = Math.round((d.chorus_mix||0)*100);
     document.getElementById('flanger-mix').value = Math.round((d.flanger_mix||0)*100);
     updateRange('phaser-mix'); updateRange('chorus-mix'); updateRange('flanger-mix');
+    // Sync theme from server
+    if (d.theme) {
+      document.documentElement.setAttribute('data-theme', d.theme);
+      try { localStorage.setItem('dubsiren-theme', d.theme); } catch(e) {}
+      renderThemeGrid();
+    }
   } catch(e) { console.error(e); }
 }
 
@@ -838,7 +844,8 @@ async function applyOptions() {
     'saturator_drive='+(document.getElementById('saturator-drive').value/100),
     'phaser_mix='+(document.getElementById('phaser-mix').value/100),
     'chorus_mix='+(document.getElementById('chorus-mix').value/100),
-    'flanger_mix='+(document.getElementById('flanger-mix').value/100)
+    'flanger_mix='+(document.getElementById('flanger-mix').value/100),
+    'theme='+(document.documentElement.getAttribute('data-theme')||'midnight')
   ].join('&');
   try {
     const r = await fetch('/api/siren/options', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
@@ -1075,13 +1082,17 @@ function renderThemeGrid() {
   ).join('');
 }
 
-function setTheme(id) {
+async function setTheme(id) {
   document.documentElement.setAttribute('data-theme',id);
   try { localStorage.setItem('dubsiren-theme',id); } catch(e) {}
   renderThemeGrid();
+  // Save to siren (server-side persistence)
+  try {
+    await fetch('/api/siren/options', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'theme='+id});
+  } catch(e) {}
 }
 
-// Apply saved theme
+// Apply saved theme — try localStorage first for instant render, then sync from server
 (function(){try{const s=localStorage.getItem('dubsiren-theme');document.documentElement.setAttribute('data-theme',s||'midnight');}catch(e){document.documentElement.setAttribute('data-theme','midnight');}})();
 
 // Init
