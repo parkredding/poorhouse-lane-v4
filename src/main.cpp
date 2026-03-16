@@ -2507,7 +2507,7 @@ static web_server::Callbacks build_web_callbacks()
 
             // Stage 3b: Build — make (40→85%)
             set_upd("build", 55);
-            if (run("cd " + repo_root + "/build && make -j$(nproc)") != 0) {
+            if (run("cd " + repo_root + "/build && make -j1") != 0) {
                 set_upd("error", 0, "build failed");
                 upd_running.store(false);
                 return;

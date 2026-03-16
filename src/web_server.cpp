@@ -584,6 +584,12 @@ bool web_server::start(int port, const Callbacks& cb)
 {
     if (g_running) return true;
 
+    // Clean up any previous failed attempt (thread must be joined before reassignment)
+    if (g_thread.joinable()) {
+        g_thread.join();
+    }
+    g_server.reset();
+
     g_callbacks = cb;  // persistent copy — outlives this function
     g_server = std::make_unique<httplib::Server>();
 
