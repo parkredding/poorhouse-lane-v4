@@ -4,6 +4,11 @@
 // with captive portal DNS redirection.  All DNS queries resolve to
 // the device IP (192.168.4.1) so connected clients get redirected
 // to the configuration portal automatically.
+//
+// Strategy:
+//   1. Try creating a virtual ap0 interface (concurrent STA+AP — keeps SSH)
+//   2. If that fails, fall back to using wlan0 directly (drops WiFi, but
+//      works on all Pi models including Pi Zero 2W)
 
 #include "ap_mode.h"
 #include "siren_log.h"
@@ -17,13 +22,14 @@
 #include <sys/stat.h>
 
 static const char* AP_IP        = "192.168.4.1";
-static const char* AP_IFACE     = "ap0";       // virtual AP interface (keeps wlan0 for SSH)
-static const char* AP_PHY_IFACE = "wlan0";     // physical interface to base ap0 on
+static const char* AP_PHY_IFACE = "wlan0";     // physical interface
 static const char* HOSTAPD_CONF = "/tmp/dubsiren_hostapd.conf";
 static const char* DNSMASQ_CONF = "/tmp/dubsiren_dnsmasq.conf";
 
 static bool  g_active       = false;
 static std::string g_ssid;
+static std::string g_iface;   // actual interface used (ap0 or wlan0)
+static bool g_using_wlan0 = false;  // true if we fell back to wlan0
 
 // ─── Read MAC address from sysfs ────────────────────────────────────
 
@@ -60,7 +66,7 @@ std::string ap_mode::get_mac_suffix()
 
 // ─── Write config files ─────────────────────────────────────────────
 
-static bool write_hostapd_conf(const std::string& ssid)
+static bool write_hostapd_conf(const std::string& ssid, const char* iface)
 {
     FILE* f = fopen(HOSTAPD_CONF, "w");
     if (!f) {
@@ -80,13 +86,13 @@ static bool write_hostapd_conf(const std::string& ssid)
         "ignore_broadcast_ssid=0\n"
         "wpa=0\n"
         "pid_file=/tmp/dubsiren_hostapd.pid\n",
-        AP_IFACE, ssid.c_str());
+        iface, ssid.c_str());
 
     fclose(f);
     return true;
 }
 
-static bool write_dnsmasq_conf()
+static bool write_dnsmasq_conf(const char* iface)
 {
     FILE* f = fopen(DNSMASQ_CONF, "w");
     if (!f) {
@@ -96,18 +102,80 @@ static bool write_dnsmasq_conf()
 
     fprintf(f,
         "interface=%s\n"
-        "bind-interfaces\n"          // only bind to ap0, not all interfaces
-        "listen-address=%s\n"        // only listen on the AP IP
+        "bind-interfaces\n"
+        "listen-address=%s\n"
         "dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h\n"
-        "address=/#/%s\n"            // captive portal: all DNS on ap0 → device
+        "address=/#/%s\n"            // captive portal: all DNS → device
         "no-resolv\n"
         "no-poll\n"
         "log-queries\n"
         "log-dhcp\n",
-        AP_IFACE, AP_IP, AP_IP);
+        iface, AP_IP, AP_IP);
 
     fclose(f);
     return true;
+}
+
+// ─── Interface setup helpers ─────────────────────────────────────────
+
+// Try creating a virtual ap0 interface for concurrent STA+AP
+static bool try_virtual_ap()
+{
+    char cmd[512];
+
+    // Remove stale virtual interface from previous run
+    system("iw dev ap0 del 2>/dev/null");
+    usleep(200000);
+
+    snprintf(cmd, sizeof(cmd), "iw dev %s interface add ap0 type __ap", AP_PHY_IFACE);
+    int ret = system(cmd);
+    if (ret != 0) return false;
+
+    // Tell NetworkManager to ignore the virtual interface
+    system("nmcli device set ap0 managed no 2>/dev/null");
+    usleep(200000);
+
+    // Configure IP
+    snprintf(cmd, sizeof(cmd), "ip addr add %s/24 dev ap0", AP_IP);
+    system(cmd);
+    system("ip link set ap0 up");
+
+    return true;
+}
+
+// Fall back to using wlan0 directly — disconnects from WiFi
+static bool setup_wlan0_ap()
+{
+    slog("AP: Using wlan0 directly (WiFi will disconnect)");
+
+    // Stop anything managing wlan0
+    system("wpa_cli -i wlan0 disconnect 2>/dev/null");
+    system("nmcli device disconnect wlan0 2>/dev/null");
+    system("systemctl stop wpa_supplicant 2>/dev/null");
+    system("nmcli device set wlan0 managed no 2>/dev/null");
+    usleep(500000);
+
+    // Flush existing IP and configure AP IP
+    char cmd[256];
+    system("ip addr flush dev wlan0");
+    snprintf(cmd, sizeof(cmd), "ip addr add %s/24 dev wlan0", AP_IP);
+    system(cmd);
+    system("ip link set wlan0 up");
+    usleep(200000);
+
+    return true;
+}
+
+// Restore wlan0 to managed mode after AP shutdown
+static void restore_wlan0()
+{
+    slog("AP: Restoring wlan0 to managed mode");
+
+    system("ip addr flush dev wlan0 2>/dev/null");
+    system("nmcli device set wlan0 managed yes 2>/dev/null");
+    system("systemctl start wpa_supplicant 2>/dev/null");
+    // Give NetworkManager a kick to reconnect
+    system("nmcli device connect wlan0 2>/dev/null");
 }
 
 // ─── Public interface ───────────────────────────────────────────────
@@ -119,44 +187,39 @@ bool ap_mode::start_ap()
     std::string suffix = get_mac_suffix();
     g_ssid = "Poorhouse-Siren-Config-" + suffix;
 
-    slog("AP: Starting access point '%s' on %s", g_ssid.c_str(), AP_IFACE);
-
-    // 1. Clean up any previous AP state (use PID files to avoid killing unrelated processes)
-    char cmd[512];
+    // 1. Clean up any previous AP state
     system("pkill -F /tmp/dubsiren_hostapd.pid 2>/dev/null");
     system("pkill -F /tmp/dubsiren_dnsmasq.pid 2>/dev/null");
-    // Remove stale virtual interface from previous run
-    snprintf(cmd, sizeof(cmd), "iw dev %s del 2>/dev/null", AP_IFACE);
-    system(cmd);
     usleep(500000);
 
-    // 2. Create virtual AP interface (keeps wlan0 intact for SSH)
-    snprintf(cmd, sizeof(cmd), "iw dev %s interface add %s type __ap", AP_PHY_IFACE, AP_IFACE);
-    int ret = system(cmd);
-    if (ret != 0) {
-        slog("AP: Failed to create virtual interface %s", AP_IFACE);
-        return false;
+    // 2. Try virtual ap0 first, fall back to wlan0
+    if (try_virtual_ap()) {
+        g_iface = "ap0";
+        g_using_wlan0 = false;
+        slog("AP: Using virtual interface ap0 (WiFi stays connected)");
+    } else {
+        slog("AP: Virtual ap0 not supported — falling back to wlan0");
+        if (!setup_wlan0_ap()) {
+            slog("AP: Failed to configure wlan0 for AP mode");
+            return false;
+        }
+        g_iface = "wlan0";
+        g_using_wlan0 = true;
     }
-    // Tell NetworkManager to ignore the virtual interface
-    snprintf(cmd, sizeof(cmd), "nmcli device set %s managed no 2>/dev/null", AP_IFACE);
-    system(cmd);
-    usleep(200000);
 
-    // 3. Configure the virtual interface
-    snprintf(cmd, sizeof(cmd), "ip addr add %s/24 dev %s", AP_IP, AP_IFACE);
-    system(cmd);
-    snprintf(cmd, sizeof(cmd), "ip link set %s up", AP_IFACE);
-    system(cmd);
+    slog("AP: Starting '%s' on %s", g_ssid.c_str(), g_iface.c_str());
 
     // 3. Write config files
-    if (!write_hostapd_conf(g_ssid)) return false;
-    if (!write_dnsmasq_conf()) return false;
+    if (!write_hostapd_conf(g_ssid, g_iface.c_str())) return false;
+    if (!write_dnsmasq_conf(g_iface.c_str())) return false;
 
     // 4. Start hostapd (daemonized with -B)
+    char cmd[512];
     snprintf(cmd, sizeof(cmd), "hostapd %s -B", HOSTAPD_CONF);
-    ret = system(cmd);
+    int ret = system(cmd);
     if (ret != 0) {
         slog("AP: Failed to start hostapd (exit %d)", ret);
+        if (g_using_wlan0) restore_wlan0();
         return false;
     }
     usleep(1000000);  // 1s — let hostapd fully settle
@@ -167,6 +230,8 @@ bool ap_mode::start_ap()
     ret = system(cmd);
     if (ret != 0) {
         slog("AP: Failed to start dnsmasq (exit %d)", ret);
+        system("pkill -F /tmp/dubsiren_hostapd.pid 2>/dev/null");
+        if (g_using_wlan0) restore_wlan0();
         return false;
     }
     g_active = true;
@@ -191,12 +256,16 @@ void ap_mode::stop_ap()
     unlink("/tmp/dubsiren_hostapd.pid");
     unlink("/tmp/dubsiren_dnsmasq.pid");
 
-    // Remove the virtual AP interface (wlan0 stays connected)
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd), "iw dev %s del", AP_IFACE);
-    system(cmd);
+    if (g_using_wlan0) {
+        // Restore wlan0 to managed mode so it reconnects to WiFi
+        restore_wlan0();
+    } else {
+        // Remove the virtual AP interface
+        system("iw dev ap0 del");
+    }
 
     g_active = false;
+    g_using_wlan0 = false;
     slog("AP: Access point stopped");
 }
 
