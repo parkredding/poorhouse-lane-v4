@@ -48,9 +48,70 @@ static std::string get_local_ip()
     return buf;
 }
 
+// Check if poorhouse.local already resolves to our IP via avahi
+static bool mdns_already_resolves(const std::string& our_ip)
+{
+    // Quick probe: does poorhouse.local already point at us?
+    FILE* fp = popen("avahi-resolve-host-name -4 poorhouse.local 2>/dev/null", "r");
+    if (!fp) return false;
+    char buf[256] = {};
+    if (fgets(buf, sizeof(buf), fp)) {
+        // Output format: "poorhouse.local\t192.168.x.x\n"
+        if (strstr(buf, our_ip.c_str())) {
+            pclose(fp);
+            return true;
+        }
+    }
+    pclose(fp);
+    return false;
+}
+
+// Write our IP into /etc/avahi/hosts (static mDNS alias — survives reboots,
+// no collision with avahi-daemon since it's the daemon itself serving it).
+static bool write_avahi_hosts(const std::string& ip)
+{
+    static const char* const HOSTS_FILE = "/etc/avahi/hosts";
+    static const char* const ALIAS      = "poorhouse.local";
+
+    // Read existing file, replace or append our line
+    std::string contents;
+    bool found = false;
+    FILE* rf = fopen(HOSTS_FILE, "r");
+    if (rf) {
+        char line[512];
+        while (fgets(line, sizeof(line), rf)) {
+            if (strstr(line, ALIAS)) {
+                // Replace existing entry with our current IP
+                contents += ip + "\t" + ALIAS + "\n";
+                found = true;
+            } else {
+                contents += line;
+            }
+        }
+        fclose(rf);
+    }
+    if (!found) {
+        contents += ip + "\t" + ALIAS + "\n";
+    }
+
+    FILE* wf = fopen(HOSTS_FILE, "w");
+    if (!wf) {
+        fprintf(stderr, "WEB: Cannot write %s (not root?) — "
+                "falling back to avahi-publish\n", HOSTS_FILE);
+        return false;
+    }
+    fputs(contents.c_str(), wf);
+    fclose(wf);
+
+    printf("WEB: Wrote %s -> %s in %s\n", ALIAS, ip.c_str(), HOSTS_FILE);
+    return true;
+}
+
 static void start_mdns_alias()
 {
-    // Check if system hostname is already "poorhouse" — no alias needed
+    // Check if system hostname is already exactly "poorhouse" — no alias needed
+    // (hostnames like "poorhouse35" still need the alias so the canonical
+    //  poorhouse.local address works)
     char hostname[256] = {};
     gethostname(hostname, sizeof(hostname));
     if (strncmp(hostname, "poorhouse", 9) == 0 &&
@@ -65,32 +126,55 @@ static void start_mdns_alias()
         return;
     }
 
-    printf("WEB: Publishing mDNS alias poorhouse.local -> %s\n", ip.c_str());
+    // If poorhouse.local already resolves to our IP, nothing to do
+    if (mdns_already_resolves(ip)) {
+        printf("WEB: poorhouse.local already resolves to %s — alias OK\n", ip.c_str());
+        return;
+    }
+
+    // Strategy 1: write /etc/avahi/hosts (reliable, no collision issues)
+    if (write_avahi_hosts(ip)) {
+        // Give avahi-daemon a moment to pick up the change
+        usleep(500000);
+        if (mdns_already_resolves(ip)) {
+            printf("WEB: mDNS alias active via /etc/avahi/hosts\n");
+            return;
+        }
+        // Poke avahi-daemon to re-read the hosts file
+        FILE* fp = popen("systemctl reload avahi-daemon 2>/dev/null || "
+                         "killall -HUP avahi-daemon 2>/dev/null", "r");
+        if (fp) pclose(fp);
+        usleep(500000);
+        if (mdns_already_resolves(ip)) {
+            printf("WEB: mDNS alias active via /etc/avahi/hosts (after reload)\n");
+            return;
+        }
+    }
+
+    // Strategy 2: fall back to avahi-publish (original approach)
+    printf("WEB: Falling back to avahi-publish for poorhouse.local -> %s\n", ip.c_str());
 
     pid_t pid = fork();
     if (pid == 0) {
         // Child — run avahi-publish-host-name (blocks until killed)
-        // Redirect stdout to /dev/null, keep stderr for errors
         freopen("/dev/null", "w", stdout);
         execlp("avahi-publish-host-name", "avahi-publish-host-name",
                "poorhouse.local", ip.c_str(), nullptr);
-        // If avahi-publish-host-name isn't installed, try avahi-publish
         execlp("avahi-publish", "avahi-publish", "-a",
                "poorhouse.local", ip.c_str(), nullptr);
         _exit(127);
     } else if (pid > 0) {
         g_mdns_pid = pid;
-        // Brief wait to check if it started OK
         usleep(200000);
         int status = 0;
         pid_t result = waitpid(pid, &status, WNOHANG);
         if (result == 0) {
-            // Still running — good
-            printf("WEB: mDNS alias active (pid %d)\n", pid);
+            printf("WEB: mDNS alias active via avahi-publish (pid %d)\n", pid);
         } else {
-            // Exited immediately — avahi-publish probably not installed
-            fprintf(stderr, "WEB: avahi-publish exited immediately — "
-                    "poorhouse.local alias unavailable (install avahi-utils)\n");
+            fprintf(stderr, "WEB: avahi-publish failed — "
+                    "poorhouse.local alias unavailable\n");
+            fprintf(stderr, "WEB: Device reachable at %s.local or %s\n",
+                    hostname, ip.c_str());
             g_mdns_pid = 0;
         }
     }
@@ -104,6 +188,8 @@ static void stop_mdns_alias()
         waitpid(g_mdns_pid, &status, 0);
         g_mdns_pid = 0;
     }
+    // Note: we leave /etc/avahi/hosts intact on stop — the alias should
+    // persist across siren restarts so the device remains reachable.
 }
 
 // ─── Captive portal detection responses ─────────────────────────────
