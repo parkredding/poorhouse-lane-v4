@@ -35,7 +35,33 @@ set(SOURCES
     src/web_server.cpp
 )
 
+# ── Git build info (branch + short commit hash) ───────────────────
+execute_process(
+    COMMAND git rev-parse --abbrev-ref HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_BRANCH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT GIT_BRANCH)
+    set(GIT_BRANCH "unknown")
+endif()
+if(NOT GIT_COMMIT)
+    set(GIT_COMMIT "unknown")
+endif()
+
 add_executable(${PROJECT_NAME} ${SOURCES})
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    GIT_BRANCH="${GIT_BRANCH}"
+    GIT_COMMIT="${GIT_COMMIT}"
+)
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include

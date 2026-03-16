@@ -2980,9 +2980,11 @@ static web_server::Callbacks build_web_callbacks()
         char buf[512];
         snprintf(buf, sizeof(buf),
             "\"cpu_temp\":%.1f,\"uptime_days\":%d,\"uptime_hours\":%d,"
-            "\"uptime_mins\":%d,\"mem_total_mb\":%ld,\"mem_used_mb\":%ld",
+            "\"uptime_mins\":%d,\"mem_total_mb\":%ld,\"mem_used_mb\":%ld,"
+            "\"git_branch\":\"%s\",\"git_commit\":\"%s\"",
             cpu_temp, up_days, up_hours, up_mins,
-            mem_total / 1024, mem_used / 1024);
+            mem_total / 1024, mem_used / 1024,
+            GIT_BRANCH, GIT_COMMIT);
         json += buf;
         json += "}";
         return json;
@@ -3129,7 +3131,7 @@ int main(int argc, char *argv[])
     }
 
     // ── Banner ──────────────────────────────────────────────────────
-    slog("Poorhouse Lane - Siren V4 starting");
+    slog("Poorhouse Lane - Siren V4 starting (%s @ %s)", GIT_BRANCH, GIT_COMMIT);
     slog("ALSA device: %s  Mode: %s", device.c_str(), simulate ? "SIMULATE" : "GPIO");
     printf("Poorhouse Lane - Siren V4\n");
     printf("Milestone 5: Full DSP Engine + Parameter Mapping\n");

@@ -437,6 +437,8 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       <div class="sys-stat"><span class="sys-label">Uptime</span><span class="sys-value" id="sys-uptime">--</span></div>
       <div class="sys-stat"><span class="sys-label">Memory</span><span class="sys-value" id="sys-mem">--</span></div>
       <div class="sys-stat"><span class="sys-label">WiFi</span><span class="sys-value" id="sys-wifi">--</span></div>
+      <div class="sys-stat"><span class="sys-label">Branch</span><span class="sys-value" id="sys-branch">--</span></div>
+      <div class="sys-stat"><span class="sys-label">Commit</span><span class="sys-value" id="sys-commit">--</span></div>
     </div>
     <div style="display:flex;gap:8px;margin-top:12px">
       <button class="btn btn-secondary btn-sm" onclick="confirmAction('Restart the siren service?',restartService)" style="flex:1">Restart Siren</button>
@@ -453,7 +455,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
   </div>
   <div class="card">
     <h3>Updates</h3>
-    <p style="color:var(--text-lo);margin-bottom:8px;font-size:0.75rem">Version 0.6.0</p>
+    <p id="version-info" style="color:var(--text-lo);margin-bottom:8px;font-size:0.75rem">--</p>
     <div class="form-group">
       <label>Branch</label>
       <select id="update-branch" style="width:100%;padding:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem">
@@ -971,6 +973,11 @@ async function loadSystemInfo() {
     const wifiText = wifi.connected ? 'Connected: '+wifi.ssid : 'Not connected';
     document.getElementById('sys-wifi').textContent = wifiText;
     document.getElementById('wifi-status').textContent = wifiText;
+    document.getElementById('sys-branch').textContent = sys.git_branch || '--';
+    document.getElementById('sys-commit').textContent = sys.git_commit || '--';
+    // Update version line in Updates card
+    const verEl = document.getElementById('version-info');
+    if (verEl && sys.git_branch) verEl.textContent = sys.git_branch + ' @ ' + sys.git_commit;
   } catch(e) {
     document.getElementById('sys-cpu').textContent = 'Error';
   }
