@@ -139,8 +139,12 @@ static std::atomic<bool>  g_ap_mode{false};
 
 // Theme (server-side, persisted to config)
 static std::atomic<int>   g_theme{0};  // index into theme list
-static constexpr std::array<const char*, 6> THEME_IDS = {
-    "midnight", "deep-dub", "reggae", "steppers", "silver", "concrete"
+static constexpr std::array<const char*, 16> THEME_IDS = {
+    // Dark
+    "midnight", "deep-dub", "reggae", "steppers", "roots", "irie",
+    "kingston", "dubplate", "soundsystem", "heavyweight",
+    // Light
+    "silver", "concrete", "driftwood", "overcast", "bleached", "studio"
 };
 static constexpr int NUM_THEMES = THEME_IDS.size();
 
@@ -1034,7 +1038,7 @@ static void save_siren_config()
     fprintf(f, "saturator_drive=%.6f\n", g_saturator_drive.load());
     fprintf(f, "active_bank=%d\n",    g_bank_mode.load());
     fprintf(f, "active_preset=%d\n",  g_preset.load());
-    fprintf(f, "theme=%d\n",          g_theme.load());
+    fprintf(f, "theme=%s\n",          THEME_IDS[std::clamp(g_theme.load(), 0, NUM_THEMES - 1)]);
 
     // Encoder mapping
     {
@@ -1145,8 +1149,15 @@ static void load_siren_config()
         else if (strcmp(key, "active_preset") == 0)
             g_preset.store(atoi(val));
         else if (strcmp(key, "theme") == 0) {
-            int t = atoi(val);
-            if (t >= 0 && t < NUM_THEMES) g_theme.store(t);
+            // Try name first, fall back to legacy integer index
+            bool found = false;
+            for (int i = 0; i < NUM_THEMES; i++) {
+                if (strcmp(val, THEME_IDS[i]) == 0) { g_theme.store(i); found = true; break; }
+            }
+            if (!found) {
+                int t = atoi(val);
+                if (t >= 0 && t < NUM_THEMES) g_theme.store(t);
+            }
         }
         // Encoder mapping
         else if (strncmp(key, "enc_a", 5) == 0 && key[5] >= '0' && key[5] <= '4') {
