@@ -127,8 +127,8 @@ static bool try_virtual_ap()
     system("iw dev ap0 del 2>/dev/null");
     usleep(300000);
 
-    // Stop anything that might hold the phy lock
-    system("pkill -x hostapd 2>/dev/null");
+    // Kill our own stale hostapd if it holds the phy lock (PID-file based)
+    system("pkill -F /tmp/dubsiren_hostapd.pid 2>/dev/null");
     usleep(200000);
 
     // Try iw dev first, then iw phy as fallback

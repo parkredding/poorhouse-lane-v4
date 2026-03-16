@@ -61,26 +61,33 @@ inline void log(const char* fmt, ...) {
 // Return log as JSON array (newest last)
 inline std::string to_json() {
     std::lock_guard<std::mutex> lk(mutex());
-    std::string json = "[";
+    // Pre-allocate: ~80 bytes per entry avg
+    std::string json;
+    json.reserve(static_cast<size_t>(count()) * 80 + 2);
+    json += '[';
     int n = count();
     int start = (head() - n + MAX_ENTRIES) % MAX_ENTRIES;
     for (int i = 0; i < n; i++) {
-        if (i > 0) json += ",";
+        if (i > 0) json += ',';
         const Entry& e = entries()[(start + i) % MAX_ENTRIES];
-        // Escape quotes/backslashes in message
         json += "{\"t\":\"";
         json += e.timestamp;
         json += "\",\"m\":\"";
         for (const char* p = e.message; *p; p++) {
-            if (*p == '"') json += "\\\"";
-            else if (*p == '\\') json += "\\\\";
-            else if (*p == '\n') json += "\\n";
-            else if (*p == '\t') json += "\\t";
-            else json += *p;
+            switch (*p) {
+                case '"':  json += "\\\""; break;
+                case '\\': json += "\\\\"; break;
+                case '\b': json += "\\b";  break;
+                case '\f': json += "\\f";  break;
+                case '\n': json += "\\n";  break;
+                case '\r': json += "\\r";  break;
+                case '\t': json += "\\t";  break;
+                default:   json += *p;     break;
+            }
         }
         json += "\"}";
     }
-    json += "]";
+    json += ']';
     return json;
 }
 
