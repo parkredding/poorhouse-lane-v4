@@ -77,6 +77,9 @@ struct Callbacks {
     std::function<std::string()> backup_create;
     std::function<bool(const std::string& data)> backup_restore;
 
+    // System log
+    std::function<std::string()> get_system_log;
+
     // Exit AP mode
     std::function<void()> exit_ap;
 

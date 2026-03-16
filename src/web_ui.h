@@ -437,6 +437,8 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       <div class="sys-stat"><span class="sys-label">Uptime</span><span class="sys-value" id="sys-uptime">--</span></div>
       <div class="sys-stat"><span class="sys-label">Memory</span><span class="sys-value" id="sys-mem">--</span></div>
       <div class="sys-stat"><span class="sys-label">WiFi</span><span class="sys-value" id="sys-wifi">--</span></div>
+      <div class="sys-stat"><span class="sys-label">Branch</span><span class="sys-value" id="sys-branch">--</span></div>
+      <div class="sys-stat"><span class="sys-label">Commit</span><span class="sys-value" id="sys-commit">--</span></div>
     </div>
     <div style="display:flex;gap:8px;margin-top:12px">
       <button class="btn btn-secondary btn-sm" onclick="confirmAction('Restart the siren service?',restartService)" style="flex:1">Restart Siren</button>
@@ -444,8 +446,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
     </div>
   </div>
   <div class="card">
+    <h3>System Log</h3>
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+      <label style="font-size:0.7rem;color:var(--text-lo);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="syslog-auto" checked onchange="toggleSyslogAuto()"> Auto-refresh</label>
+      <button class="btn btn-secondary btn-sm" onclick="loadSysLog()" style="font-size:0.6rem;padding:3px 8px;margin-left:auto">Refresh</button>
+    </div>
+    <pre id="syslog-content" style="background:var(--bg);border:1px solid var(--border);padding:10px;max-height:250px;overflow:auto;font-family:var(--font);font-size:0.6rem;line-height:1.6;color:var(--text);white-space:pre-wrap;word-break:break-all"></pre>
+  </div>
+  <div class="card">
     <h3>Updates</h3>
-    <p style="color:var(--text-lo);margin-bottom:8px;font-size:0.75rem">Version 0.6.0</p>
+    <p id="version-info" style="color:var(--text-lo);margin-bottom:8px;font-size:0.75rem">--</p>
     <div class="form-group">
       <label>Branch</label>
       <select id="update-branch" style="width:100%;padding:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem">
@@ -566,9 +576,10 @@ function showTab(id) {
   const tabs = ['live','presets','options','wifi','system'];
   const tabEls = document.querySelectorAll('.tab');
   tabs.forEach((t, i) => { if (t === id && tabEls[i]) tabEls[i].classList.add('active'); });
+  if (id !== 'system' && typeof stopSyslogPoll === 'function') stopSyslogPoll();
   if (id === 'live') loadDspState();
   if (id === 'wifi') { loadWifiStatus(); }
-  if (id === 'system') { loadSystemInfo(); loadBranches(); }
+  if (id === 'system') { loadSystemInfo(); loadBranches(); loadSysLog(); startSyslogPoll(); }
   if (id === 'options') { loadEncoderMap(); }
 }
 
@@ -962,9 +973,38 @@ async function loadSystemInfo() {
     const wifiText = wifi.connected ? 'Connected: '+wifi.ssid : 'Not connected';
     document.getElementById('sys-wifi').textContent = wifiText;
     document.getElementById('wifi-status').textContent = wifiText;
+    document.getElementById('sys-branch').textContent = sys.git_branch || '--';
+    document.getElementById('sys-commit').textContent = sys.git_commit || '--';
+    // Update version line in Updates card
+    const verEl = document.getElementById('version-info');
+    if (verEl && sys.git_branch) verEl.textContent = sys.git_branch + ' @ ' + sys.git_commit;
   } catch(e) {
     document.getElementById('sys-cpu').textContent = 'Error';
   }
+}
+
+// System Log
+let syslogTimer = null;
+async function loadSysLog() {
+  try {
+    const r = await fetch('/api/system/log');
+    const entries = await r.json();
+    const el = document.getElementById('syslog-content');
+    const wasAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
+    el.textContent = entries.map(e => '[' + e.t + '] ' + e.m).join('\n');
+    if (wasAtBottom) el.scrollTop = el.scrollHeight;
+  } catch(e) {}
+}
+function startSyslogPoll() {
+  stopSyslogPoll();
+  if (document.getElementById('syslog-auto') && document.getElementById('syslog-auto').checked) {
+    syslogTimer = setInterval(loadSysLog, 3000);
+  }
+}
+function stopSyslogPoll() { if (syslogTimer) { clearInterval(syslogTimer); syslogTimer = null; } }
+function toggleSyslogAuto() {
+  if (document.getElementById('syslog-auto').checked) startSyslogPoll();
+  else stopSyslogPoll();
 }
 
 async function restartService() {

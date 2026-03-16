@@ -75,6 +75,7 @@
 #include "tape_saturator.h"
 #include "ap_mode.h"
 #include "web_server.h"
+#include "siren_log.h"
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -1742,19 +1743,18 @@ static void switch_bank(BankMode mode)
     case BankMode::USER:
         if (idx >= NUM_USER_PRESETS) { idx = 0; g_preset.store(idx); }
         apply_user_preset(g_user_presets[idx]);
-        printf("  BANK: USER  slot %d%s\n",
-               idx + 1,
-               g_user_presets[idx].saved ? "" : "  (factory copy)");
+        slog("BANK: USER slot %d%s", idx + 1,
+             g_user_presets[idx].saved ? "" : " (factory copy)");
         break;
     case BankMode::STANDARD:
         if (idx >= NUM_PRESETS) { idx = 0; g_preset.store(idx); }
         apply_user_preset(g_standard_presets[idx]);
-        printf("  BANK: STANDARD  \"%s\"\n", g_standard_presets[idx].name);
+        slog("BANK: STANDARD \"%s\"", g_standard_presets[idx].name);
         break;
     case BankMode::EXPERIMENTAL:
         if (idx >= NUM_EXPERIMENTAL) { idx = 0; g_preset.store(idx); }
         apply_user_preset(g_experimental_presets[idx]);
-        printf("  BANK: EXPERIMENTAL  \"%s\"\n", g_experimental_presets[idx].name);
+        slog("BANK: EXPERIMENTAL \"%s\"", g_experimental_presets[idx].name);
         break;
     }
 }
@@ -1785,11 +1785,10 @@ static void save_current_to_user_bank()
         g_bank_mode.store(static_cast<int>(BankMode::USER));
     }
 
-    printf("  >>> SAVED to USER %d  (Freq:%.0fHz %s LFO:%s)\n",
-           idx + 1,
-           g_freq.load(),
-           waveform_name(g_waveform.load()),
-           lfo_wave_name(g_lfo_waveform.load()));
+    slog("SAVED to USER %d (Freq:%.0fHz %s LFO:%s)",
+         idx + 1, g_freq.load(),
+         waveform_name(g_waveform.load()),
+         lfo_wave_name(g_lfo_waveform.load()));
 }
 
 // ─── Cycle to next preset in current bank ────────────────────────────
@@ -1806,6 +1805,8 @@ static void cycle_preset()
     switch (mode) {
     case BankMode::USER:
         apply_user_preset(g_user_presets[idx]);
+        slog("PRESET: USER %d \"%s\"%s", idx + 1, g_user_presets[idx].name,
+             g_user_presets[idx].saved ? "" : " (factory copy)");
         printf("  USER %d%s  %s LFO:%s %.1fHz@%.0f%%  "
                "Dly:%.0fms FB%.0f%% Mix%.0f%%  Rev:%.0f%%\n",
                idx + 1,
@@ -1822,7 +1823,7 @@ static void cycle_preset()
     case BankMode::STANDARD: {
         apply_preset(idx);
         const UserPreset& sp = g_standard_presets[idx];
-        printf("  PRESET %d  \"%s\"\n", idx + 1, sp.name);
+        slog("PRESET: STANDARD %d \"%s\"", idx + 1, sp.name);
         printf("    %s  LFO:%s %.1fHz@%.0f%%  "
                "Dly:%.0fms FB%.0f%% Mix%.0f%%  "
                "Rev:%.0f%%\n",
@@ -1838,7 +1839,7 @@ static void cycle_preset()
     case BankMode::EXPERIMENTAL: {
         apply_experimental(idx);
         const UserPreset& ep = g_experimental_presets[idx];
-        printf("  EXP %d  \"%s\"\n", idx + 1, ep.name);
+        slog("PRESET: EXP %d \"%s\"", idx + 1, ep.name);
         printf("    %s  LFO:%s %.1fHz@%.0f%%  "
                "Dly:%.0fms FB%.0f%% Mix%.0f%%  "
                "Rev:%.0f%%\n",
@@ -1985,6 +1986,10 @@ static std::atomic<bool> g_btn_preset{false};
 static bool g_combo_active = false;
 static std::chrono::steady_clock::time_point g_combo_start{};
 static bool g_combo_feedback_given = false;
+// Set when combo activates, cleared when all buttons released — suppresses
+// normal button-release actions (save preset, bank toggle) so they don't
+// fire after the user releases a 3-button hold.
+static std::atomic<bool> g_combo_suppress{false};
 
 // Forward declarations for AP mode
 static void enter_ap_mode();
@@ -2002,13 +2007,17 @@ static void check_ap_combo(AudioEngine& audio)
 
     if (all && !g_combo_active) {
         g_combo_active = true;
+        g_combo_suppress.store(true);
         g_combo_start = std::chrono::steady_clock::now();
         g_combo_feedback_given = false;
-        printf("  >>> AP COMBO: All 3 buttons detected — hold for 3s\n");
+        slog("AP COMBO: All 3 buttons held — hold for 3s");
     } else if (!all) {
         if (g_combo_active)
-            printf("  >>> AP COMBO: Released (button dropped)\n");
+            slog("AP COMBO: Released (button dropped)");
         g_combo_active = false;
+        // Clear suppress once all buttons are released
+        if (!t && !s && !p)
+            g_combo_suppress.store(false);
         return;
     }
 
@@ -2019,14 +2028,14 @@ static void check_ap_combo(AudioEngine& audio)
 
     if (elapsed >= 1500 && !g_combo_feedback_given) {
         g_combo_feedback_given = true;
-        printf("  >>> AP MODE: Keep holding (%.1fs)...\n",
-               (3000 - elapsed) / 1000.0f);
+        slog("AP COMBO: Keep holding (%.1fs)...",
+             (3000 - elapsed) / 1000.0f);
     }
 
     if (elapsed >= 3000) {
         g_combo_active = false;
-        printf("  >>> AP COMBO: 3s reached — %s AP mode\n",
-               g_ap_mode.load() ? "exiting" : "entering");
+        slog("AP COMBO: 3s reached — %s AP mode",
+             g_ap_mode.load() ? "exiting" : "entering");
         if (g_ap_mode.load()) {
             exit_ap_mode();
         } else {
@@ -2114,7 +2123,7 @@ static web_server::Callbacks build_web_callbacks()
             return false;
         }
         save_siren_config();
-        printf("  WEB: Applied preset %s[%d]\n", category.c_str(), index);
+        slog("WEB: Applied preset %s[%d]", category.c_str(), index);
         return true;
     };
 
@@ -2368,6 +2377,19 @@ static web_server::Callbacks build_web_callbacks()
             repo_root = exe;
         }
         if (repo_root.empty()) repo_root = "/home/pi/dubsiren";  // fallback
+
+        // On overlay FS the binary may run from /mnt/persist/... but the
+        // working git repo is in the overlay at the normal path.  Prefer
+        // the normal path if it has a .git directory.
+        if (repo_root.find("/mnt/persist") == 0) {
+            std::string normal = repo_root.substr(strlen("/mnt/persist"));
+            struct stat st;
+            if (stat((normal + "/.git").c_str(), &st) == 0) {
+                slog("UPDATE: Using overlay repo %s (not %s)", normal.c_str(), repo_root.c_str());
+                repo_root = normal;
+            }
+        }
+        slog("UPDATE: repo_root = %s", repo_root.c_str());
     }
 
     // ── Update: progress tracking state ─────────────────────────────
@@ -2421,11 +2443,43 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.update_check = [](const std::string& branch) -> std::string {
+        slog("UPDATE: Checking branch '%s' in %s", branch.c_str(), repo_root.c_str());
+
+        // Log current HEAD
+        {
+            FILE* p = popen(("cd " + repo_root + " && git rev-parse --short HEAD 2>/dev/null").c_str(), "r");
+            char h[64] = {};
+            if (p) { fgets(h, sizeof(h), p); pclose(p); }
+            size_t hl = strlen(h); if (hl > 0 && h[hl-1] == '\n') h[hl-1] = '\0';
+
+            FILE* p2 = popen(("cd " + repo_root + " && git rev-parse --abbrev-ref HEAD 2>/dev/null").c_str(), "r");
+            char br[128] = {};
+            if (p2) { fgets(br, sizeof(br), p2); pclose(p2); }
+            size_t bl = strlen(br); if (bl > 0 && br[bl-1] == '\n') br[bl-1] = '\0';
+
+            slog("UPDATE: Local HEAD = %s (%s)", h, br);
+        }
+
         std::string cmd = "cd " + repo_root + " && git fetch origin "
-                          + branch + " 2>/dev/null";
-        int ret = system(cmd.c_str());
-        if (ret != 0)
-            return "{\"available\":false,\"error\":\"fetch failed\"}";
+                          + branch + " 2>&1";
+        FILE* fp = popen(cmd.c_str(), "r");
+        std::string fetch_out;
+        if (fp) {
+            char buf[256];
+            while (fgets(buf, sizeof(buf), fp)) fetch_out += buf;
+            pclose(fp);
+        }
+        if (!fetch_out.empty()) slog("UPDATE: fetch output: %s", fetch_out.c_str());
+
+        // Log remote ref after fetch
+        {
+            std::string rc = "cd " + repo_root + " && git rev-parse --short origin/" + branch + " 2>/dev/null";
+            FILE* p = popen(rc.c_str(), "r");
+            char h[64] = {};
+            if (p) { fgets(h, sizeof(h), p); pclose(p); }
+            size_t hl = strlen(h); if (hl > 0 && h[hl-1] == '\n') h[hl-1] = '\0';
+            slog("UPDATE: Remote origin/%s = %s", branch.c_str(), h);
+        }
 
         std::string log_cmd = "cd " + repo_root + " && "
                               "git log HEAD..origin/" + branch +
@@ -2436,9 +2490,14 @@ static web_server::Callbacks build_web_callbacks()
 
         char line[256];
         int count = 0;
-        while (fgets(line, sizeof(line), pipe))
+        std::string commits;
+        while (fgets(line, sizeof(line), pipe)) {
             count++;
+            if (count <= 5) commits += line;  // keep first 5 for log
+        }
         pclose(pipe);
+
+        slog("UPDATE: %d new commit(s) on origin/%s", count, branch.c_str());
 
         return "{\"available\":" + std::string(count > 0 ? "true" : "false") +
                ",\"count\":" + std::to_string(count) + "}";
@@ -2889,7 +2948,7 @@ static web_server::Callbacks build_web_callbacks()
         g_saturator_drive.store(0.5f);
         update_link_eff();
         save_siren_config();
-        printf("  WEB: Reset to factory defaults\n");
+        slog("WEB: Reset to factory defaults");
         return true;
     };
 
@@ -2915,7 +2974,7 @@ static web_server::Callbacks build_web_callbacks()
 
         if (cat == "library" && idx >= 0 && idx < NUM_LIBRARY_PRESETS) {
             apply_dub_preset(PRESET_LIBRARY[idx]);
-            printf("  WEB: Preview started — library[%d] \"%s\"\n",
+            slog("WEB: Preview started — library[%d] \"%s\"",
                    idx, PRESET_LIBRARY[idx].name);
         }
     };
@@ -2924,7 +2983,7 @@ static web_server::Callbacks build_web_callbacks()
         if (g_previewing.load()) {
             apply_user_preset(g_preview_snapshot);
             g_previewing.store(false);
-            printf("  WEB: Preview stopped — restored previous state\n");
+            slog("WEB: Preview stopped — restored previous state");
         }
     };
 
@@ -2971,21 +3030,23 @@ static web_server::Callbacks build_web_callbacks()
         char buf[512];
         snprintf(buf, sizeof(buf),
             "\"cpu_temp\":%.1f,\"uptime_days\":%d,\"uptime_hours\":%d,"
-            "\"uptime_mins\":%d,\"mem_total_mb\":%ld,\"mem_used_mb\":%ld",
+            "\"uptime_mins\":%d,\"mem_total_mb\":%ld,\"mem_used_mb\":%ld,"
+            "\"git_branch\":\"%s\",\"git_commit\":\"%s\"",
             cpu_temp, up_days, up_hours, up_mins,
-            mem_total / 1024, mem_used / 1024);
+            mem_total / 1024, mem_used / 1024,
+            GIT_BRANCH, GIT_COMMIT);
         json += buf;
         json += "}";
         return json;
     };
 
     cb.reboot_system = []() -> bool {
-        printf("  WEB: Reboot requested\n");
+        slog("WEB: Reboot requested");
         return system("sudo reboot") == 0;
     };
 
     cb.restart_service = []() -> bool {
-        printf("  WEB: Service restart requested\n");
+        slog("WEB: Service restart requested");
         return system("sudo systemctl restart dubsiren.service") == 0;
     };
 
@@ -3032,12 +3093,16 @@ static web_server::Callbacks build_web_callbacks()
             }
         }
         save_siren_config();
-        printf("  WEB: Encoder mapping updated\n");
+        slog("WEB: Encoder mapping updated");
         return true;
     };
 
+    cb.get_system_log = []() -> std::string {
+        return siren_log::to_json();
+    };
+
     cb.exit_ap = []() {
-        printf("AP: Exit requested via web UI\n");
+        slog("AP: Exit requested via web UI");
         g_ap_exit_requested.store(true);
     };
 
@@ -3052,8 +3117,7 @@ static void enter_ap_mode()
 {
     if (g_ap_mode.load()) return;
 
-    printf("\n>>> ENTERING AP CONFIG MODE <<<\n\n");
-    printf("  Audio engine stays active — presets can be previewed live\n");
+    slog("ENTERING AP CONFIG MODE");
 
     // Clear gate stuck from 3-button combo hold
     g_gate.store(false);
@@ -3063,24 +3127,21 @@ static void enter_ap_mode()
 
     // Start the access point
     if (!ap_mode::start_ap()) {
-        fprintf(stderr, "!!! Failed to start AP mode\n");
+        slog("!!! Failed to start AP mode");
         g_ap_mode.store(false);
         return;
     }
 
     // Web server is already running (started at boot) — no need to start it here
-
-    printf(">>> AP MODE ACTIVE — Connect to '%s' WiFi <<<\n",
-           ap_mode::get_ssid().c_str());
-    printf(">>> Open http://%s/ in your browser <<<\n\n",
-           ap_mode::get_ip());
+    slog("AP MODE ACTIVE — Connect to '%s' at %s",
+         ap_mode::get_ssid().c_str(), ap_mode::get_ip());
 }
 
 static void exit_ap_mode()
 {
     if (!g_ap_mode.load()) return;
 
-    printf("\n>>> EXITING AP CONFIG MODE <<<\n\n");
+    slog("EXITING AP CONFIG MODE");
 
     // Only stop the AP infrastructure — web server keeps running
     ap_mode::stop_ap();
@@ -3088,7 +3149,7 @@ static void exit_ap_mode()
     g_ap_exit_requested.store(false);
 
     // Audio was never stopped — siren is immediately usable
-    printf(">>> SIREN MODE RESTORED <<<\n\n");
+    slog("SIREN MODE RESTORED");
 }
 
 // ─── main ───────────────────────────────────────────────────────────
@@ -3120,6 +3181,8 @@ int main(int argc, char *argv[])
     }
 
     // ── Banner ──────────────────────────────────────────────────────
+    slog("Poorhouse Lane - Siren V4 starting (%s @ %s)", GIT_BRANCH, GIT_COMMIT);
+    slog("ALSA device: %s  Mode: %s", device.c_str(), simulate ? "SIMULATE" : "GPIO");
     printf("Poorhouse Lane - Siren V4\n");
     printf("Milestone 5: Full DSP Engine + Parameter Mapping\n");
     printf("  ALSA device : %s\n", device.c_str());
@@ -3441,11 +3504,11 @@ int main(int argc, char *argv[])
         case 2: g_btn_preset.store(pressed); break;
         }
 
-        // Always log button state for AP combo debugging
-        printf("  [btn] %s %s  (T=%d S=%d P=%d)\n",
-               btn_name[id], pressed ? "DOWN" : "UP",
-               g_btn_trigger.load(), g_btn_shift.load(),
-               g_btn_preset.load());
+        // Log button state for AP combo debugging (visible in system log)
+        slog("[btn] %s %s (T=%d S=%d P=%d)",
+             btn_name[id], pressed ? "DOWN" : "UP",
+             g_btn_trigger.load(), g_btn_shift.load(),
+             g_btn_preset.load());
 
         // Trigger gate always works (including AP mode for preview)
         if (id == 0) {
@@ -3454,8 +3517,13 @@ int main(int argc, char *argv[])
                    pressed ? "GATE ON" : "GATE OFF");
         }
 
-        // Skip other button handling when in AP mode
+        // Skip other button handling when in AP mode or 3-button combo active
         if (g_ap_mode.load()) return;
+        if (g_combo_suppress.load()) {
+            // Still track shift state so it's correct after combo ends
+            if (id == 1) g_shift.store(pressed);
+            return;
+        }
 
         switch (id) {
         case 0:
@@ -3498,7 +3566,7 @@ int main(int argc, char *argv[])
                 }
             }
 
-            printf("  BANK %s\n", pressed ? "B" : "A");
+            slog("BANK %s", pressed ? "B" : "A");
             break;
         }
         case 2: {
@@ -3517,7 +3585,7 @@ int main(int argc, char *argv[])
                     int lw = (g_lfo_waveform.load() + 1)
                            % static_cast<int>(LfoWave::COUNT);
                     g_lfo_waveform.store(lw);
-                    printf("  LFO WAVE  %s\n", lfo_wave_name(lw));
+                    slog("LFO WAVE %s", lfo_wave_name(lw));
                 } else {
                     btn2_press_time = std::chrono::steady_clock::now();
                 }
@@ -3615,12 +3683,12 @@ int main(int argc, char *argv[])
     {
         auto cb = build_web_callbacks();
         if (!web_server::start(80, cb)) {
-            fprintf(stderr, "WEB: Port 80 failed — trying port 8080 (needs CAP_NET_BIND_SERVICE for 80)\n");
+            slog("WEB: Port 80 failed — trying port 8080");
             if (!web_server::start(8080, cb)) {
-                fprintf(stderr, "WEB: Failed to start web server on port 8080\n");
+                slog("WEB: Failed to start web server on port 8080");
                 // Non-fatal — siren still works without web config
             } else {
-                printf("WEB: Server running on port 8080 (http://poorhouse.local:8080/config)\n");
+                slog("WEB: Server running on port 8080");
             }
         }
     }
