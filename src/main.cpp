@@ -2377,6 +2377,19 @@ static web_server::Callbacks build_web_callbacks()
             repo_root = exe;
         }
         if (repo_root.empty()) repo_root = "/home/pi/dubsiren";  // fallback
+
+        // On overlay FS the binary may run from /mnt/persist/... but the
+        // working git repo is in the overlay at the normal path.  Prefer
+        // the normal path if it has a .git directory.
+        if (repo_root.find("/mnt/persist") == 0) {
+            std::string normal = repo_root.substr(strlen("/mnt/persist"));
+            struct stat st;
+            if (stat((normal + "/.git").c_str(), &st) == 0) {
+                slog("UPDATE: Using overlay repo %s (not %s)", normal.c_str(), repo_root.c_str());
+                repo_root = normal;
+            }
+        }
+        slog("UPDATE: repo_root = %s", repo_root.c_str());
     }
 
     // ── Update: progress tracking state ─────────────────────────────
@@ -2430,11 +2443,43 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.update_check = [](const std::string& branch) -> std::string {
+        slog("UPDATE: Checking branch '%s' in %s", branch.c_str(), repo_root.c_str());
+
+        // Log current HEAD
+        {
+            FILE* p = popen(("cd " + repo_root + " && git rev-parse --short HEAD 2>/dev/null").c_str(), "r");
+            char h[64] = {};
+            if (p) { fgets(h, sizeof(h), p); pclose(p); }
+            size_t hl = strlen(h); if (hl > 0 && h[hl-1] == '\n') h[hl-1] = '\0';
+
+            FILE* p2 = popen(("cd " + repo_root + " && git rev-parse --abbrev-ref HEAD 2>/dev/null").c_str(), "r");
+            char br[128] = {};
+            if (p2) { fgets(br, sizeof(br), p2); pclose(p2); }
+            size_t bl = strlen(br); if (bl > 0 && br[bl-1] == '\n') br[bl-1] = '\0';
+
+            slog("UPDATE: Local HEAD = %s (%s)", h, br);
+        }
+
         std::string cmd = "cd " + repo_root + " && git fetch origin "
-                          + branch + " 2>/dev/null";
-        int ret = system(cmd.c_str());
-        if (ret != 0)
-            return "{\"available\":false,\"error\":\"fetch failed\"}";
+                          + branch + " 2>&1";
+        FILE* fp = popen(cmd.c_str(), "r");
+        std::string fetch_out;
+        if (fp) {
+            char buf[256];
+            while (fgets(buf, sizeof(buf), fp)) fetch_out += buf;
+            pclose(fp);
+        }
+        if (!fetch_out.empty()) slog("UPDATE: fetch output: %s", fetch_out.c_str());
+
+        // Log remote ref after fetch
+        {
+            std::string rc = "cd " + repo_root + " && git rev-parse --short origin/" + branch + " 2>/dev/null";
+            FILE* p = popen(rc.c_str(), "r");
+            char h[64] = {};
+            if (p) { fgets(h, sizeof(h), p); pclose(p); }
+            size_t hl = strlen(h); if (hl > 0 && h[hl-1] == '\n') h[hl-1] = '\0';
+            slog("UPDATE: Remote origin/%s = %s", branch.c_str(), h);
+        }
 
         std::string log_cmd = "cd " + repo_root + " && "
                               "git log HEAD..origin/" + branch +
@@ -2445,9 +2490,14 @@ static web_server::Callbacks build_web_callbacks()
 
         char line[256];
         int count = 0;
-        while (fgets(line, sizeof(line), pipe))
+        std::string commits;
+        while (fgets(line, sizeof(line), pipe)) {
             count++;
+            if (count <= 5) commits += line;  // keep first 5 for log
+        }
         pclose(pipe);
+
+        slog("UPDATE: %d new commit(s) on origin/%s", count, branch.c_str());
 
         return "{\"available\":" + std::string(count > 0 ? "true" : "false") +
                ",\"count\":" + std::to_string(count) + "}";
