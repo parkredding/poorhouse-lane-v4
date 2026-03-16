@@ -2070,6 +2070,9 @@ static void check_ap_combo(AudioEngine& audio)
 // Flag set by web UI "exit AP" button, checked in main loop
 static std::atomic<bool> g_ap_exit_requested{false};
 
+// AP mode sound effect: 0=off, 1=wind-up (entering), 2=wind-down (exiting)
+static std::atomic<int>  g_ap_sound{0};
+
 static web_server::Callbacks build_web_callbacks()
 {
     web_server::Callbacks cb;
@@ -3143,6 +3146,9 @@ static void enter_ap_mode()
     // Clear gate stuck from 3-button combo hold
     g_gate.store(false);
 
+    // Wind-up sound effect
+    g_ap_sound.store(1);
+
     // Audio keeps running so users can preview presets via trigger button
     g_ap_mode.store(true);
 
@@ -3163,6 +3169,9 @@ static void exit_ap_mode()
     if (!g_ap_mode.load()) return;
 
     slog("EXITING AP CONFIG MODE");
+
+    // Wind-down sound effect
+    g_ap_sound.store(2);
 
     // Only stop the AP infrastructure — web server keeps running
     ap_mode::stop_ap();
@@ -3235,6 +3244,11 @@ int main(int argc, char *argv[])
     float attack_rate    = 0.0f;
     float release_rate   = 0.0f;
     float sr_f           = 48000.0f;    // set after init, read in callback
+
+    // AP mode wind-up / wind-down sound state
+    float ap_snd_phase   = 0.0f;       // oscillator phase [0,1)
+    float ap_snd_progress = 0.0f;      // 0→1 over duration
+    int   ap_snd_active  = 0;          // local copy: 1=up, 2=down
     float pitch_env_mult  = 1.0f;
     float sweep_phase     = 0.0f;   // 0→1 linear ramp during release
     bool  prev_gate       = false;
@@ -3328,6 +3342,15 @@ int main(int argc, char *argv[])
             reverb_schroeder.setSize(REVERB_SIZE);
             reverb_schroeder.setMix(rev_mix);
             break;
+        }
+
+        // AP sound effect — check for new trigger (once per frame)
+        int ap_trigger = g_ap_sound.load(rlx);
+        if (ap_trigger != 0) {
+            g_ap_sound.store(0, rlx);
+            ap_snd_active   = ap_trigger;
+            ap_snd_phase    = 0.0f;
+            ap_snd_progress = 0.0f;
         }
 
         // Gate edge — envelopes start on release, reset on press
@@ -3432,6 +3455,42 @@ int main(int argc, char *argv[])
             if (flanger_mix > 0.0f) {
                 flanger.setMix(flanger_mix);
                 s = flanger.process(s);
+            }
+
+            // AP mode wind-up / wind-down sound
+            if (ap_snd_active != 0 && ap_snd_progress < 1.0f) {
+                // Duration: 1.5 seconds
+                constexpr float AP_SND_DURATION = 1.5f;
+                float ap_inc = 1.0f / (AP_SND_DURATION * sr_f);
+                ap_snd_progress += ap_inc;
+
+                float t = ap_snd_progress;
+
+                // Frequency sweep: wind-up 200→3000 Hz, wind-down 3000→200 Hz
+                float f_lo = 200.0f, f_hi = 3000.0f;
+                float freq_ap;
+                if (ap_snd_active == 1)  // wind up
+                    freq_ap = f_lo * std::pow(f_hi / f_lo, t);
+                else                     // wind down
+                    freq_ap = f_hi * std::pow(f_lo / f_hi, t);
+
+                // Phase accumulator
+                ap_snd_phase += freq_ap / sr_f;
+                if (ap_snd_phase >= 1.0f) ap_snd_phase -= 1.0f;
+
+                // Two detuned sines for richness
+                float ap_s = std::sin(2.0f * 3.14159265f * ap_snd_phase)
+                           + 0.3f * std::sin(2.0f * 3.14159265f * ap_snd_phase * 3.0f);
+
+                // Amplitude envelope: fade in/out at edges, louder in middle
+                float amp = 0.35f;
+                if (t < 0.1f)       amp *= t / 0.1f;          // fade in
+                else if (t > 0.85f) amp *= (1.0f - t) / 0.15f; // fade out
+                ap_s *= amp;
+
+                s += ap_s;
+            } else if (ap_snd_progress >= 1.0f) {
+                ap_snd_active = 0;  // done
             }
 
             // Output soft limiter — transparent at normal levels,
