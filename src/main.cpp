@@ -75,6 +75,7 @@
 #include "tape_saturator.h"
 #include "ap_mode.h"
 #include "web_server.h"
+#include "siren_log.h"
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -1742,19 +1743,18 @@ static void switch_bank(BankMode mode)
     case BankMode::USER:
         if (idx >= NUM_USER_PRESETS) { idx = 0; g_preset.store(idx); }
         apply_user_preset(g_user_presets[idx]);
-        printf("  BANK: USER  slot %d%s\n",
-               idx + 1,
-               g_user_presets[idx].saved ? "" : "  (factory copy)");
+        slog("BANK: USER slot %d%s", idx + 1,
+             g_user_presets[idx].saved ? "" : " (factory copy)");
         break;
     case BankMode::STANDARD:
         if (idx >= NUM_PRESETS) { idx = 0; g_preset.store(idx); }
         apply_user_preset(g_standard_presets[idx]);
-        printf("  BANK: STANDARD  \"%s\"\n", g_standard_presets[idx].name);
+        slog("BANK: STANDARD \"%s\"", g_standard_presets[idx].name);
         break;
     case BankMode::EXPERIMENTAL:
         if (idx >= NUM_EXPERIMENTAL) { idx = 0; g_preset.store(idx); }
         apply_user_preset(g_experimental_presets[idx]);
-        printf("  BANK: EXPERIMENTAL  \"%s\"\n", g_experimental_presets[idx].name);
+        slog("BANK: EXPERIMENTAL \"%s\"", g_experimental_presets[idx].name);
         break;
     }
 }
@@ -1785,11 +1785,10 @@ static void save_current_to_user_bank()
         g_bank_mode.store(static_cast<int>(BankMode::USER));
     }
 
-    printf("  >>> SAVED to USER %d  (Freq:%.0fHz %s LFO:%s)\n",
-           idx + 1,
-           g_freq.load(),
-           waveform_name(g_waveform.load()),
-           lfo_wave_name(g_lfo_waveform.load()));
+    slog("SAVED to USER %d (Freq:%.0fHz %s LFO:%s)",
+         idx + 1, g_freq.load(),
+         waveform_name(g_waveform.load()),
+         lfo_wave_name(g_lfo_waveform.load()));
 }
 
 // ─── Cycle to next preset in current bank ────────────────────────────
@@ -1806,6 +1805,8 @@ static void cycle_preset()
     switch (mode) {
     case BankMode::USER:
         apply_user_preset(g_user_presets[idx]);
+        slog("PRESET: USER %d \"%s\"%s", idx + 1, g_user_presets[idx].name,
+             g_user_presets[idx].saved ? "" : " (factory copy)");
         printf("  USER %d%s  %s LFO:%s %.1fHz@%.0f%%  "
                "Dly:%.0fms FB%.0f%% Mix%.0f%%  Rev:%.0f%%\n",
                idx + 1,
@@ -1822,7 +1823,7 @@ static void cycle_preset()
     case BankMode::STANDARD: {
         apply_preset(idx);
         const UserPreset& sp = g_standard_presets[idx];
-        printf("  PRESET %d  \"%s\"\n", idx + 1, sp.name);
+        slog("PRESET: STANDARD %d \"%s\"", idx + 1, sp.name);
         printf("    %s  LFO:%s %.1fHz@%.0f%%  "
                "Dly:%.0fms FB%.0f%% Mix%.0f%%  "
                "Rev:%.0f%%\n",
@@ -1838,7 +1839,7 @@ static void cycle_preset()
     case BankMode::EXPERIMENTAL: {
         apply_experimental(idx);
         const UserPreset& ep = g_experimental_presets[idx];
-        printf("  EXP %d  \"%s\"\n", idx + 1, ep.name);
+        slog("PRESET: EXP %d \"%s\"", idx + 1, ep.name);
         printf("    %s  LFO:%s %.1fHz@%.0f%%  "
                "Dly:%.0fms FB%.0f%% Mix%.0f%%  "
                "Rev:%.0f%%\n",
@@ -2114,7 +2115,7 @@ static web_server::Callbacks build_web_callbacks()
             return false;
         }
         save_siren_config();
-        printf("  WEB: Applied preset %s[%d]\n", category.c_str(), index);
+        slog("WEB: Applied preset %s[%d]", category.c_str(), index);
         return true;
     };
 
@@ -2889,7 +2890,7 @@ static web_server::Callbacks build_web_callbacks()
         g_saturator_drive.store(0.5f);
         update_link_eff();
         save_siren_config();
-        printf("  WEB: Reset to factory defaults\n");
+        slog("WEB: Reset to factory defaults");
         return true;
     };
 
@@ -2915,7 +2916,7 @@ static web_server::Callbacks build_web_callbacks()
 
         if (cat == "library" && idx >= 0 && idx < NUM_LIBRARY_PRESETS) {
             apply_dub_preset(PRESET_LIBRARY[idx]);
-            printf("  WEB: Preview started — library[%d] \"%s\"\n",
+            slog("WEB: Preview started — library[%d] \"%s\"",
                    idx, PRESET_LIBRARY[idx].name);
         }
     };
@@ -2924,7 +2925,7 @@ static web_server::Callbacks build_web_callbacks()
         if (g_previewing.load()) {
             apply_user_preset(g_preview_snapshot);
             g_previewing.store(false);
-            printf("  WEB: Preview stopped — restored previous state\n");
+            slog("WEB: Preview stopped — restored previous state");
         }
     };
 
@@ -2980,12 +2981,12 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.reboot_system = []() -> bool {
-        printf("  WEB: Reboot requested\n");
+        slog("WEB: Reboot requested");
         return system("sudo reboot") == 0;
     };
 
     cb.restart_service = []() -> bool {
-        printf("  WEB: Service restart requested\n");
+        slog("WEB: Service restart requested");
         return system("sudo systemctl restart dubsiren.service") == 0;
     };
 
@@ -3032,12 +3033,16 @@ static web_server::Callbacks build_web_callbacks()
             }
         }
         save_siren_config();
-        printf("  WEB: Encoder mapping updated\n");
+        slog("WEB: Encoder mapping updated");
         return true;
     };
 
+    cb.get_system_log = []() -> std::string {
+        return siren_log::to_json();
+    };
+
     cb.exit_ap = []() {
-        printf("AP: Exit requested via web UI\n");
+        slog("AP: Exit requested via web UI");
         g_ap_exit_requested.store(true);
     };
 
@@ -3120,6 +3125,8 @@ int main(int argc, char *argv[])
     }
 
     // ── Banner ──────────────────────────────────────────────────────
+    slog("Poorhouse Lane - Siren V4 starting");
+    slog("ALSA device: %s  Mode: %s", device.c_str(), simulate ? "SIMULATE" : "GPIO");
     printf("Poorhouse Lane - Siren V4\n");
     printf("Milestone 5: Full DSP Engine + Parameter Mapping\n");
     printf("  ALSA device : %s\n", device.c_str());
@@ -3498,7 +3505,7 @@ int main(int argc, char *argv[])
                 }
             }
 
-            printf("  BANK %s\n", pressed ? "B" : "A");
+            slog("BANK %s", pressed ? "B" : "A");
             break;
         }
         case 2: {
@@ -3517,7 +3524,7 @@ int main(int argc, char *argv[])
                     int lw = (g_lfo_waveform.load() + 1)
                            % static_cast<int>(LfoWave::COUNT);
                     g_lfo_waveform.store(lw);
-                    printf("  LFO WAVE  %s\n", lfo_wave_name(lw));
+                    slog("LFO WAVE %s", lfo_wave_name(lw));
                 } else {
                     btn2_press_time = std::chrono::steady_clock::now();
                 }
@@ -3615,12 +3622,12 @@ int main(int argc, char *argv[])
     {
         auto cb = build_web_callbacks();
         if (!web_server::start(80, cb)) {
-            fprintf(stderr, "WEB: Port 80 failed — trying port 8080 (needs CAP_NET_BIND_SERVICE for 80)\n");
+            slog("WEB: Port 80 failed — trying port 8080");
             if (!web_server::start(8080, cb)) {
-                fprintf(stderr, "WEB: Failed to start web server on port 8080\n");
+                slog("WEB: Failed to start web server on port 8080");
                 // Non-fatal — siren still works without web config
             } else {
-                printf("WEB: Server running on port 8080 (http://poorhouse.local:8080/config)\n");
+                slog("WEB: Server running on port 8080");
             }
         }
     }

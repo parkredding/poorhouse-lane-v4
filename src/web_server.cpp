@@ -6,6 +6,7 @@
 
 #include "web_server.h"
 #include "web_ui.h"
+#include "siren_log.h"
 
 #include <httplib.h>
 
@@ -441,6 +442,14 @@ static void setup_api(httplib::Server& svr)
         }).detach();
     });
 
+    svr.Get("/api/system/log", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.get_system_log) {
+            json_response(res, g_callbacks.get_system_log());
+        } else {
+            json_error(res, "not implemented", 501);
+        }
+    });
+
     svr.Post("/api/system/restart", [](const httplib::Request&, httplib::Response& res) {
         if (!g_callbacks.restart_service) { json_error(res, "not implemented", 501); return; }
         json_ok(res, "restarting");
@@ -598,12 +607,12 @@ bool web_server::start(int port, const Callbacks& cb)
 
     g_running = true;
     g_thread = std::thread([port]() {
-        printf("WEB: Server starting on port %d\n", port);
+        slog("WEB: Server starting on port %d", port);
         if (!g_server->listen("0.0.0.0", port)) {
-            fprintf(stderr, "WEB: Failed to start server on port %d\n", port);
+            slog("WEB: Failed to start server on port %d", port);
         }
         g_running = false;
-        printf("WEB: Server stopped\n");
+        slog("WEB: Server stopped");
     });
 
     // Wait briefly for server to start
@@ -621,7 +630,7 @@ void web_server::stop()
 {
     if (!g_running) return;
 
-    printf("WEB: Stopping server\n");
+    slog("WEB: Stopping server");
     stop_mdns_alias();
     if (g_server) {
         g_server->stop();
