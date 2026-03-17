@@ -3391,7 +3391,7 @@ static web_server::Callbacks build_web_callbacks()
         std::string json = "{\"params\":[";
         for (int i = 0; i < NUM_PARAMS; i++) {
             if (i > 0) json += ",";
-            char buf[64];
+            char buf[128];
             snprintf(buf, sizeof(buf), "{\"name\":\"%s\",\"label\":\"%s\",\"sensitivity\":%.6f}",
                      PARAM_TABLE[i].name, PARAM_TABLE[i].label, g_param_sensitivity[i]);
             json += buf;
