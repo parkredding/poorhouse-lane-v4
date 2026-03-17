@@ -190,16 +190,18 @@ static bool try_virtual_ap()
     snprintf(cmd, sizeof(cmd), "%sip addr add %s/24 dev %s", SUDO, AP_IP, AP_VIRT_IFACE);
     system(cmd);
 
-    // Verify uap0 actually came up
-    snprintf(cmd, sizeof(cmd), "ip link show %s 2>/dev/null | grep -q 'state UP\\|state UNKNOWN'",
-             AP_VIRT_IFACE);
+    // Verify uap0 exists (don't check for UP — brcmfmac keeps virtual
+    // interfaces in DOWN/DORMANT state until hostapd starts on them)
+    snprintf(cmd, sizeof(cmd), "ip link show %s >/dev/null 2>&1", AP_VIRT_IFACE);
     ret = system(cmd);
     if (ret != 0) {
-        slog("AP: %s created but failed to come up", AP_VIRT_IFACE);
-        snprintf(cmd, sizeof(cmd), "%siw dev %s del 2>/dev/null", SUDO, AP_VIRT_IFACE);
-        system(cmd);
+        slog("AP: %s interface not found after creation", AP_VIRT_IFACE);
         return false;
     }
+
+    // Log the current state for debugging
+    snprintf(cmd, sizeof(cmd), "ip link show %s 2>/dev/null | head -1", AP_VIRT_IFACE);
+    system(cmd);
 
     return true;
 }
@@ -306,40 +308,65 @@ bool ap_mode::start_ap()
     usleep(500000);
 
     // 2. Try virtual uap0 first (concurrent STA+AP), fall back to wlan0
-    if (try_virtual_ap()) {
+    bool uap0_ok = try_virtual_ap();
+    if (uap0_ok) {
         g_iface = AP_VIRT_IFACE;
         g_using_wlan0 = false;
-        slog("AP: Using virtual interface %s (WiFi stays connected)", AP_VIRT_IFACE);
-    } else {
-        slog("AP: Virtual %s failed — falling back to wlan0", AP_VIRT_IFACE);
+        slog("AP: Trying virtual interface %s (WiFi stays connected)", AP_VIRT_IFACE);
+    }
+
+    if (uap0_ok) {
+        // Try starting hostapd on uap0
+        if (!write_hostapd_conf(g_ssid, AP_VIRT_IFACE, true)) { uap0_ok = false; }
+        if (uap0_ok) {
+            if (!write_dnsmasq_conf(AP_VIRT_IFACE)) { uap0_ok = false; }
+        }
+        if (uap0_ok) {
+            slog("AP: Starting '%s' on %s", g_ssid.c_str(), AP_VIRT_IFACE);
+            snprintf(cmd, sizeof(cmd), "%shostapd %s -B -P %s",
+                     SUDO, HOSTAPD_CONF, HOSTAPD_PID);
+            int ret = system(cmd);
+            if (ret != 0) {
+                slog("AP: hostapd failed on %s (exit %d) — will try wlan0",
+                     AP_VIRT_IFACE, ret);
+                // Clean up uap0
+                snprintf(cmd, sizeof(cmd), "%siw dev %s del 2>/dev/null",
+                         SUDO, AP_VIRT_IFACE);
+                system(cmd);
+                uap0_ok = false;
+            }
+        }
+    }
+
+    if (!uap0_ok) {
+        slog("AP: Virtual %s unavailable — falling back to wlan0", AP_VIRT_IFACE);
         if (!setup_wlan0_ap()) {
             slog("AP: Failed to configure wlan0 for AP mode");
             return false;
         }
         g_iface = "wlan0";
         g_using_wlan0 = true;
+
+        if (!write_hostapd_conf(g_ssid, "wlan0", false)) return false;
+        if (!write_dnsmasq_conf("wlan0")) return false;
+
+        slog("AP: Starting '%s' on wlan0", g_ssid.c_str());
+        snprintf(cmd, sizeof(cmd), "%shostapd %s -B -P %s",
+                 SUDO, HOSTAPD_CONF, HOSTAPD_PID);
+        int ret = system(cmd);
+        if (ret != 0) {
+            slog("AP: Failed to start hostapd on wlan0 (exit %d)", ret);
+            restore_wlan0();
+            return false;
+        }
     }
 
-    slog("AP: Starting '%s' on %s", g_ssid.c_str(), g_iface.c_str());
-
-    // 3. Write config files
-    if (!write_hostapd_conf(g_ssid, g_iface.c_str(), !g_using_wlan0)) return false;
-    if (!write_dnsmasq_conf(g_iface.c_str())) return false;
-
-    // 4. Start hostapd (daemonized with -B)
-    snprintf(cmd, sizeof(cmd), "%shostapd %s -B -P %s", SUDO, HOSTAPD_CONF, HOSTAPD_PID);
-    int ret = system(cmd);
-    if (ret != 0) {
-        slog("AP: Failed to start hostapd (exit %d)", ret);
-        if (g_using_wlan0) restore_wlan0();
-        return false;
-    }
     usleep(1000000);  // 1s — let hostapd fully settle
 
-    // 5. Start dnsmasq
+    // Start dnsmasq for DHCP + captive portal DNS
     snprintf(cmd, sizeof(cmd), "%sdnsmasq -C %s --pid-file=%s",
              SUDO, DNSMASQ_CONF, DNSMASQ_PID);
-    ret = system(cmd);
+    int ret = system(cmd);
     if (ret != 0) {
         slog("AP: Failed to start dnsmasq (exit %d)", ret);
         snprintf(cmd, sizeof(cmd), "%spkill -F %s 2>/dev/null", SUDO, HOSTAPD_PID);
@@ -348,7 +375,8 @@ bool ap_mode::start_ap()
         return false;
     }
     g_active = true;
-    slog("AP: Access point active — SSID: %s  IP: %s", g_ssid.c_str(), AP_IP);
+    slog("AP: Access point active — SSID: %s  IP: %s (concurrent=%s)",
+         g_ssid.c_str(), AP_IP, g_using_wlan0 ? "no" : "yes");
     return true;
 }
 

@@ -2484,11 +2484,33 @@ static web_server::Callbacks build_web_callbacks()
                                 pclose(ip_pipe);
                             }
 
+                            // Get hostname for .local address
+                            std::string hostname;
+                            FILE* hn_pipe = popen("hostname 2>/dev/null", "r");
+                            if (hn_pipe) {
+                                char hnbuf[128] = {};
+                                if (fgets(hnbuf, sizeof(hnbuf), hn_pipe)) {
+                                    hostname = hnbuf;
+                                    while (!hostname.empty() &&
+                                           (hostname.back() == '\n' || hostname.back() == '\r'))
+                                        hostname.pop_back();
+                                }
+                                pclose(hn_pipe);
+                            }
+
+                            std::string addr_info;
+                            if (!hostname.empty())
+                                addr_info = hostname + ".local";
+                            if (!ip.empty()) {
+                                if (!addr_info.empty()) addr_info += " / ";
+                                addr_info += ip;
+                            }
+
                             {
                                 std::lock_guard<std::mutex> lk(wifi_test_mtx);
                                 wifi_test_success = true;
                                 wifi_test_result_msg = "Connected to '" + got + "'"
-                                    + (ip.empty() ? "" : " (IP: " + ip + ")");
+                                    + (addr_info.empty() ? "" : " — reach siren at " + addr_info);
                             }
                             pclose(pipe);
                             break;
