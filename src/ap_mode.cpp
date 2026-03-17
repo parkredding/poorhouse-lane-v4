@@ -318,15 +318,40 @@ void ap_mode::stop_ap()
 {
     if (!g_active) return;
 
-    slog("AP: Stopping access point");
+    slog("AP: Stopping access point (iface=%s, wlan0_mode=%s)",
+         g_iface.c_str(), g_using_wlan0 ? "yes" : "no");
 
-    // Kill hostapd and dnsmasq using PID files (avoids killing unrelated processes)
     char cmd[256];
+    int ret;
+
+    // Kill hostapd using PID file first, then fallback to killall
     snprintf(cmd, sizeof(cmd), "%spkill -F %s 2>/dev/null", SUDO, HOSTAPD_PID);
-    system(cmd);
+    ret = system(cmd);
+    if (ret != 0) {
+        slog("AP: pkill -F hostapd failed (ret=%d), trying killall", ret);
+        snprintf(cmd, sizeof(cmd), "%skillall hostapd 2>/dev/null", SUDO);
+        system(cmd);
+    }
+
+    // Kill dnsmasq using PID file first, then fallback to killall
     snprintf(cmd, sizeof(cmd), "%spkill -F %s 2>/dev/null", SUDO, DNSMASQ_PID);
-    system(cmd);
+    ret = system(cmd);
+    if (ret != 0) {
+        slog("AP: pkill -F dnsmasq failed (ret=%d), trying killall", ret);
+        snprintf(cmd, sizeof(cmd), "%skillall dnsmasq 2>/dev/null", SUDO);
+        system(cmd);
+    }
+
     usleep(500000);
+
+    // Verify hostapd is actually dead
+    ret = system("pgrep hostapd >/dev/null 2>&1");
+    if (ret == 0) {
+        slog("AP: hostapd still running after kill — force killing");
+        snprintf(cmd, sizeof(cmd), "%skillall -9 hostapd 2>/dev/null", SUDO);
+        system(cmd);
+        usleep(200000);
+    }
 
     // Clean up config and PID files
     unlink(HOSTAPD_CONF);
@@ -339,13 +364,14 @@ void ap_mode::stop_ap()
         restore_wlan0();
     } else {
         // Remove the virtual AP interface
+        slog("AP: Removing virtual interface %s", AP_VIRT_IFACE);
         snprintf(cmd, sizeof(cmd), "%siw dev %s del", SUDO, AP_VIRT_IFACE);
         system(cmd);
     }
 
     g_active = false;
     g_using_wlan0 = false;
-    slog("AP: Access point stopped");
+    slog("AP: Access point stopped — STA mode restored");
 }
 
 bool ap_mode::is_active()

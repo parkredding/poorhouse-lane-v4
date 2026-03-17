@@ -2029,7 +2029,8 @@ static void check_ap_combo(AudioEngine& audio)
         g_combo_suppress.store(true);
         g_combo_start = std::chrono::steady_clock::now();
         g_combo_feedback_given = false;
-        slog("AP COMBO: All 3 buttons held — hold for 3s");
+        slog("AP COMBO: All 3 buttons held — hold for 3s (ap=%s)",
+             g_ap_mode.load() ? "active" : "off");
     } else if (!all) {
         if (g_combo_active)
             slog("AP COMBO: Released (button dropped)");
