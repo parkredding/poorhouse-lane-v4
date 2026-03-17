@@ -2361,13 +2361,31 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.wifi_connect = [](const std::string& ssid, const std::string& password) -> bool {
-        // Save WiFi credentials to wpa_supplicant.conf
-        // This will be used on next boot or when AP mode exits
+        // Use nmcli to save credentials. This creates or updates the
+        // NetworkManager connection profile (no duplicates).
         char cmd[512];
+
+        // Delete any existing profile for this SSID to avoid duplicates
         snprintf(cmd, sizeof(cmd),
-            "sudo sh -c 'wpa_passphrase \"%s\" \"%s\" >> /etc/wpa_supplicant/wpa_supplicant.conf'",
-            ssid.c_str(), password.c_str());
-        return system(cmd) == 0;
+            "sudo nmcli connection delete id \"%s\" 2>/dev/null",
+            ssid.c_str());
+        system(cmd);
+
+        // Create new connection profile (saved to disk, available on next boot)
+        if (password.empty()) {
+            snprintf(cmd, sizeof(cmd),
+                "sudo nmcli connection add type wifi ifname wlan0 con-name \"%s\" "
+                "ssid \"%s\" -- wifi-sec.key-mgmt none",
+                ssid.c_str(), ssid.c_str());
+        } else {
+            snprintf(cmd, sizeof(cmd),
+                "sudo nmcli connection add type wifi ifname wlan0 con-name \"%s\" "
+                "ssid \"%s\" -- wifi-sec.key-mgmt wpa-psk wifi-sec.psk \"%s\"",
+                ssid.c_str(), ssid.c_str(), password.c_str());
+        }
+        int ret = system(cmd);
+        slog("WIFI: Saved credentials for '%s' (exit %d)", ssid.c_str(), ret);
+        return ret == 0;
     };
 
     cb.wifi_status = []() -> std::string {
@@ -2400,15 +2418,11 @@ static web_server::Callbacks build_web_callbacks()
     static std::string       wifi_test_ssid;
     static std::mutex        wifi_test_mtx;
 
-    cb.wifi_test = [](const std::string& ssid, const std::string& password) -> bool {
+    cb.wifi_test = [&](const std::string& ssid, const std::string& password) -> bool {
         if (wifi_test_state.load() == 1) return false;  // already running
 
-        // Save credentials first
-        char cmd[512];
-        snprintf(cmd, sizeof(cmd),
-            "sudo sh -c 'wpa_passphrase \"%s\" \"%s\" >> /etc/wpa_supplicant/wpa_supplicant.conf'",
-            ssid.c_str(), password.c_str());
-        system(cmd);
+        // Save credentials via nmcli (same as wifi_connect)
+        cb.wifi_connect(ssid, password);
 
         wifi_test_state.store(1);
         {
@@ -2423,27 +2437,26 @@ static web_server::Callbacks build_web_callbacks()
              ssid.c_str(), concurrent ? "yes" : "no");
 
         std::thread([ssid, concurrent]() {
-            // If not concurrent, must cycle AP to free wlan0
+            char cmd[512];
+
             if (!concurrent) {
+                // Must cycle AP to free wlan0
                 slog("WIFI TEST: Stopping AP for connection test");
                 ap_mode::stop_ap();
                 system("sudo nmcli device set wlan0 managed yes 2>/dev/null");
-                system("sudo systemctl restart wpa_supplicant 2>/dev/null");
                 usleep(2000000);
-            } else {
-                // In concurrent mode, wlan0 is already managed — just
-                // reconfigure wpa_supplicant to pick up the new credentials
-                system("sudo wpa_cli -i wlan0 reconfigure 2>/dev/null");
-                usleep(1000000);
             }
 
-            // Kick NetworkManager to connect
-            system("sudo nmcli device connect wlan0 2>/dev/null");
+            // Tell NetworkManager to activate this specific connection
+            snprintf(cmd, sizeof(cmd),
+                "sudo nmcli connection up \"%s\" 2>/dev/null", ssid.c_str());
+            int ret = system(cmd);
+            slog("WIFI TEST: 'nmcli connection up' exit %d", ret);
 
             // Poll for connection (up to 15 seconds)
             bool connected = false;
             for (int i = 0; i < 15; i++) {
-                usleep(1000000);  // 1s
+                usleep(1000000);
 
                 FILE* pipe = popen("iwgetid -r wlan0 2>/dev/null", "r");
                 if (pipe) {
@@ -2456,7 +2469,7 @@ static web_server::Callbacks build_web_callbacks()
                             slog("WIFI TEST: Connected to '%s' after %ds", got.c_str(), i + 1);
                             connected = true;
 
-                            // Grab the IP address for wlan0
+                            // Grab the wlan0 IP
                             FILE* ip_pipe = popen("ip -4 addr show wlan0 2>/dev/null | "
                                                    "awk '/inet /{print $2}' | cut -d/ -f1", "r");
                             std::string ip;
@@ -2489,14 +2502,13 @@ static web_server::Callbacks build_web_callbacks()
                 std::lock_guard<std::mutex> lk(wifi_test_mtx);
                 wifi_test_success = false;
                 wifi_test_result_msg = "Failed to connect to '" + ssid
-                    + "' — check password and network availability";
+                    + "' — check password and try again";
             }
 
-            // Restore: in non-concurrent mode, restart AP
+            // In non-concurrent mode, restart AP
             if (!concurrent) {
                 slog("WIFI TEST: Restarting AP");
                 usleep(1000000);
-                system("sudo wpa_cli -i wlan0 disconnect 2>/dev/null");
                 system("sudo nmcli device disconnect wlan0 2>/dev/null");
                 usleep(500000);
                 ap_mode::start_ap();

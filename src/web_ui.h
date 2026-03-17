@@ -1026,12 +1026,11 @@ async function testWifi() {
   res.style.display = 'block';
   res.style.color = 'var(--text)';
   res.style.borderColor = 'var(--border)';
-  res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Testing connection... Credentials saved.';
+  res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Testing connection to \'' + esc(ssid) + '\'...';
   try {
     const r = await fetch('/api/wifi/test', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(pass)});
     if (!r.ok) { res.textContent = 'Failed to start test'; res.style.color = 'var(--danger)'; btn.disabled = false; return; }
-  } catch(e) { /* expected — AP going down */ }
-  // Poll for result (AP will come back up)
+  } catch(e) { res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>AP restarting — reconnect to AP network and wait...'; }
   if (wifiTestPoll) clearInterval(wifiTestPoll);
   wifiTestPoll = setInterval(async () => {
     try {
@@ -1046,9 +1045,9 @@ async function testWifi() {
         res.textContent = d.message;
         loadWifiStatus();
       } else if (d.state === 'running') {
-        res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Testing connection to \'' + esc(d.ssid) + '\'... Reconnect to AP if disconnected.';
+        res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Testing connection to \'' + esc(d.ssid) + '\'...';
       }
-    } catch(e) { /* AP still restarting */ }
+    } catch(e) { /* AP may be restarting in non-concurrent mode */ }
   }, 2000);
 }
 
