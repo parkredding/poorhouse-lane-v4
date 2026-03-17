@@ -1117,7 +1117,7 @@ async function loadSensitivity() {
     let html = '';
     sensitivityData.forEach((p, i) => {
       const pct = Math.round(((p.sensitivity - 0.25) / 3.75) * 100);
-      html += '<div class="dsp-slider"><label style="min-width:90px">'+esc(p.label)+'</label>'+
+      html += '<div class="dsp-slider"><label style="min-width:120px">'+esc(p.label)+'</label>'+
         '<input type="range" min="0" max="100" value="'+pct+'" id="sens-'+i+'" oninput="updateSensVal('+i+')">'+
         '<span class="dsp-val" id="sens-val-'+i+'">'+(p.sensitivity).toFixed(2)+'x</span></div>';
     });
