@@ -357,46 +357,53 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 <div id="encoders" class="panel">
   <div class="card">
     <h3>Device Layout</h3>
-    <div id="enc-device" style="padding:12px 0">
-      <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:16px">
-        <div class="enc-knob" id="enc-knob-0" style="flex:1;text-align:center">
+    <div id="enc-device" style="padding:12px 0;max-width:340px;margin:0 auto">
+      <div style="display:flex;justify-content:space-between;margin-bottom:16px">
+        <div style="flex:1;text-align:center">
           <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">1</div>
           <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a0">Frequency</div>
           <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b0">LFO Depth</div>
         </div>
-        <div class="enc-knob" id="enc-knob-1" style="flex:1;text-align:center">
+        <div style="flex:1;text-align:center">
           <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">2</div>
           <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a1">LFO Rate</div>
           <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b1">Release</div>
         </div>
-        <div class="enc-knob" id="enc-knob-2" style="flex:1;text-align:center">
+        <div style="flex:1;text-align:center">
           <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">3</div>
           <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a2">Filter</div>
           <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b2">Resonance</div>
         </div>
-        <div class="enc-knob" id="enc-knob-3" style="flex:1;text-align:center">
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:16px">
+        <div style="flex:1;text-align:center">
           <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">4</div>
           <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a3">Delay Time</div>
           <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b3">Delay Mix</div>
         </div>
-        <div class="enc-knob" id="enc-knob-4" style="flex:1;text-align:center">
+        <div style="flex:1;text-align:center">
           <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">5</div>
           <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a4">Delay FB</div>
           <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b4">Reverb Mix</div>
         </div>
+        <div style="flex:1;text-align:center">
+          <div style="display:inline-flex;flex-direction:column;border:2px solid var(--border);border-radius:4px;overflow:hidden;margin:0 auto 4px">
+            <div style="padding:4px 10px;font-size:0.45rem;font-weight:700;color:var(--text-lo);border-bottom:1px solid var(--border)">RISE</div>
+            <div style="padding:4px 10px;font-size:0.45rem;font-weight:700;color:var(--text-hi);background:var(--border)">OFF</div>
+            <div style="padding:4px 10px;font-size:0.45rem;font-weight:700;color:var(--text-lo);border-top:1px solid var(--border)">FALL</div>
+          </div>
+          <div style="font-size:0.5rem;color:var(--text-lo)">Pitch Env</div>
+        </div>
       </div>
-      <div style="display:flex;justify-content:center;gap:16px;margin-bottom:8px">
-        <div style="text-align:center">
-          <div style="width:44px;height:28px;border:2px solid var(--danger);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:700;color:var(--danger)">TRIG</div>
-        </div>
-        <div style="text-align:center">
-          <div style="width:44px;height:28px;border:2px solid var(--text-lo);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:700;color:var(--text-lo)">SHIFT</div>
-        </div>
-        <div style="text-align:center">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+        <div style="flex:1;text-align:center">
           <div style="width:44px;height:28px;border:2px solid var(--text-lo);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:700;color:var(--text-lo)">PRESET</div>
         </div>
-        <div style="text-align:center">
-          <div style="width:70px;height:28px;border:2px solid var(--border);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.45rem;font-weight:700;color:var(--text-lo);letter-spacing:1px">F | O | R</div>
+        <div style="flex:1;text-align:center">
+          <div style="width:44px;height:28px;border:2px solid var(--text-lo);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:700;color:var(--text-lo)">SHIFT</div>
+        </div>
+        <div style="flex:1;text-align:center">
+          <div style="width:44px;height:28px;border:2px solid var(--danger);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:700;color:var(--danger)">TRIG</div>
         </div>
       </div>
       <div style="display:flex;justify-content:center;gap:16px;font-size:0.5rem;color:var(--text-lo)">
@@ -1104,6 +1111,7 @@ let sensitivityData = [];
 async function loadSensitivity() {
   try {
     const r = await fetch('/api/encoders/sensitivity');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     sensitivityData = d.params || [];
     let html = '';
