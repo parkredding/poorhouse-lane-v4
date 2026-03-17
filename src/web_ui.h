@@ -420,7 +420,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
     <h3>Connect</h3>
     <div class="form-group"><label>SSID</label><input type="text" id="wifi-ssid"></div>
     <div class="form-group"><label>Password</label><input type="password" id="wifi-pass"></div>
-    <button class="btn btn-primary" onclick="connectWifi()">Save Credentials</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-secondary" onclick="connectWifi()" style="flex:1">Save Only</button>
+      <button class="btn btn-primary" id="btn-wifi-test" onclick="testWifi()" style="flex:1">Test &amp; Save</button>
+    </div>
+    <div id="wifi-test-result" style="display:none;margin-top:12px;padding:10px;font-size:0.75rem;border:1px solid var(--border)"></div>
   </div>
   <div class="card">
     <h3>Status</h3>
@@ -590,7 +594,7 @@ function showTab(id) {
   tabs.forEach((t, i) => { if (t === id && tabEls[i]) tabEls[i].classList.add('active'); });
   if (id !== 'system' && typeof stopSyslogPoll === 'function') stopSyslogPoll();
   if (id === 'live') { loadDspState(); startLivePoll(); } else { stopLivePoll(); }
-  if (id === 'wifi') { loadWifiStatus(); }
+  if (id === 'wifi') { loadWifiStatus(); checkWifiTestResult(); }
   if (id === 'system') { loadSystemInfo(); loadBranches(); loadSysLog(); startSyslogPoll(); }
   if (id === 'options') { loadEncoderMap(); }
 }
@@ -1009,6 +1013,59 @@ async function connectWifi() {
     const r = await fetch('/api/wifi/connect', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(pass)});
     if (r.ok) toast('Credentials saved'); else toast('Failed',true);
   } catch(e) { toast('Error: '+e,true); }
+}
+
+let wifiTestPoll = null;
+async function testWifi() {
+  const ssid = document.getElementById('wifi-ssid').value;
+  const pass = document.getElementById('wifi-pass').value;
+  if (!ssid) { toast('Enter SSID',true); return; }
+  const btn = document.getElementById('btn-wifi-test');
+  btn.disabled = true;
+  const res = document.getElementById('wifi-test-result');
+  res.style.display = 'block';
+  res.style.color = 'var(--text)';
+  res.style.borderColor = 'var(--border)';
+  res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Testing... AP will restart in ~30s. Credentials saved.';
+  try {
+    const r = await fetch('/api/wifi/test', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(pass)});
+    if (!r.ok) { res.textContent = 'Failed to start test'; res.style.color = 'var(--danger)'; btn.disabled = false; return; }
+  } catch(e) { /* expected — AP going down */ }
+  // Poll for result (AP will come back up)
+  if (wifiTestPoll) clearInterval(wifiTestPoll);
+  wifiTestPoll = setInterval(async () => {
+    try {
+      const r = await fetch('/api/wifi/test-result', {signal: AbortSignal.timeout(3000)});
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.state === 'done') {
+        clearInterval(wifiTestPoll); wifiTestPoll = null;
+        btn.disabled = false;
+        res.style.borderColor = d.success ? 'var(--accent)' : 'var(--danger)';
+        res.style.color = d.success ? 'var(--accent)' : 'var(--danger)';
+        res.textContent = d.message;
+        loadWifiStatus();
+      } else if (d.state === 'running') {
+        res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Testing connection to \'' + esc(d.ssid) + '\'... Reconnect to AP if disconnected.';
+      }
+    } catch(e) { /* AP still restarting */ }
+  }, 2000);
+}
+
+// Check for pending test result on WiFi tab load
+async function checkWifiTestResult() {
+  try {
+    const r = await fetch('/api/wifi/test-result', {signal: AbortSignal.timeout(3000)});
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.state === 'done' && d.message) {
+      const res = document.getElementById('wifi-test-result');
+      res.style.display = 'block';
+      res.style.borderColor = d.success ? 'var(--accent)' : 'var(--danger)';
+      res.style.color = d.success ? 'var(--accent)' : 'var(--danger)';
+      res.textContent = d.message;
+    }
+  } catch(e) {}
 }
 
 // System

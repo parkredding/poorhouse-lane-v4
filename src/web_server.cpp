@@ -507,6 +507,26 @@ static void setup_api(httplib::Server& svr)
         }
     });
 
+    svr.Post("/api/wifi/test", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.wifi_test) { json_error(res, "not implemented", 501); return; }
+        auto ssid = req.get_param_value("ssid");
+        auto password = req.get_param_value("password");
+        if (ssid.empty()) { json_error(res, "ssid required"); return; }
+        if (g_callbacks.wifi_test(ssid, password)) {
+            json_ok(res, "test started");
+        } else {
+            json_error(res, "test already in progress");
+        }
+    });
+
+    svr.Get("/api/wifi/test-result", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.wifi_test_result) {
+            json_response(res, g_callbacks.wifi_test_result());
+        } else {
+            json_error(res, "not implemented", 501);
+        }
+    });
+
     // ── Update operations ───────────────────────────────────────────
 
     svr.Get("/api/update/branches", [](const httplib::Request&, httplib::Response& res) {

@@ -2386,6 +2386,139 @@ static web_server::Callbacks build_web_callbacks()
                ",\"ssid\":\"" + ssid + "\"}";
     };
 
+    // ── WiFi connection test (runs in background, cycles AP) ─────────
+
+    static std::atomic<int>  wifi_test_state{0};  // 0=idle 1=running 2=done
+    static std::string       wifi_test_result_msg;
+    static bool              wifi_test_success{false};
+    static std::string       wifi_test_ssid;
+    static std::mutex        wifi_test_mtx;
+
+    cb.wifi_test = [](const std::string& ssid, const std::string& password) -> bool {
+        if (wifi_test_state.load() == 1) return false;  // already running
+
+        // Save credentials first
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd),
+            "sudo sh -c 'wpa_passphrase \"%s\" \"%s\" >> /etc/wpa_supplicant/wpa_supplicant.conf'",
+            ssid.c_str(), password.c_str());
+        system(cmd);
+
+        wifi_test_state.store(1);
+        {
+            std::lock_guard<std::mutex> lk(wifi_test_mtx);
+            wifi_test_ssid = ssid;
+            wifi_test_success = false;
+            wifi_test_result_msg = "testing";
+        }
+
+        slog("WIFI TEST: Starting connection test for '%s'", ssid.c_str());
+
+        std::thread([ssid]() {
+            // 1. Stop AP (hostapd + dnsmasq)
+            slog("WIFI TEST: Stopping AP for connection test");
+            ap_mode::stop_ap();
+
+            // 2. Restore wlan0 to managed mode and try connecting
+            slog("WIFI TEST: Restoring wlan0 and attempting connection");
+            system("sudo nmcli device set wlan0 managed yes 2>/dev/null");
+            system("sudo systemctl restart wpa_supplicant 2>/dev/null");
+            usleep(2000000);  // 2s for wpa_supplicant to start
+
+            // Kick NetworkManager to connect
+            system("sudo nmcli device connect wlan0 2>/dev/null");
+
+            // 3. Poll for connection (up to 20 seconds)
+            bool connected = false;
+            for (int i = 0; i < 20; i++) {
+                usleep(1000000);  // 1s
+
+                FILE* pipe = popen("iwgetid -r 2>/dev/null", "r");
+                if (pipe) {
+                    char buf[128] = {};
+                    if (fgets(buf, sizeof(buf), pipe)) {
+                        std::string got(buf);
+                        while (!got.empty() && (got.back() == '\n' || got.back() == '\r'))
+                            got.pop_back();
+                        if (!got.empty()) {
+                            slog("WIFI TEST: Connected to '%s' after %ds", got.c_str(), i + 1);
+                            connected = true;
+
+                            // Grab the IP address
+                            FILE* ip_pipe = popen("hostname -I 2>/dev/null | awk '{print $1}'", "r");
+                            std::string ip;
+                            if (ip_pipe) {
+                                char ipbuf[64] = {};
+                                if (fgets(ipbuf, sizeof(ipbuf), ip_pipe)) {
+                                    ip = ipbuf;
+                                    while (!ip.empty() && (ip.back() == '\n' || ip.back() == '\r'))
+                                        ip.pop_back();
+                                }
+                                pclose(ip_pipe);
+                            }
+
+                            {
+                                std::lock_guard<std::mutex> lk(wifi_test_mtx);
+                                wifi_test_success = true;
+                                wifi_test_result_msg = "Connected to '" + got + "'"
+                                    + (ip.empty() ? "" : " (IP: " + ip + ")");
+                            }
+                            pclose(pipe);
+                            break;
+                        }
+                    }
+                    pclose(pipe);
+                }
+            }
+
+            if (!connected) {
+                slog("WIFI TEST: Failed to connect to '%s' within 20s", ssid.c_str());
+                std::lock_guard<std::mutex> lk(wifi_test_mtx);
+                wifi_test_success = false;
+                wifi_test_result_msg = "Failed to connect to '" + ssid + "' — check password and network availability";
+            }
+
+            // 4. Restart AP mode
+            slog("WIFI TEST: Restarting AP");
+            usleep(1000000);  // 1s settle
+
+            // Disconnect from WiFi before restarting AP
+            system("sudo wpa_cli -i wlan0 disconnect 2>/dev/null");
+            system("sudo nmcli device disconnect wlan0 2>/dev/null");
+            usleep(500000);
+
+            ap_mode::start_ap();
+            slog("WIFI TEST: AP restored — test complete (success=%s)",
+                 wifi_test_success ? "yes" : "no");
+
+            wifi_test_state.store(2);  // done
+        }).detach();
+
+        return true;
+    };
+
+    cb.wifi_test_result = []() -> std::string {
+        int state = wifi_test_state.load();
+        std::lock_guard<std::mutex> lk(wifi_test_mtx);
+        std::string status;
+        switch (state) {
+        case 0: status = "idle"; break;
+        case 1: status = "running"; break;
+        case 2: status = "done"; break;
+        }
+        // Escape quotes in result message
+        std::string escaped;
+        for (char c : wifi_test_result_msg) {
+            if (c == '"') escaped += "\\\"";
+            else if (c == '\\') escaped += "\\\\";
+            else escaped += c;
+        }
+        return "{\"state\":\"" + status + "\","
+               "\"success\":" + (wifi_test_success ? "true" : "false") + ","
+               "\"ssid\":\"" + wifi_test_ssid + "\","
+               "\"message\":\"" + escaped + "\"}";
+    };
+
     // ── Repo root (derived from executable path) ─────────────────────
     // /home/<user>/dubsiren/build/dubsiren → /home/<user>/dubsiren
     static std::string repo_root;
