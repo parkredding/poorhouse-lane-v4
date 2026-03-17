@@ -209,13 +209,10 @@ static bool setup_wlan0_ap()
 {
     slog("AP: Using wlan0 directly (WiFi will disconnect)");
 
-    // Stop anything managing wlan0
+    // Tell NetworkManager to release wlan0 (don't stop wpa_supplicant
+    // service directly — NM manages it via D-Bus and gets confused)
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "%swpa_cli -i wlan0 disconnect 2>/dev/null", SUDO);
-    system(cmd);
     snprintf(cmd, sizeof(cmd), "%snmcli device disconnect wlan0 2>/dev/null", SUDO);
-    system(cmd);
-    snprintf(cmd, sizeof(cmd), "%ssystemctl stop wpa_supplicant 2>/dev/null", SUDO);
     system(cmd);
     snprintf(cmd, sizeof(cmd), "%snmcli device set wlan0 managed no 2>/dev/null", SUDO);
     system(cmd);
@@ -239,15 +236,56 @@ static void restore_wlan0()
     slog("AP: Restoring wlan0 to managed mode");
 
     char cmd[256];
+    int ret;
+
+    // Flush the AP IP address
     snprintf(cmd, sizeof(cmd), "%sip addr flush dev wlan0 2>/dev/null", SUDO);
     system(cmd);
+
+    // Hand wlan0 back to NetworkManager
     snprintf(cmd, sizeof(cmd), "%snmcli device set wlan0 managed yes 2>/dev/null", SUDO);
-    system(cmd);
-    snprintf(cmd, sizeof(cmd), "%ssystemctl start wpa_supplicant 2>/dev/null", SUDO);
-    system(cmd);
-    // Give NetworkManager a kick to reconnect
+    ret = system(cmd);
+    slog("AP: nmcli set managed yes → %d", ret);
+
+    // Give NM a moment to detect the device
+    usleep(1000000);
+
+    // Ask NM to auto-connect (picks the best known network)
     snprintf(cmd, sizeof(cmd), "%snmcli device connect wlan0 2>/dev/null", SUDO);
-    system(cmd);
+    ret = system(cmd);
+    slog("AP: nmcli device connect → %d", ret);
+
+    // Poll for WiFi association (up to 15s)
+    for (int i = 0; i < 15; i++) {
+        usleep(1000000);
+        FILE* pipe = popen("iwgetid -r wlan0 2>/dev/null", "r");
+        if (pipe) {
+            char buf[128] = {};
+            if (fgets(buf, sizeof(buf), pipe)) {
+                // Strip newline
+                for (char* p = buf; *p; p++)
+                    if (*p == '\n' || *p == '\r') { *p = 0; break; }
+                if (buf[0]) {
+                    slog("AP: WiFi reconnected to '%s' after %ds", buf, i + 1);
+                    pclose(pipe);
+
+                    // Log the IP address
+                    FILE* ip_pipe = popen("ip -4 addr show wlan0 2>/dev/null | "
+                                          "awk '/inet /{print $2}' | cut -d/ -f1", "r");
+                    if (ip_pipe) {
+                        char ipbuf[64] = {};
+                        if (fgets(ipbuf, sizeof(ipbuf), ip_pipe))
+                            slog("AP: wlan0 IP: %s", ipbuf);
+                        pclose(ip_pipe);
+                    }
+                    return;
+                }
+            }
+            pclose(pipe);
+        }
+    }
+
+    slog("AP: WARNING — WiFi did not reconnect within 15s");
 }
 
 // ─── Public interface ───────────────────────────────────────────────
