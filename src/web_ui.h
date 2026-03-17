@@ -419,8 +419,12 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
   <div class="card">
     <h3>Connect</h3>
     <div class="form-group"><label>SSID</label><input type="text" id="wifi-ssid"></div>
-    <div class="form-group"><label>Password</label><input type="password" id="wifi-pass"></div>
-    <button class="btn btn-primary" onclick="connectWifi()">Save Credentials</button>
+    <div class="form-group"><label>Password</label><div style="position:relative"><input type="password" id="wifi-pass" style="padding-right:36px"><button type="button" onclick="const i=document.getElementById('wifi-pass');const s=i.type==='password';i.type=s?'text':'password';this.textContent=s?'\u25CF':'\u25CB'" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text);font-size:1rem;cursor:pointer;padding:2px 4px" title="Show/hide password">&#9675;</button></div></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-secondary" onclick="connectWifi()" style="flex:1">Save Only</button>
+      <button class="btn btn-primary" id="btn-wifi-test" onclick="testWifi()" style="flex:1">Test &amp; Save</button>
+    </div>
+    <div id="wifi-test-result" style="display:none;margin-top:12px;padding:10px;font-size:0.75rem;border:1px solid var(--border)"></div>
   </div>
   <div class="card">
     <h3>Status</h3>
@@ -452,6 +456,14 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       <button class="btn btn-secondary btn-sm" onclick="loadSysLog()" style="font-size:0.6rem;padding:3px 8px;margin-left:auto">Refresh</button>
     </div>
     <pre id="syslog-content" style="background:var(--bg);border:1px solid var(--border);padding:10px;max-height:250px;overflow:auto;font-family:var(--font);font-size:0.6rem;line-height:1.6;color:var(--text);white-space:pre-wrap;word-break:break-all"></pre>
+  </div>
+  <div class="card">
+    <h3>Shell</h3>
+    <pre id="shell-output" style="background:#111;border:1px solid var(--border);padding:10px;max-height:300px;min-height:80px;overflow:auto;font-family:monospace;font-size:0.65rem;line-height:1.5;color:#0f0;white-space:pre-wrap;word-break:break-all"></pre>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input type="text" id="shell-cmd" placeholder="Enter command..." style="flex:1;padding:8px;font-family:monospace;font-size:0.8rem;background:var(--bg);border:1px solid var(--border);color:var(--text)" onkeydown="if(event.key==='Enter')runShell()" autocomplete="off" autocorrect="off" spellcheck="false">
+      <button class="btn btn-primary btn-sm" onclick="runShell()" id="btn-shell-run">Run</button>
+    </div>
   </div>
   <div class="card">
     <h3>Updates</h3>
@@ -532,11 +544,15 @@ let previewingIndex = -1;
 let confirmCallback = null;
 let dspThrottle = {};
 let encoderParams = [];
+let livePollTimer = null;
+let livePollBusy = false;
+const activeDragging = new Set();
 
 // Connection resilience
 function startHeartbeat() {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(async () => {
+    if (livePollTimer) return;  // live poll handles connection health
     try {
       const r = await fetch('/api/dsp/state', {signal: AbortSignal.timeout(5000)});
       if (r.ok) { setOnline(true); reconnectDelay = 3000; }
@@ -577,8 +593,8 @@ function showTab(id) {
   const tabEls = document.querySelectorAll('.tab');
   tabs.forEach((t, i) => { if (t === id && tabEls[i]) tabEls[i].classList.add('active'); });
   if (id !== 'system' && typeof stopSyslogPoll === 'function') stopSyslogPoll();
-  if (id === 'live') loadDspState();
-  if (id === 'wifi') { loadWifiStatus(); }
+  if (id === 'live') { loadDspState(); startLivePoll(); } else { stopLivePoll(); }
+  if (id === 'wifi') { loadWifiStatus(); checkWifiTestResult(); }
   if (id === 'system') { loadSystemInfo(); loadBranches(); loadSysLog(); startSyslogPoll(); }
   if (id === 'options') { loadEncoderMap(); }
 }
@@ -595,37 +611,78 @@ function toast(msg, err, duration) {
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // Live DSP Controls
+function applyDspState(d, force) {
+  if (force || !activeDragging.has('freq')) {
+    document.getElementById('dsp-freq').value = d.freq || 440;
+    document.getElementById('dsp-freq-val').textContent = Math.round(d.freq) + ' Hz';
+  }
+  if (force || !activeDragging.has('lfo_rate')) {
+    setLogSlider('lfo_rate', d.lfo_rate, 0.1, 20);
+    document.getElementById('dsp-lfo_rate-val').textContent = (d.lfo_rate||0).toFixed(2) + ' Hz';
+  }
+  if (force || !activeDragging.has('lfo_depth')) {
+    document.getElementById('dsp-lfo_depth').value = Math.round((d.lfo_depth||0)*100);
+    document.getElementById('dsp-lfo_depth-val').textContent = Math.round((d.lfo_depth||0)*100)+'%';
+  }
+  if (force || !activeDragging.has('filter_cutoff')) {
+    setLogSlider('filter_cutoff', d.filter_cutoff, 20, 20000);
+    document.getElementById('dsp-filter_cutoff-val').textContent = Math.round(d.filter_cutoff)+' Hz';
+  }
+  if (force || !activeDragging.has('filter_reso')) {
+    document.getElementById('dsp-filter_reso').value = Math.round((d.filter_reso||0)*100);
+    document.getElementById('dsp-filter_reso-val').textContent = Math.round((d.filter_reso||0)*100)+'%';
+  }
+  if (force || !activeDragging.has('delay_time')) {
+    setLogSlider('delay_time', d.delay_time, 0.001, 1.0);
+    document.getElementById('dsp-delay_time-val').textContent = Math.round((d.delay_time||0)*1000)+' ms';
+  }
+  if (force || !activeDragging.has('delay_feedback')) {
+    document.getElementById('dsp-delay_feedback').value = Math.round((d.delay_feedback||0)*100);
+    document.getElementById('dsp-delay_feedback-val').textContent = Math.round((d.delay_feedback||0)*100)+'%';
+  }
+  if (force || !activeDragging.has('delay_mix')) {
+    document.getElementById('dsp-delay_mix').value = Math.round((d.delay_mix||0)*100);
+    document.getElementById('dsp-delay_mix-val').textContent = Math.round((d.delay_mix||0)*100)+'%';
+  }
+  if (force || !activeDragging.has('release_time')) {
+    setLogSlider('release_time', d.release_time, 0.01, 5.0);
+    document.getElementById('dsp-release_time-val').textContent = Math.round((d.release_time||0)*1000)+' ms';
+  }
+  if (force || !activeDragging.has('reverb_mix')) {
+    document.getElementById('dsp-reverb_mix').value = Math.round((d.reverb_mix||0)*100);
+    document.getElementById('dsp-reverb_mix-val').textContent = Math.round((d.reverb_mix||0)*100)+'%';
+  }
+  if (force || !activeDragging.has('waveform')) {
+    document.getElementById('dsp-waveform').value = d.waveform || 0;
+  }
+  if (force || !activeDragging.has('lfo_waveform')) {
+    document.getElementById('dsp-lfo-waveform').value = d.lfo_waveform || 0;
+  }
+  if (force || !activeDragging.has('pitch_env')) {
+    updatePitchEnvUI(d.pitch_env || 0);
+  }
+}
+
 async function loadDspState() {
   try {
     const r = await fetch('/api/dsp/state');
-    const d = await r.json();
-    // Sliders
-    document.getElementById('dsp-freq').value = d.freq || 440;
-    document.getElementById('dsp-freq-val').textContent = Math.round(d.freq) + ' Hz';
-    setLogSlider('lfo_rate', d.lfo_rate, 0.1, 20);
-    document.getElementById('dsp-lfo_rate-val').textContent = (d.lfo_rate||0).toFixed(2) + ' Hz';
-    document.getElementById('dsp-lfo_depth').value = Math.round((d.lfo_depth||0)*100);
-    document.getElementById('dsp-lfo_depth-val').textContent = Math.round((d.lfo_depth||0)*100)+'%';
-    setLogSlider('filter_cutoff', d.filter_cutoff, 20, 20000);
-    document.getElementById('dsp-filter_cutoff-val').textContent = Math.round(d.filter_cutoff)+' Hz';
-    document.getElementById('dsp-filter_reso').value = Math.round((d.filter_reso||0)*100);
-    document.getElementById('dsp-filter_reso-val').textContent = Math.round((d.filter_reso||0)*100)+'%';
-    setLogSlider('delay_time', d.delay_time, 0.001, 1.0);
-    document.getElementById('dsp-delay_time-val').textContent = Math.round((d.delay_time||0)*1000)+' ms';
-    document.getElementById('dsp-delay_feedback').value = Math.round((d.delay_feedback||0)*100);
-    document.getElementById('dsp-delay_feedback-val').textContent = Math.round((d.delay_feedback||0)*100)+'%';
-    document.getElementById('dsp-delay_mix').value = Math.round((d.delay_mix||0)*100);
-    document.getElementById('dsp-delay_mix-val').textContent = Math.round((d.delay_mix||0)*100)+'%';
-    setLogSlider('release_time', d.release_time, 0.01, 5.0);
-    document.getElementById('dsp-release_time-val').textContent = Math.round((d.release_time||0)*1000)+' ms';
-    document.getElementById('dsp-reverb_mix').value = Math.round((d.reverb_mix||0)*100);
-    document.getElementById('dsp-reverb_mix-val').textContent = Math.round((d.reverb_mix||0)*100)+'%';
-    // Selects
-    document.getElementById('dsp-waveform').value = d.waveform || 0;
-    document.getElementById('dsp-lfo-waveform').value = d.lfo_waveform || 0;
-    updatePitchEnvUI(d.pitch_env || 0);
-  } catch(e) { console.error('loadDspState', e); }
+    applyDspState(await r.json(), true);
+  } catch(e) {}
 }
+
+async function pollDspState() {
+  if (livePollBusy) return;
+  livePollBusy = true;
+  try {
+    const r = await fetch('/api/dsp/state', {signal: AbortSignal.timeout(2000)});
+    if (!r.ok) { setOnline(false); return; }
+    if (!isOnline) setOnline(true);
+    applyDspState(await r.json(), false);
+  } catch(e) { setOnline(false); }
+  finally { livePollBusy = false; }
+}
+function startLivePoll() { if (!livePollTimer) livePollTimer = setInterval(pollDspState, 200); }
+function stopLivePoll() { if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; } }
 
 function setLogSlider(name, value, min, max) {
   // Map log value to 0-1000 slider position
@@ -958,6 +1015,58 @@ async function connectWifi() {
   } catch(e) { toast('Error: '+e,true); }
 }
 
+let wifiTestPoll = null;
+async function testWifi() {
+  const ssid = document.getElementById('wifi-ssid').value;
+  const pass = document.getElementById('wifi-pass').value;
+  if (!ssid) { toast('Enter SSID',true); return; }
+  const btn = document.getElementById('btn-wifi-test');
+  btn.disabled = true;
+  const res = document.getElementById('wifi-test-result');
+  res.style.display = 'block';
+  res.style.color = 'var(--text)';
+  res.style.borderColor = 'var(--border)';
+  res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Testing connection to \'' + esc(ssid) + '\'...';
+  try {
+    const r = await fetch('/api/wifi/test', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(pass)});
+    if (!r.ok) { res.textContent = 'Failed to start test'; res.style.color = 'var(--danger)'; btn.disabled = false; return; }
+  } catch(e) { res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>AP restarting — reconnect to AP network and wait...'; }
+  if (wifiTestPoll) clearInterval(wifiTestPoll);
+  wifiTestPoll = setInterval(async () => {
+    try {
+      const r = await fetch('/api/wifi/test-result', {signal: AbortSignal.timeout(3000)});
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.state === 'done') {
+        clearInterval(wifiTestPoll); wifiTestPoll = null;
+        btn.disabled = false;
+        res.style.borderColor = d.success ? 'var(--accent)' : 'var(--danger)';
+        res.style.color = d.success ? 'var(--accent)' : 'var(--danger)';
+        res.textContent = d.message;
+        loadWifiStatus();
+      } else if (d.state === 'running') {
+        res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Testing connection to \'' + esc(d.ssid) + '\'...';
+      }
+    } catch(e) { /* AP may be restarting in non-concurrent mode */ }
+  }, 2000);
+}
+
+// Check for pending test result on WiFi tab load
+async function checkWifiTestResult() {
+  try {
+    const r = await fetch('/api/wifi/test-result', {signal: AbortSignal.timeout(3000)});
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.state === 'done' && d.message) {
+      const res = document.getElementById('wifi-test-result');
+      res.style.display = 'block';
+      res.style.borderColor = d.success ? 'var(--accent)' : 'var(--danger)';
+      res.style.color = d.success ? 'var(--accent)' : 'var(--danger)';
+      res.textContent = d.message;
+    }
+  } catch(e) {}
+}
+
 // System
 async function loadSystemInfo() {
   try {
@@ -1006,6 +1115,36 @@ function toggleSyslogAuto() {
   if (document.getElementById('syslog-auto').checked) startSyslogPoll();
   else stopSyslogPoll();
 }
+
+// Shell
+let shellHistory = [];
+let shellHistIdx = -1;
+async function runShell() {
+  const input = document.getElementById('shell-cmd');
+  const cmd = input.value.trim();
+  if (!cmd) return;
+  shellHistory.push(cmd);
+  shellHistIdx = shellHistory.length;
+  const out = document.getElementById('shell-output');
+  out.textContent += (out.textContent ? '\n' : '') + '$ ' + cmd + '\n';
+  input.value = '';
+  document.getElementById('btn-shell-run').disabled = true;
+  try {
+    const r = await fetch('/api/system/shell', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cmd:cmd})});
+    const d = await r.json();
+    if (d.output) out.textContent += d.output;
+    if (d.exit !== 0) out.textContent += '\n[exit ' + d.exit + ']';
+  } catch(e) { out.textContent += '\n[error: ' + e.message + ']'; }
+  out.scrollTop = out.scrollHeight;
+  document.getElementById('btn-shell-run').disabled = false;
+  input.focus();
+}
+document.addEventListener('keydown', function(e) {
+  const input = document.getElementById('shell-cmd');
+  if (document.activeElement !== input) return;
+  if (e.key === 'ArrowUp' && shellHistory.length) { e.preventDefault(); shellHistIdx = Math.max(0, shellHistIdx-1); input.value = shellHistory[shellHistIdx] || ''; }
+  if (e.key === 'ArrowDown' && shellHistory.length) { e.preventDefault(); shellHistIdx = Math.min(shellHistory.length, shellHistIdx+1); input.value = shellHistory[shellHistIdx] || ''; }
+});
 
 async function restartService() {
   try { await fetch('/api/system/restart',{method:'POST'}); toast('Restarting...'); } catch(e) { toast('Error',true); }
@@ -1232,6 +1371,21 @@ loadOptions();
 renderThemeGrid();
 loadDspState();
 startHeartbeat();
+
+// Interaction guard: prevent live poll from overwriting slider being dragged
+document.querySelectorAll('#live input[type=range]').forEach(el => {
+  const name = el.id.replace('dsp-', '');
+  el.addEventListener('pointerdown', () => activeDragging.add(name));
+  const up = () => setTimeout(() => activeDragging.delete(name), 300);
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+});
+
+// Pause live poll when browser tab is hidden
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopLivePoll();
+  else if (document.getElementById('live').classList.contains('active')) startLivePoll();
+});
 </script>
 </body>
 </html>

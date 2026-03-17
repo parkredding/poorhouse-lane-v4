@@ -507,6 +507,26 @@ static void setup_api(httplib::Server& svr)
         }
     });
 
+    svr.Post("/api/wifi/test", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.wifi_test) { json_error(res, "not implemented", 501); return; }
+        auto ssid = req.get_param_value("ssid");
+        auto password = req.get_param_value("password");
+        if (ssid.empty()) { json_error(res, "ssid required"); return; }
+        if (g_callbacks.wifi_test(ssid, password)) {
+            json_ok(res, "test started");
+        } else {
+            json_error(res, "test already in progress");
+        }
+    });
+
+    svr.Get("/api/wifi/test-result", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.wifi_test_result) {
+            json_response(res, g_callbacks.wifi_test_result());
+        } else {
+            json_error(res, "not implemented", 501);
+        }
+    });
+
     // ── Update operations ───────────────────────────────────────────
 
     svr.Get("/api/update/branches", [](const httplib::Request&, httplib::Response& res) {
@@ -549,6 +569,61 @@ static void setup_api(httplib::Server& svr)
         } else {
             json_error(res, "not implemented", 501);
         }
+    });
+
+    // ── Shell ────────────────────────────────────────────────────────
+
+    svr.Post("/api/system/shell", [](const httplib::Request& req, httplib::Response& res) {
+        // Parse command from JSON body
+        std::string cmd;
+        auto j = req.body;
+        // Minimal JSON parse: extract "cmd" value
+        auto pos = j.find("\"cmd\"");
+        if (pos == std::string::npos) { json_error(res, "missing cmd"); return; }
+        auto colon = j.find(':', pos);
+        auto q1 = j.find('"', colon + 1);
+        auto q2 = j.find('"', q1 + 1);
+        if (q1 == std::string::npos || q2 == std::string::npos) { json_error(res, "bad cmd"); return; }
+        cmd = j.substr(q1 + 1, q2 - q1 - 1);
+        // Unescape basic JSON escapes
+        for (size_t i = 0; i < cmd.size(); i++) {
+            if (cmd[i] == '\\' && i + 1 < cmd.size()) {
+                if (cmd[i+1] == 'n') { cmd.replace(i, 2, "\n"); }
+                else if (cmd[i+1] == 't') { cmd.replace(i, 2, "\t"); }
+                else if (cmd[i+1] == '"') { cmd.replace(i, 2, "\""); }
+                else if (cmd[i+1] == '\\') { cmd.replace(i, 2, "\\"); }
+            }
+        }
+
+        slog("SHELL: %s", cmd.c_str());
+
+        // Run command, capture stdout+stderr, with timeout
+        std::string full_cmd = cmd + " 2>&1";
+        FILE* fp = popen(full_cmd.c_str(), "r");
+        if (!fp) { json_error(res, "popen failed"); return; }
+
+        std::string output;
+        char buf[512];
+        while (fgets(buf, sizeof(buf), fp)) {
+            output += buf;
+        }
+        int status = pclose(fp);
+        int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+
+        // Build JSON response — escape output for JSON
+        std::string escaped;
+        for (char c : output) {
+            if (c == '"') escaped += "\\\"";
+            else if (c == '\\') escaped += "\\\\";
+            else if (c == '\n') escaped += "\\n";
+            else if (c == '\r') escaped += "\\r";
+            else if (c == '\t') escaped += "\\t";
+            else if ((unsigned char)c < 0x20) { char h[8]; snprintf(h, sizeof(h), "\\u%04x", c); escaped += h; }
+            else escaped += c;
+        }
+
+        std::string json = "{\"output\":\"" + escaped + "\",\"exit\":" + std::to_string(exit_code) + "}";
+        res.set_content(json, "application/json");
     });
 
     // ── Backup/restore ──────────────────────────────────────────────

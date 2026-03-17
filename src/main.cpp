@@ -1990,6 +1990,10 @@ static bool g_combo_feedback_given = false;
 // normal button-release actions (save preset, bank toggle) so they don't
 // fire after the user releases a 3-button hold.
 static std::atomic<bool> g_combo_suppress{false};
+// Grace period: after a combo fires (enter/exit AP), ignore new combos
+// until all buttons have been released for at least 2 seconds.
+static std::chrono::steady_clock::time_point g_combo_release_time{};
+static bool g_combo_cooldown = false;
 
 // Forward declarations for AP mode
 static void enter_ap_mode();
@@ -2000,23 +2004,39 @@ static void check_ap_combo(AudioEngine& audio)
     bool t = g_btn_trigger.load();
     bool s = g_btn_shift.load();
     bool p = g_btn_preset.load();
+    bool none = !t && !s && !p;
+    bool all  = t && s && p;
 
-    // (debug removed — button callback now logs state)
-
-    bool all = t && s && p;
+    // Grace period: after a combo fires, require all buttons released for 2s
+    // before accepting a new combo.  This prevents the enter-AP hold from
+    // immediately starting the exit-AP countdown on release.
+    if (g_combo_cooldown) {
+        if (!none) {
+            // Buttons still held/pressed — keep resetting the release clock
+            g_combo_release_time = std::chrono::steady_clock::now();
+            return;
+        }
+        auto since_release = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - g_combo_release_time).count();
+        if (since_release < 2000) return;
+        g_combo_cooldown = false;
+        g_combo_suppress.store(false);
+        slog("AP COMBO: Cooldown cleared — ready for new combo");
+    }
 
     if (all && !g_combo_active) {
         g_combo_active = true;
         g_combo_suppress.store(true);
         g_combo_start = std::chrono::steady_clock::now();
         g_combo_feedback_given = false;
-        slog("AP COMBO: All 3 buttons held — hold for 3s");
+        slog("AP COMBO: All 3 buttons held — hold for 3s (ap=%s)",
+             g_ap_mode.load() ? "active" : "off");
     } else if (!all) {
         if (g_combo_active)
             slog("AP COMBO: Released (button dropped)");
         g_combo_active = false;
         // Clear suppress once all buttons are released
-        if (!t && !s && !p)
+        if (none)
             g_combo_suppress.store(false);
         return;
     }
@@ -2034,6 +2054,8 @@ static void check_ap_combo(AudioEngine& audio)
 
     if (elapsed >= 3000) {
         g_combo_active = false;
+        g_combo_cooldown = true;
+        g_combo_release_time = std::chrono::steady_clock::now();
         slog("AP COMBO: 3s reached — %s AP mode",
              g_ap_mode.load() ? "exiting" : "entering");
         if (g_ap_mode.load()) {
@@ -2048,6 +2070,9 @@ static void check_ap_combo(AudioEngine& audio)
 
 // Flag set by web UI "exit AP" button, checked in main loop
 static std::atomic<bool> g_ap_exit_requested{false};
+
+// AP mode sound effect: 0=off, 1=wind-up (entering), 2=wind-down (exiting)
+static std::atomic<int>  g_ap_sound{0};
 
 static web_server::Callbacks build_web_callbacks()
 {
@@ -2337,13 +2362,31 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.wifi_connect = [](const std::string& ssid, const std::string& password) -> bool {
-        // Save WiFi credentials to wpa_supplicant.conf
-        // This will be used on next boot or when AP mode exits
+        // Use nmcli to save credentials. This creates or updates the
+        // NetworkManager connection profile (no duplicates).
         char cmd[512];
+
+        // Delete any existing profile for this SSID to avoid duplicates
         snprintf(cmd, sizeof(cmd),
-            "sudo sh -c 'wpa_passphrase \"%s\" \"%s\" >> /etc/wpa_supplicant/wpa_supplicant.conf'",
-            ssid.c_str(), password.c_str());
-        return system(cmd) == 0;
+            "sudo nmcli connection delete id \"%s\" 2>/dev/null",
+            ssid.c_str());
+        system(cmd);
+
+        // Create new connection profile (saved to disk, available on next boot)
+        if (password.empty()) {
+            snprintf(cmd, sizeof(cmd),
+                "sudo nmcli connection add type wifi ifname wlan0 con-name \"%s\" "
+                "ssid \"%s\" -- wifi-sec.key-mgmt none",
+                ssid.c_str(), ssid.c_str());
+        } else {
+            snprintf(cmd, sizeof(cmd),
+                "sudo nmcli connection add type wifi ifname wlan0 con-name \"%s\" "
+                "ssid \"%s\" -- wifi-sec.key-mgmt wpa-psk wifi-sec.psk \"%s\"",
+                ssid.c_str(), ssid.c_str(), password.c_str());
+        }
+        int ret = system(cmd);
+        slog("WIFI: Saved credentials for '%s' (exit %d)", ssid.c_str(), ret);
+        return ret == 0;
     };
 
     cb.wifi_status = []() -> std::string {
@@ -2360,6 +2403,212 @@ static web_server::Callbacks build_web_callbacks()
         }
         return "{\"connected\":" + std::string(ssid.empty() ? "false" : "true") +
                ",\"ssid\":\"" + ssid + "\"}";
+    };
+
+    // ── WiFi connection test ────────────────────────────────────────
+    //
+    // In concurrent mode (uap0): wlan0 is free — test directly without
+    // touching the AP.  User stays connected to the config portal.
+    //
+    // In fallback mode (wlan0): must cycle the AP to free wlan0 for
+    // the test.  User gets disconnected and reconnects after.
+
+    static std::atomic<int>  wifi_test_state{0};  // 0=idle 1=running 2=done
+    static std::string       wifi_test_result_msg;
+    static bool              wifi_test_success{false};
+    static std::string       wifi_test_ssid;
+    static std::mutex        wifi_test_mtx;
+
+    cb.wifi_test = [&](const std::string& ssid, const std::string& password) -> bool {
+        if (wifi_test_state.load() == 1) return false;  // already running
+
+        // Save credentials via nmcli (same as wifi_connect)
+        cb.wifi_connect(ssid, password);
+
+        wifi_test_state.store(1);
+        {
+            std::lock_guard<std::mutex> lk(wifi_test_mtx);
+            wifi_test_ssid = ssid;
+            wifi_test_success = false;
+            wifi_test_result_msg = "testing";
+        }
+
+        bool concurrent = ap_mode::is_concurrent();
+        slog("WIFI TEST: Starting connection test for '%s' (concurrent=%s)",
+             ssid.c_str(), concurrent ? "yes" : "no");
+
+        std::thread([ssid, concurrent]() {
+            char cmd[512];
+
+            // Remember current SSID so we can reconnect on failure
+            std::string prev_ssid;
+            if (concurrent) {
+                FILE* pipe = popen("iwgetid -r wlan0 2>/dev/null", "r");
+                if (pipe) {
+                    char buf[128] = {};
+                    if (fgets(buf, sizeof(buf), pipe)) {
+                        prev_ssid = buf;
+                        while (!prev_ssid.empty() &&
+                               (prev_ssid.back() == '\n' || prev_ssid.back() == '\r'))
+                            prev_ssid.pop_back();
+                    }
+                    pclose(pipe);
+                }
+                slog("WIFI TEST: Currently on '%s' — disconnecting for test",
+                     prev_ssid.c_str());
+                system("sudo nmcli device disconnect wlan0 2>/dev/null");
+                usleep(1000000);
+            }
+
+            if (!concurrent) {
+                // Must cycle AP to free wlan0
+                slog("WIFI TEST: Stopping AP for connection test");
+                ap_mode::stop_ap();
+                system("sudo nmcli device set wlan0 managed yes 2>/dev/null");
+                usleep(2000000);
+            }
+
+            // Tell NetworkManager to activate this specific connection
+            snprintf(cmd, sizeof(cmd),
+                "sudo nmcli connection up \"%s\" 2>/dev/null", ssid.c_str());
+            int ret = system(cmd);
+            slog("WIFI TEST: 'nmcli connection up' exit %d", ret);
+
+            // Poll for connection (up to 15 seconds)
+            // Verify the SSID matches what we're testing (not a stale connection)
+            bool connected = false;
+            for (int i = 0; i < 15; i++) {
+                usleep(1000000);
+
+                FILE* pipe = popen("iwgetid -r wlan0 2>/dev/null", "r");
+                if (pipe) {
+                    char buf[128] = {};
+                    if (fgets(buf, sizeof(buf), pipe)) {
+                        std::string got(buf);
+                        while (!got.empty() && (got.back() == '\n' || got.back() == '\r'))
+                            got.pop_back();
+                        if (!got.empty() && got == ssid) {
+                            slog("WIFI TEST: Connected to '%s' after %ds", got.c_str(), i + 1);
+
+                            // Wait a moment for DHCP to assign IP
+                            usleep(2000000);
+
+                            // Grab the wlan0 IP
+                            FILE* ip_pipe = popen("ip -4 addr show wlan0 2>/dev/null | "
+                                                   "awk '/inet /{print $2}' | cut -d/ -f1", "r");
+                            std::string ip;
+                            if (ip_pipe) {
+                                char ipbuf[64] = {};
+                                if (fgets(ipbuf, sizeof(ipbuf), ip_pipe)) {
+                                    ip = ipbuf;
+                                    while (!ip.empty() && (ip.back() == '\n' || ip.back() == '\r'))
+                                        ip.pop_back();
+                                }
+                                pclose(ip_pipe);
+                            }
+
+                            if (ip.empty()) {
+                                slog("WIFI TEST: Associated but no IP — DHCP failed");
+                                pclose(pipe);
+                                break;  // fall through to failure
+                            }
+
+                            connected = true;
+
+                            // Get hostname for .local address
+                            std::string hostname;
+                            FILE* hn_pipe = popen("hostname 2>/dev/null", "r");
+                            if (hn_pipe) {
+                                char hnbuf[128] = {};
+                                if (fgets(hnbuf, sizeof(hnbuf), hn_pipe)) {
+                                    hostname = hnbuf;
+                                    while (!hostname.empty() &&
+                                           (hostname.back() == '\n' || hostname.back() == '\r'))
+                                        hostname.pop_back();
+                                }
+                                pclose(hn_pipe);
+                            }
+
+                            std::string addr_info;
+                            if (!hostname.empty())
+                                addr_info = hostname + ".local";
+                            if (!ip.empty()) {
+                                if (!addr_info.empty()) addr_info += " / ";
+                                addr_info += ip;
+                            }
+
+                            {
+                                std::lock_guard<std::mutex> lk(wifi_test_mtx);
+                                wifi_test_success = true;
+                                wifi_test_result_msg = "Connected to '" + got + "'"
+                                    + (addr_info.empty() ? "" : " — reach siren at " + addr_info);
+                            }
+                            pclose(pipe);
+                            break;
+                        } else if (!got.empty()) {
+                            slog("WIFI TEST: wlan0 on '%s' (wanted '%s') — ignoring",
+                                 got.c_str(), ssid.c_str());
+                        }
+                    }
+                    pclose(pipe);
+                }
+            }
+
+            if (!connected) {
+                slog("WIFI TEST: Failed to connect to '%s' within 15s", ssid.c_str());
+                // Delete the bad connection profile so it doesn't interfere
+                snprintf(cmd, sizeof(cmd),
+                    "sudo nmcli connection delete id \"%s\" 2>/dev/null", ssid.c_str());
+                system(cmd);
+                std::lock_guard<std::mutex> lk(wifi_test_mtx);
+                wifi_test_success = false;
+                wifi_test_result_msg = "Failed to connect to '" + ssid
+                    + "' — check password and try again";
+            }
+
+            // Restore connectivity
+            if (!concurrent) {
+                slog("WIFI TEST: Restarting AP");
+                usleep(1000000);
+                system("sudo nmcli device disconnect wlan0 2>/dev/null");
+                usleep(500000);
+                ap_mode::start_ap();
+            } else if (!connected && !prev_ssid.empty()) {
+                // Reconnect to previous network after failed test
+                slog("WIFI TEST: Reconnecting to '%s'", prev_ssid.c_str());
+                snprintf(cmd, sizeof(cmd),
+                    "sudo nmcli connection up \"%s\" 2>/dev/null", prev_ssid.c_str());
+                system(cmd);
+            }
+
+            slog("WIFI TEST: Complete (success=%s)", wifi_test_success ? "yes" : "no");
+            wifi_test_state.store(2);
+        }).detach();
+
+        return true;
+    };
+
+    cb.wifi_test_result = []() -> std::string {
+        int state = wifi_test_state.load();
+        std::lock_guard<std::mutex> lk(wifi_test_mtx);
+        std::string status;
+        switch (state) {
+        case 0: status = "idle"; break;
+        case 1: status = "running"; break;
+        case 2: status = "done"; break;
+        }
+        // Escape quotes in result message
+        std::string escaped;
+        for (char c : wifi_test_result_msg) {
+            if (c == '"') escaped += "\\\"";
+            else if (c == '\\') escaped += "\\\\";
+            else escaped += c;
+        }
+        return "{\"state\":\"" + status + "\","
+               "\"success\":" + (wifi_test_success ? "true" : "false") + ","
+               "\"concurrent\":" + (ap_mode::is_concurrent() ? "true" : "false") + ","
+               "\"ssid\":\"" + wifi_test_ssid + "\","
+               "\"message\":\"" + escaped + "\"}";
     };
 
     // ── Repo root (derived from executable path) ─────────────────────
@@ -3122,6 +3371,9 @@ static void enter_ap_mode()
     // Clear gate stuck from 3-button combo hold
     g_gate.store(false);
 
+    // Wind-up sound effect
+    g_ap_sound.store(1);
+
     // Audio keeps running so users can preview presets via trigger button
     g_ap_mode.store(true);
 
@@ -3142,6 +3394,9 @@ static void exit_ap_mode()
     if (!g_ap_mode.load()) return;
 
     slog("EXITING AP CONFIG MODE");
+
+    // Wind-down sound effect
+    g_ap_sound.store(2);
 
     // Only stop the AP infrastructure — web server keeps running
     ap_mode::stop_ap();
@@ -3214,6 +3469,11 @@ int main(int argc, char *argv[])
     float attack_rate    = 0.0f;
     float release_rate   = 0.0f;
     float sr_f           = 48000.0f;    // set after init, read in callback
+
+    // AP mode wind-up / wind-down sound state
+    float ap_snd_phase   = 0.0f;       // oscillator phase [0,1)
+    float ap_snd_progress = 0.0f;      // 0→1 over duration
+    int   ap_snd_active  = 0;          // local copy: 1=up, 2=down
     float pitch_env_mult  = 1.0f;
     float sweep_phase     = 0.0f;   // 0→1 linear ramp during release
     bool  prev_gate       = false;
@@ -3307,6 +3567,15 @@ int main(int argc, char *argv[])
             reverb_schroeder.setSize(REVERB_SIZE);
             reverb_schroeder.setMix(rev_mix);
             break;
+        }
+
+        // AP sound effect — check for new trigger (once per frame)
+        int ap_trigger = g_ap_sound.load(rlx);
+        if (ap_trigger != 0) {
+            g_ap_sound.store(0, rlx);
+            ap_snd_active   = ap_trigger;
+            ap_snd_phase    = 0.0f;
+            ap_snd_progress = 0.0f;
         }
 
         // Gate edge — envelopes start on release, reset on press
@@ -3411,6 +3680,42 @@ int main(int argc, char *argv[])
             if (flanger_mix > 0.0f) {
                 flanger.setMix(flanger_mix);
                 s = flanger.process(s);
+            }
+
+            // AP mode wind-up / wind-down sound
+            if (ap_snd_active != 0 && ap_snd_progress < 1.0f) {
+                // Duration: 1.5 seconds
+                constexpr float AP_SND_DURATION = 1.5f;
+                float ap_inc = 1.0f / (AP_SND_DURATION * sr_f);
+                ap_snd_progress += ap_inc;
+
+                float t = ap_snd_progress;
+
+                // Frequency sweep: wind-up 200→3000 Hz, wind-down 3000→200 Hz
+                float f_lo = 200.0f, f_hi = 3000.0f;
+                float freq_ap;
+                if (ap_snd_active == 1)  // wind up
+                    freq_ap = f_lo * std::pow(f_hi / f_lo, t);
+                else                     // wind down
+                    freq_ap = f_hi * std::pow(f_lo / f_hi, t);
+
+                // Phase accumulator
+                ap_snd_phase += freq_ap / sr_f;
+                if (ap_snd_phase >= 1.0f) ap_snd_phase -= 1.0f;
+
+                // Two detuned sines for richness
+                float ap_s = std::sin(2.0f * 3.14159265f * ap_snd_phase)
+                           + 0.3f * std::sin(2.0f * 3.14159265f * ap_snd_phase * 3.0f);
+
+                // Amplitude envelope: fade in/out at edges, louder in middle
+                float amp = 0.35f;
+                if (t < 0.1f)       amp *= t / 0.1f;          // fade in
+                else if (t > 0.85f) amp *= (1.0f - t) / 0.15f; // fade out
+                ap_s *= amp;
+
+                s += ap_s;
+            } else if (ap_snd_progress >= 1.0f) {
+                ap_snd_active = 0;  // done
             }
 
             // Output soft limiter — transparent at normal levels,

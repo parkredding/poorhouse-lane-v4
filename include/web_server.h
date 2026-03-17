@@ -65,6 +65,8 @@ struct Callbacks {
     std::function<std::string()> wifi_scan;
     std::function<bool(const std::string& ssid, const std::string& password)> wifi_connect;
     std::function<std::string()> wifi_status;
+    std::function<bool(const std::string& ssid, const std::string& password)> wifi_test;
+    std::function<std::string()> wifi_test_result;
 
     // Update operations
     std::function<std::string(const std::string& branch)> update_check;
