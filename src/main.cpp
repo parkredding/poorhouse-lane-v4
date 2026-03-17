@@ -197,7 +197,7 @@ static std::mutex g_encoder_map_mutex;
 // Per-parameter sensitivity multipliers (scales acceleration curve)
 // Tuned defaults: lower values for fine control (pitch, feedback), higher for broad sweeps
 static float g_param_sensitivity[17] = {
-    1.00f, 0.78f, 0.51f, 1.00f, 0.25f,   // freq, lfo_rate, cutoff, delay_time, delay_fb
+    1.00f, 0.55f, 0.51f, 1.00f, 0.25f,   // freq, lfo_rate, cutoff, delay_time, delay_fb
     0.78f, 1.00f, 1.00f, 0.44f, 0.44f,   // lfo_depth, release, reso, delay_mix, reverb_mix
     1.0f, 1.0f, 1.0f, 1.0f, 1.0f,        // phaser, chorus, flanger, sat_mix, sat_drive
     1.0f, 1.0f                             // tape_wobble, tape_flutter
