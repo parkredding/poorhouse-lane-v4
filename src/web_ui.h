@@ -419,7 +419,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
   <div class="card">
     <h3>Connect</h3>
     <div class="form-group"><label>SSID</label><input type="text" id="wifi-ssid"></div>
-    <div class="form-group"><label>Password</label><input type="password" id="wifi-pass"></div>
+    <div class="form-group"><label>Password</label><div style="position:relative"><input type="password" id="wifi-pass" style="padding-right:36px"><button type="button" onclick="const i=document.getElementById('wifi-pass');const s=i.type==='password';i.type=s?'text':'password';this.textContent=s?'\u25CF':'\u25CB'" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text);font-size:1rem;cursor:pointer;padding:2px 4px" title="Show/hide password">&#9675;</button></div></div>
     <div style="display:flex;gap:8px">
       <button class="btn btn-secondary" onclick="connectWifi()" style="flex:1">Save Only</button>
       <button class="btn btn-primary" id="btn-wifi-test" onclick="testWifi()" style="flex:1">Test &amp; Save</button>
