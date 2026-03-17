@@ -540,11 +540,15 @@ let previewingIndex = -1;
 let confirmCallback = null;
 let dspThrottle = {};
 let encoderParams = [];
+let livePollTimer = null;
+let livePollBusy = false;
+const activeDragging = new Set();
 
 // Connection resilience
 function startHeartbeat() {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(async () => {
+    if (livePollTimer) return;  // live poll handles connection health
     try {
       const r = await fetch('/api/dsp/state', {signal: AbortSignal.timeout(5000)});
       if (r.ok) { setOnline(true); reconnectDelay = 3000; }
@@ -585,7 +589,7 @@ function showTab(id) {
   const tabEls = document.querySelectorAll('.tab');
   tabs.forEach((t, i) => { if (t === id && tabEls[i]) tabEls[i].classList.add('active'); });
   if (id !== 'system' && typeof stopSyslogPoll === 'function') stopSyslogPoll();
-  if (id === 'live') loadDspState();
+  if (id === 'live') { loadDspState(); startLivePoll(); } else { stopLivePoll(); }
   if (id === 'wifi') { loadWifiStatus(); }
   if (id === 'system') { loadSystemInfo(); loadBranches(); loadSysLog(); startSyslogPoll(); }
   if (id === 'options') { loadEncoderMap(); }
@@ -603,37 +607,78 @@ function toast(msg, err, duration) {
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // Live DSP Controls
+function applyDspState(d, force) {
+  if (force || !activeDragging.has('freq')) {
+    document.getElementById('dsp-freq').value = d.freq || 440;
+    document.getElementById('dsp-freq-val').textContent = Math.round(d.freq) + ' Hz';
+  }
+  if (force || !activeDragging.has('lfo_rate')) {
+    setLogSlider('lfo_rate', d.lfo_rate, 0.1, 20);
+    document.getElementById('dsp-lfo_rate-val').textContent = (d.lfo_rate||0).toFixed(2) + ' Hz';
+  }
+  if (force || !activeDragging.has('lfo_depth')) {
+    document.getElementById('dsp-lfo_depth').value = Math.round((d.lfo_depth||0)*100);
+    document.getElementById('dsp-lfo_depth-val').textContent = Math.round((d.lfo_depth||0)*100)+'%';
+  }
+  if (force || !activeDragging.has('filter_cutoff')) {
+    setLogSlider('filter_cutoff', d.filter_cutoff, 20, 20000);
+    document.getElementById('dsp-filter_cutoff-val').textContent = Math.round(d.filter_cutoff)+' Hz';
+  }
+  if (force || !activeDragging.has('filter_reso')) {
+    document.getElementById('dsp-filter_reso').value = Math.round((d.filter_reso||0)*100);
+    document.getElementById('dsp-filter_reso-val').textContent = Math.round((d.filter_reso||0)*100)+'%';
+  }
+  if (force || !activeDragging.has('delay_time')) {
+    setLogSlider('delay_time', d.delay_time, 0.001, 1.0);
+    document.getElementById('dsp-delay_time-val').textContent = Math.round((d.delay_time||0)*1000)+' ms';
+  }
+  if (force || !activeDragging.has('delay_feedback')) {
+    document.getElementById('dsp-delay_feedback').value = Math.round((d.delay_feedback||0)*100);
+    document.getElementById('dsp-delay_feedback-val').textContent = Math.round((d.delay_feedback||0)*100)+'%';
+  }
+  if (force || !activeDragging.has('delay_mix')) {
+    document.getElementById('dsp-delay_mix').value = Math.round((d.delay_mix||0)*100);
+    document.getElementById('dsp-delay_mix-val').textContent = Math.round((d.delay_mix||0)*100)+'%';
+  }
+  if (force || !activeDragging.has('release_time')) {
+    setLogSlider('release_time', d.release_time, 0.01, 5.0);
+    document.getElementById('dsp-release_time-val').textContent = Math.round((d.release_time||0)*1000)+' ms';
+  }
+  if (force || !activeDragging.has('reverb_mix')) {
+    document.getElementById('dsp-reverb_mix').value = Math.round((d.reverb_mix||0)*100);
+    document.getElementById('dsp-reverb_mix-val').textContent = Math.round((d.reverb_mix||0)*100)+'%';
+  }
+  if (force || !activeDragging.has('waveform')) {
+    document.getElementById('dsp-waveform').value = d.waveform || 0;
+  }
+  if (force || !activeDragging.has('lfo_waveform')) {
+    document.getElementById('dsp-lfo-waveform').value = d.lfo_waveform || 0;
+  }
+  if (force || !activeDragging.has('pitch_env')) {
+    updatePitchEnvUI(d.pitch_env || 0);
+  }
+}
+
 async function loadDspState() {
   try {
     const r = await fetch('/api/dsp/state');
-    const d = await r.json();
-    // Sliders
-    document.getElementById('dsp-freq').value = d.freq || 440;
-    document.getElementById('dsp-freq-val').textContent = Math.round(d.freq) + ' Hz';
-    setLogSlider('lfo_rate', d.lfo_rate, 0.1, 20);
-    document.getElementById('dsp-lfo_rate-val').textContent = (d.lfo_rate||0).toFixed(2) + ' Hz';
-    document.getElementById('dsp-lfo_depth').value = Math.round((d.lfo_depth||0)*100);
-    document.getElementById('dsp-lfo_depth-val').textContent = Math.round((d.lfo_depth||0)*100)+'%';
-    setLogSlider('filter_cutoff', d.filter_cutoff, 20, 20000);
-    document.getElementById('dsp-filter_cutoff-val').textContent = Math.round(d.filter_cutoff)+' Hz';
-    document.getElementById('dsp-filter_reso').value = Math.round((d.filter_reso||0)*100);
-    document.getElementById('dsp-filter_reso-val').textContent = Math.round((d.filter_reso||0)*100)+'%';
-    setLogSlider('delay_time', d.delay_time, 0.001, 1.0);
-    document.getElementById('dsp-delay_time-val').textContent = Math.round((d.delay_time||0)*1000)+' ms';
-    document.getElementById('dsp-delay_feedback').value = Math.round((d.delay_feedback||0)*100);
-    document.getElementById('dsp-delay_feedback-val').textContent = Math.round((d.delay_feedback||0)*100)+'%';
-    document.getElementById('dsp-delay_mix').value = Math.round((d.delay_mix||0)*100);
-    document.getElementById('dsp-delay_mix-val').textContent = Math.round((d.delay_mix||0)*100)+'%';
-    setLogSlider('release_time', d.release_time, 0.01, 5.0);
-    document.getElementById('dsp-release_time-val').textContent = Math.round((d.release_time||0)*1000)+' ms';
-    document.getElementById('dsp-reverb_mix').value = Math.round((d.reverb_mix||0)*100);
-    document.getElementById('dsp-reverb_mix-val').textContent = Math.round((d.reverb_mix||0)*100)+'%';
-    // Selects
-    document.getElementById('dsp-waveform').value = d.waveform || 0;
-    document.getElementById('dsp-lfo-waveform').value = d.lfo_waveform || 0;
-    updatePitchEnvUI(d.pitch_env || 0);
-  } catch(e) { console.error('loadDspState', e); }
+    applyDspState(await r.json(), true);
+  } catch(e) {}
 }
+
+async function pollDspState() {
+  if (livePollBusy) return;
+  livePollBusy = true;
+  try {
+    const r = await fetch('/api/dsp/state', {signal: AbortSignal.timeout(2000)});
+    if (!r.ok) { setOnline(false); return; }
+    if (!isOnline) setOnline(true);
+    applyDspState(await r.json(), false);
+  } catch(e) { setOnline(false); }
+  finally { livePollBusy = false; }
+}
+function startLivePoll() { if (!livePollTimer) livePollTimer = setInterval(pollDspState, 200); }
+function stopLivePoll() { if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; } }
 
 function setLogSlider(name, value, min, max) {
   // Map log value to 0-1000 slider position
@@ -1270,6 +1315,21 @@ loadOptions();
 renderThemeGrid();
 loadDspState();
 startHeartbeat();
+
+// Interaction guard: prevent live poll from overwriting slider being dragged
+document.querySelectorAll('#live input[type=range]').forEach(el => {
+  const name = el.id.replace('dsp-', '');
+  el.addEventListener('pointerdown', () => activeDragging.add(name));
+  const up = () => setTimeout(() => activeDragging.delete(name), 300);
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+});
+
+// Pause live poll when browser tab is hidden
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopLivePoll();
+  else if (document.getElementById('live').classList.contains('active')) startLivePoll();
+});
 </script>
 </body>
 </html>
