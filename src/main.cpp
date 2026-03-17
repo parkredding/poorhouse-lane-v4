@@ -2440,6 +2440,26 @@ static web_server::Callbacks build_web_callbacks()
         std::thread([ssid, concurrent]() {
             char cmd[512];
 
+            // Remember current SSID so we can reconnect on failure
+            std::string prev_ssid;
+            if (concurrent) {
+                FILE* pipe = popen("iwgetid -r wlan0 2>/dev/null", "r");
+                if (pipe) {
+                    char buf[128] = {};
+                    if (fgets(buf, sizeof(buf), pipe)) {
+                        prev_ssid = buf;
+                        while (!prev_ssid.empty() &&
+                               (prev_ssid.back() == '\n' || prev_ssid.back() == '\r'))
+                            prev_ssid.pop_back();
+                    }
+                    pclose(pipe);
+                }
+                slog("WIFI TEST: Currently on '%s' — disconnecting for test",
+                     prev_ssid.c_str());
+                system("sudo nmcli device disconnect wlan0 2>/dev/null");
+                usleep(1000000);
+            }
+
             if (!concurrent) {
                 // Must cycle AP to free wlan0
                 slog("WIFI TEST: Stopping AP for connection test");
@@ -2455,6 +2475,7 @@ static web_server::Callbacks build_web_callbacks()
             slog("WIFI TEST: 'nmcli connection up' exit %d", ret);
 
             // Poll for connection (up to 15 seconds)
+            // Verify the SSID matches what we're testing (not a stale connection)
             bool connected = false;
             for (int i = 0; i < 15; i++) {
                 usleep(1000000);
@@ -2466,9 +2487,11 @@ static web_server::Callbacks build_web_callbacks()
                         std::string got(buf);
                         while (!got.empty() && (got.back() == '\n' || got.back() == '\r'))
                             got.pop_back();
-                        if (!got.empty()) {
+                        if (!got.empty() && got == ssid) {
                             slog("WIFI TEST: Connected to '%s' after %ds", got.c_str(), i + 1);
-                            connected = true;
+
+                            // Wait a moment for DHCP to assign IP
+                            usleep(2000000);
 
                             // Grab the wlan0 IP
                             FILE* ip_pipe = popen("ip -4 addr show wlan0 2>/dev/null | "
@@ -2483,6 +2506,14 @@ static web_server::Callbacks build_web_callbacks()
                                 }
                                 pclose(ip_pipe);
                             }
+
+                            if (ip.empty()) {
+                                slog("WIFI TEST: Associated but no IP — DHCP failed");
+                                pclose(pipe);
+                                break;  // fall through to failure
+                            }
+
+                            connected = true;
 
                             // Get hostname for .local address
                             std::string hostname;
@@ -2514,6 +2545,9 @@ static web_server::Callbacks build_web_callbacks()
                             }
                             pclose(pipe);
                             break;
+                        } else if (!got.empty()) {
+                            slog("WIFI TEST: wlan0 on '%s' (wanted '%s') — ignoring",
+                                 got.c_str(), ssid.c_str());
                         }
                     }
                     pclose(pipe);
@@ -2522,19 +2556,29 @@ static web_server::Callbacks build_web_callbacks()
 
             if (!connected) {
                 slog("WIFI TEST: Failed to connect to '%s' within 15s", ssid.c_str());
+                // Delete the bad connection profile so it doesn't interfere
+                snprintf(cmd, sizeof(cmd),
+                    "sudo nmcli connection delete id \"%s\" 2>/dev/null", ssid.c_str());
+                system(cmd);
                 std::lock_guard<std::mutex> lk(wifi_test_mtx);
                 wifi_test_success = false;
                 wifi_test_result_msg = "Failed to connect to '" + ssid
                     + "' — check password and try again";
             }
 
-            // In non-concurrent mode, restart AP
+            // Restore connectivity
             if (!concurrent) {
                 slog("WIFI TEST: Restarting AP");
                 usleep(1000000);
                 system("sudo nmcli device disconnect wlan0 2>/dev/null");
                 usleep(500000);
                 ap_mode::start_ap();
+            } else if (!connected && !prev_ssid.empty()) {
+                // Reconnect to previous network after failed test
+                slog("WIFI TEST: Reconnecting to '%s'", prev_ssid.c_str());
+                snprintf(cmd, sizeof(cmd),
+                    "sudo nmcli connection up \"%s\" 2>/dev/null", prev_ssid.c_str());
+                system(cmd);
             }
 
             slog("WIFI TEST: Complete (success=%s)", wifi_test_success ? "yes" : "no");
