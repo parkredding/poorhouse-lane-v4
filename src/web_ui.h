@@ -1026,7 +1026,7 @@ async function testWifi() {
   res.style.display = 'block';
   res.style.color = 'var(--text)';
   res.style.borderColor = 'var(--border)';
-  res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Testing... AP will restart in ~30s. Credentials saved.';
+  res.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Testing connection... Credentials saved.';
   try {
     const r = await fetch('/api/wifi/test', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(pass)});
     if (!r.ok) { res.textContent = 'Failed to start test'; res.style.color = 'var(--danger)'; btn.disabled = false; return; }

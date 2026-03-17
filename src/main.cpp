@@ -2386,7 +2386,13 @@ static web_server::Callbacks build_web_callbacks()
                ",\"ssid\":\"" + ssid + "\"}";
     };
 
-    // ── WiFi connection test (runs in background, cycles AP) ─────────
+    // ── WiFi connection test ────────────────────────────────────────
+    //
+    // In concurrent mode (uap0): wlan0 is free — test directly without
+    // touching the AP.  User stays connected to the config portal.
+    //
+    // In fallback mode (wlan0): must cycle the AP to free wlan0 for
+    // the test.  User gets disconnected and reconnects after.
 
     static std::atomic<int>  wifi_test_state{0};  // 0=idle 1=running 2=done
     static std::string       wifi_test_result_msg;
@@ -2412,28 +2418,34 @@ static web_server::Callbacks build_web_callbacks()
             wifi_test_result_msg = "testing";
         }
 
-        slog("WIFI TEST: Starting connection test for '%s'", ssid.c_str());
+        bool concurrent = ap_mode::is_concurrent();
+        slog("WIFI TEST: Starting connection test for '%s' (concurrent=%s)",
+             ssid.c_str(), concurrent ? "yes" : "no");
 
-        std::thread([ssid]() {
-            // 1. Stop AP (hostapd + dnsmasq)
-            slog("WIFI TEST: Stopping AP for connection test");
-            ap_mode::stop_ap();
-
-            // 2. Restore wlan0 to managed mode and try connecting
-            slog("WIFI TEST: Restoring wlan0 and attempting connection");
-            system("sudo nmcli device set wlan0 managed yes 2>/dev/null");
-            system("sudo systemctl restart wpa_supplicant 2>/dev/null");
-            usleep(2000000);  // 2s for wpa_supplicant to start
+        std::thread([ssid, concurrent]() {
+            // If not concurrent, must cycle AP to free wlan0
+            if (!concurrent) {
+                slog("WIFI TEST: Stopping AP for connection test");
+                ap_mode::stop_ap();
+                system("sudo nmcli device set wlan0 managed yes 2>/dev/null");
+                system("sudo systemctl restart wpa_supplicant 2>/dev/null");
+                usleep(2000000);
+            } else {
+                // In concurrent mode, wlan0 is already managed — just
+                // reconfigure wpa_supplicant to pick up the new credentials
+                system("sudo wpa_cli -i wlan0 reconfigure 2>/dev/null");
+                usleep(1000000);
+            }
 
             // Kick NetworkManager to connect
             system("sudo nmcli device connect wlan0 2>/dev/null");
 
-            // 3. Poll for connection (up to 20 seconds)
+            // Poll for connection (up to 15 seconds)
             bool connected = false;
-            for (int i = 0; i < 20; i++) {
+            for (int i = 0; i < 15; i++) {
                 usleep(1000000);  // 1s
 
-                FILE* pipe = popen("iwgetid -r 2>/dev/null", "r");
+                FILE* pipe = popen("iwgetid -r wlan0 2>/dev/null", "r");
                 if (pipe) {
                     char buf[128] = {};
                     if (fgets(buf, sizeof(buf), pipe)) {
@@ -2444,8 +2456,9 @@ static web_server::Callbacks build_web_callbacks()
                             slog("WIFI TEST: Connected to '%s' after %ds", got.c_str(), i + 1);
                             connected = true;
 
-                            // Grab the IP address
-                            FILE* ip_pipe = popen("hostname -I 2>/dev/null | awk '{print $1}'", "r");
+                            // Grab the IP address for wlan0
+                            FILE* ip_pipe = popen("ip -4 addr show wlan0 2>/dev/null | "
+                                                   "awk '/inet /{print $2}' | cut -d/ -f1", "r");
                             std::string ip;
                             if (ip_pipe) {
                                 char ipbuf[64] = {};
@@ -2472,26 +2485,25 @@ static web_server::Callbacks build_web_callbacks()
             }
 
             if (!connected) {
-                slog("WIFI TEST: Failed to connect to '%s' within 20s", ssid.c_str());
+                slog("WIFI TEST: Failed to connect to '%s' within 15s", ssid.c_str());
                 std::lock_guard<std::mutex> lk(wifi_test_mtx);
                 wifi_test_success = false;
-                wifi_test_result_msg = "Failed to connect to '" + ssid + "' — check password and network availability";
+                wifi_test_result_msg = "Failed to connect to '" + ssid
+                    + "' — check password and network availability";
             }
 
-            // 4. Restart AP mode
-            slog("WIFI TEST: Restarting AP");
-            usleep(1000000);  // 1s settle
+            // Restore: in non-concurrent mode, restart AP
+            if (!concurrent) {
+                slog("WIFI TEST: Restarting AP");
+                usleep(1000000);
+                system("sudo wpa_cli -i wlan0 disconnect 2>/dev/null");
+                system("sudo nmcli device disconnect wlan0 2>/dev/null");
+                usleep(500000);
+                ap_mode::start_ap();
+            }
 
-            // Disconnect from WiFi before restarting AP
-            system("sudo wpa_cli -i wlan0 disconnect 2>/dev/null");
-            system("sudo nmcli device disconnect wlan0 2>/dev/null");
-            usleep(500000);
-
-            ap_mode::start_ap();
-            slog("WIFI TEST: AP restored — test complete (success=%s)",
-                 wifi_test_success ? "yes" : "no");
-
-            wifi_test_state.store(2);  // done
+            slog("WIFI TEST: Complete (success=%s)", wifi_test_success ? "yes" : "no");
+            wifi_test_state.store(2);
         }).detach();
 
         return true;
@@ -2515,6 +2527,7 @@ static web_server::Callbacks build_web_callbacks()
         }
         return "{\"state\":\"" + status + "\","
                "\"success\":" + (wifi_test_success ? "true" : "false") + ","
+               "\"concurrent\":" + (ap_mode::is_concurrent() ? "true" : "false") + ","
                "\"ssid\":\"" + wifi_test_ssid + "\","
                "\"message\":\"" + escaped + "\"}";
     };

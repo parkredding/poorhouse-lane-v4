@@ -6,9 +6,11 @@
 // to the configuration portal automatically.
 //
 // Strategy:
-//   1. Try creating a virtual ap0 interface (concurrent STA+AP — keeps SSH)
-//   2. If that fails, fall back to using wlan0 directly (drops WiFi, but
-//      works on all Pi models including Pi Zero 2W)
+//   1. Create virtual uap0 interface for concurrent STA+AP (BCM43436 supports
+//      this). wlan0 stays connected to the home network while uap0 runs the
+//      config portal.  Channel is inherited from the STA connection.
+//   2. If virtual interface creation fails, fall back to using wlan0 directly
+//      (drops WiFi but works everywhere).
 
 #include "ap_mode.h"
 #include "siren_log.h"
@@ -30,7 +32,8 @@ static const char* DNSMASQ_PID  = "/tmp/dubsiren_dnsmasq.pid";
 
 static bool  g_active       = false;
 static std::string g_ssid;
-static std::string g_iface;   // actual interface used (ap0 or wlan0)
+static const char* AP_VIRT_IFACE = "uap0"; // virtual AP interface name
+static std::string g_iface;   // actual interface used (uap0 or wlan0)
 static bool g_using_wlan0 = false;  // true if we fell back to wlan0
 
 // "sudo " when not root, "" when root — prefixed to privileged commands
@@ -71,7 +74,24 @@ std::string ap_mode::get_mac_suffix()
 
 // ─── Write config files ─────────────────────────────────────────────
 
-static bool write_hostapd_conf(const std::string& ssid, const char* iface)
+static int get_sta_channel()
+{
+    // Read the current channel from wlan0's STA connection so the AP
+    // uses the same channel (required for concurrent STA+AP).
+    FILE* pipe = popen("iw dev wlan0 info 2>/dev/null | awk '/channel/{print $2}'", "r");
+    if (!pipe) return 0;
+    char buf[32] = {};
+    if (fgets(buf, sizeof(buf), pipe)) {
+        pclose(pipe);
+        int ch = atoi(buf);
+        return (ch >= 1 && ch <= 14) ? ch : 0;
+    }
+    pclose(pipe);
+    return 0;
+}
+
+static bool write_hostapd_conf(const std::string& ssid, const char* iface,
+                                bool concurrent)
 {
     FILE* f = fopen(HOSTAPD_CONF, "w");
     if (!f) {
@@ -79,18 +99,26 @@ static bool write_hostapd_conf(const std::string& ssid, const char* iface)
         return false;
     }
 
+    // In concurrent mode, match the STA channel (required by brcmfmac).
+    // In standalone mode, default to channel 6.
+    int channel = concurrent ? get_sta_channel() : 6;
+    if (channel == 0) channel = 6;
+
     fprintf(f,
         "interface=%s\n"
         "driver=nl80211\n"
         "ssid=%s\n"
         "hw_mode=g\n"
-        "channel=6\n"
+        "channel=%d\n"
         "wmm_enabled=0\n"
         "macaddr_acl=0\n"
         "auth_algs=1\n"
         "ignore_broadcast_ssid=0\n"
         "wpa=0\n",
-        iface, ssid.c_str());
+        iface, ssid.c_str(), channel);
+
+    slog("AP: hostapd config — iface=%s channel=%d concurrent=%s",
+         iface, channel, concurrent ? "yes" : "no");
 
     fclose(f);
     return true;
@@ -122,13 +150,13 @@ static bool write_dnsmasq_conf(const char* iface)
 
 // ─── Interface setup helpers ─────────────────────────────────────────
 
-// Try creating a virtual ap0 interface for concurrent STA+AP
+// Create virtual uap0 interface for concurrent STA+AP
 static bool try_virtual_ap()
 {
     char cmd[512];
 
     // Remove stale virtual interface from previous run
-    snprintf(cmd, sizeof(cmd), "%siw dev ap0 del 2>/dev/null", SUDO);
+    snprintf(cmd, sizeof(cmd), "%siw dev %s del 2>/dev/null", SUDO, AP_VIRT_IFACE);
     system(cmd);
     usleep(300000);
 
@@ -137,37 +165,38 @@ static bool try_virtual_ap()
     system(cmd);
     usleep(200000);
 
-    // Try iw dev first, then iw phy as fallback
-    snprintf(cmd, sizeof(cmd), "%siw dev %s interface add ap0 type __ap", SUDO, AP_PHY_IFACE);
+    // Try creating the virtual AP interface
+    snprintf(cmd, sizeof(cmd), "%siw dev %s interface add %s type __ap",
+             SUDO, AP_PHY_IFACE, AP_VIRT_IFACE);
     int ret = system(cmd);
     if (ret != 0) {
-        slog("AP: 'iw dev' failed — trying 'iw phy'");
-        // Find the phy name for wlan0 and try phy-based creation
-        snprintf(cmd, sizeof(cmd), "%siw phy $(%siw dev wlan0 info | awk '/wiphy/{print \"phy\"$2}') "
-                      "interface add ap0 type __ap 2>/dev/null", SUDO, SUDO);
-        ret = system(cmd);
-        if (ret != 0) {
-            slog("AP: 'iw phy' also failed (exit %d)", ret);
-            return false;
-        }
+        slog("AP: 'iw dev %s interface add %s' failed (exit %d)",
+             AP_PHY_IFACE, AP_VIRT_IFACE, ret);
+        return false;
     }
 
     // Tell NetworkManager to ignore the virtual interface
-    snprintf(cmd, sizeof(cmd), "%snmcli device set ap0 managed no 2>/dev/null", SUDO);
+    snprintf(cmd, sizeof(cmd), "%snmcli device set %s managed no 2>/dev/null",
+             SUDO, AP_VIRT_IFACE);
+    system(cmd);
+    usleep(200000);
+
+    // Bring interface up first (required before hostapd on brcmfmac)
+    snprintf(cmd, sizeof(cmd), "%sip link set %s up", SUDO, AP_VIRT_IFACE);
     system(cmd);
     usleep(200000);
 
     // Configure IP
-    snprintf(cmd, sizeof(cmd), "%sip addr add %s/24 dev ap0", SUDO, AP_IP);
-    system(cmd);
-    snprintf(cmd, sizeof(cmd), "%sip link set ap0 up", SUDO);
+    snprintf(cmd, sizeof(cmd), "%sip addr add %s/24 dev %s", SUDO, AP_IP, AP_VIRT_IFACE);
     system(cmd);
 
-    // Verify ap0 actually came up
-    ret = system("ip link show ap0 2>/dev/null | grep -q 'state UP\\|state UNKNOWN'");
+    // Verify uap0 actually came up
+    snprintf(cmd, sizeof(cmd), "ip link show %s 2>/dev/null | grep -q 'state UP\\|state UNKNOWN'",
+             AP_VIRT_IFACE);
+    ret = system(cmd);
     if (ret != 0) {
-        slog("AP: ap0 created but failed to come up");
-        snprintf(cmd, sizeof(cmd), "%siw dev ap0 del 2>/dev/null", SUDO);
+        slog("AP: %s created but failed to come up", AP_VIRT_IFACE);
+        snprintf(cmd, sizeof(cmd), "%siw dev %s del 2>/dev/null", SUDO, AP_VIRT_IFACE);
         system(cmd);
         return false;
     }
@@ -238,13 +267,13 @@ bool ap_mode::start_ap()
     system(cmd);
     usleep(500000);
 
-    // 2. Try virtual ap0 first, fall back to wlan0
+    // 2. Try virtual uap0 first (concurrent STA+AP), fall back to wlan0
     if (try_virtual_ap()) {
-        g_iface = "ap0";
+        g_iface = AP_VIRT_IFACE;
         g_using_wlan0 = false;
-        slog("AP: Using virtual interface ap0 (WiFi stays connected)");
+        slog("AP: Using virtual interface %s (WiFi stays connected)", AP_VIRT_IFACE);
     } else {
-        slog("AP: Virtual ap0 not supported — falling back to wlan0");
+        slog("AP: Virtual %s failed — falling back to wlan0", AP_VIRT_IFACE);
         if (!setup_wlan0_ap()) {
             slog("AP: Failed to configure wlan0 for AP mode");
             return false;
@@ -256,7 +285,7 @@ bool ap_mode::start_ap()
     slog("AP: Starting '%s' on %s", g_ssid.c_str(), g_iface.c_str());
 
     // 3. Write config files
-    if (!write_hostapd_conf(g_ssid, g_iface.c_str())) return false;
+    if (!write_hostapd_conf(g_ssid, g_iface.c_str(), !g_using_wlan0)) return false;
     if (!write_dnsmasq_conf(g_iface.c_str())) return false;
 
     // 4. Start hostapd (daemonized with -B)
@@ -310,7 +339,7 @@ void ap_mode::stop_ap()
         restore_wlan0();
     } else {
         // Remove the virtual AP interface
-        snprintf(cmd, sizeof(cmd), "%siw dev ap0 del", SUDO);
+        snprintf(cmd, sizeof(cmd), "%siw dev %s del", SUDO, AP_VIRT_IFACE);
         system(cmd);
     }
 
@@ -332,4 +361,9 @@ std::string ap_mode::get_ssid()
 const char* ap_mode::get_ip()
 {
     return AP_IP;
+}
+
+bool ap_mode::is_concurrent()
+{
+    return g_active && !g_using_wlan0;
 }

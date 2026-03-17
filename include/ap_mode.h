@@ -30,4 +30,7 @@ std::string get_ssid();
 // Get the AP IP address (always 192.168.4.1)
 const char* get_ip();
 
+// True if running concurrent STA+AP (uap0) — wlan0 is free for WiFi tests
+bool is_concurrent();
+
 } // namespace ap_mode
