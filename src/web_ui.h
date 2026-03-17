@@ -197,6 +197,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 <div class="tabs">
   <div class="tab" onclick="showTab('live')">Live</div>
   <div class="tab active" onclick="showTab('presets')">Presets</div>
+  <div class="tab" onclick="showTab('encoders')">Encoders</div>
   <div class="tab" onclick="showTab('options')">Options</div>
   <div class="tab" onclick="showTab('wifi')">WiFi</div>
   <div class="tab" onclick="showTab('system')">System</div>
@@ -234,7 +235,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       </div>
       <div class="dsp-slider">
         <label>Rate</label>
-        <input type="range" id="dsp-lfo_rate" min="1" max="200" value="35" oninput="onDspSliderLog('lfo_rate',this.value,0.1,20)">
+        <input type="range" id="dsp-lfo_rate" min="0" max="1000" value="35" oninput="onDspSliderLog('lfo_rate',this.value,0.1,20)">
         <span class="dsp-val" id="dsp-lfo_rate-val">0.35 Hz</span>
       </div>
       <div class="dsp-slider">
@@ -252,7 +253,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       </div>
       <div class="dsp-slider">
         <label>Resonance</label>
-        <input type="range" id="dsp-filter_reso" min="0" max="95" value="0" oninput="onDspSliderPct('filter_reso',this.value,0.95)">
+        <input type="range" id="dsp-filter_reso" min="0" max="100" value="0" oninput="onDspSliderPct('filter_reso',this.value,0.95)">
         <span class="dsp-val" id="dsp-filter_reso-val">0%</span>
       </div>
     </div>
@@ -265,7 +266,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       </div>
       <div class="dsp-slider">
         <label>Feedback</label>
-        <input type="range" id="dsp-delay_feedback" min="0" max="95" value="55" oninput="onDspSliderPct('delay_feedback',this.value,0.95)">
+        <input type="range" id="dsp-delay_feedback" min="0" max="100" value="55" oninput="onDspSliderPct('delay_feedback',this.value,0.95)">
         <span class="dsp-val" id="dsp-delay_feedback-val">55%</span>
       </div>
       <div class="dsp-slider">
@@ -302,6 +303,30 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       <button class="btn btn-secondary" onclick="loadDspState()" style="flex:1">Refresh</button>
       <button class="btn btn-danger" onclick="confirmAction('Reset all parameters to factory defaults?',resetDefaults)" style="flex:1">Reset Defaults</button>
     </div>
+    <div class="dsp-group" style="margin-top:16px">
+      <h4>Save to Preset</h4>
+      <div class="dsp-slider">
+        <label>Bank</label>
+        <select id="live-save-bank" style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+          <option value="user">User</option>
+          <option value="standard">Standard</option>
+          <option value="experimental">Experimental</option>
+        </select>
+      </div>
+      <div class="dsp-slider">
+        <label>Slot</label>
+        <select id="live-save-slot" style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+          <option value="0">1</option><option value="1">2</option>
+          <option value="2">3</option><option value="3">4</option>
+        </select>
+      </div>
+      <div class="dsp-slider">
+        <label>Name</label>
+        <input type="text" id="live-save-name" placeholder="Preset name"
+               style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+      </div>
+      <button class="btn btn-primary" onclick="doLiveSave()" style="width:100%;margin-top:4px">Save Preset</button>
+    </div>
   </div>
 </div>
 
@@ -325,6 +350,77 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
   <div id="library-browser" class="preset-loader" style="display:none">
     <h3>Preset Library <span id="target-label" style="color:var(--text-lo);font-size:0.6rem;letter-spacing:1px"></span></h3>
     <div id="library-list"></div>
+  </div>
+</div>
+
+<!-- ENCODERS TAB -->
+<div id="encoders" class="panel">
+  <div class="card">
+    <h3>Device Layout</h3>
+    <div id="enc-device" style="padding:12px 0">
+      <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:16px">
+        <div class="enc-knob" id="enc-knob-0" style="flex:1;text-align:center">
+          <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">1</div>
+          <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a0">Frequency</div>
+          <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b0">LFO Depth</div>
+        </div>
+        <div class="enc-knob" id="enc-knob-1" style="flex:1;text-align:center">
+          <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">2</div>
+          <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a1">LFO Rate</div>
+          <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b1">Release</div>
+        </div>
+        <div class="enc-knob" id="enc-knob-2" style="flex:1;text-align:center">
+          <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">3</div>
+          <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a2">Filter</div>
+          <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b2">Resonance</div>
+        </div>
+        <div class="enc-knob" id="enc-knob-3" style="flex:1;text-align:center">
+          <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">4</div>
+          <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a3">Delay Time</div>
+          <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b3">Delay Mix</div>
+        </div>
+        <div class="enc-knob" id="enc-knob-4" style="flex:1;text-align:center">
+          <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">5</div>
+          <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a4">Delay FB</div>
+          <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b4">Reverb Mix</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:center;gap:16px;margin-bottom:8px">
+        <div style="text-align:center">
+          <div style="width:44px;height:28px;border:2px solid var(--danger);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:700;color:var(--danger)">TRIG</div>
+        </div>
+        <div style="text-align:center">
+          <div style="width:44px;height:28px;border:2px solid var(--text-lo);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:700;color:var(--text-lo)">SHIFT</div>
+        </div>
+        <div style="text-align:center">
+          <div style="width:44px;height:28px;border:2px solid var(--text-lo);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:700;color:var(--text-lo)">PRESET</div>
+        </div>
+        <div style="text-align:center">
+          <div style="width:70px;height:28px;border:2px solid var(--border);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.45rem;font-weight:700;color:var(--text-lo);letter-spacing:1px">F | O | R</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:center;gap:16px;font-size:0.5rem;color:var(--text-lo)">
+        <span style="color:var(--text-hi)">A = Bank A</span>
+        <span>B = Bank B (Shift)</span>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Encoder Mapping</h3>
+    <table class="enc-table" id="enc-table"><tr><td>Loading...</td></tr></table>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary btn-sm" onclick="saveEncoderMap()">Save Mapping</button>
+      <button class="btn btn-secondary btn-sm" onclick="resetEncoderMap()">Reset Default</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Parameter Sensitivity</h3>
+    <p style="font-size:0.6rem;color:var(--text-lo);margin-bottom:8px">Adjust how fast each parameter responds to encoder turns. Lower = finer control, higher = faster sweeps.</p>
+    <div id="sensitivity-list">Loading...</div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary btn-sm" onclick="saveSensitivity()">Save Sensitivity</button>
+      <button class="btn btn-secondary btn-sm" onclick="resetSensitivity()">Reset Default</button>
+    </div>
   </div>
 </div>
 
@@ -397,14 +493,6 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
     <div class="form-group"><label>Phaser <span class="range-val" id="phaser-mix-val">0%</span></label><input type="range" id="phaser-mix" min="0" max="100" value="0" oninput="updateRange('phaser-mix')"></div>
     <div class="form-group"><label>Chorus <span class="range-val" id="chorus-mix-val">0%</span></label><input type="range" id="chorus-mix" min="0" max="100" value="0" oninput="updateRange('chorus-mix')"></div>
     <div class="form-group"><label>Flanger <span class="range-val" id="flanger-mix-val">0%</span></label><input type="range" id="flanger-mix" min="0" max="100" value="0" oninput="updateRange('flanger-mix')"></div>
-  </div>
-  <div class="card">
-    <h3>Encoder Mapping</h3>
-    <table class="enc-table" id="enc-table"><tr><td>Loading...</td></tr></table>
-    <div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn btn-primary btn-sm" onclick="saveEncoderMap()">Save Mapping</button>
-      <button class="btn btn-secondary btn-sm" onclick="resetEncoderMap()">Reset Default</button>
-    </div>
   </div>
   <button class="btn btn-primary btn-block" onclick="applyOptions()" style="margin-top:8px">Apply Options</button>
 </div>
@@ -589,14 +677,15 @@ function showTab(id) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById(id).classList.add('active');
-  const tabs = ['live','presets','options','wifi','system'];
+  const tabs = ['live','presets','encoders','options','wifi','system'];
   const tabEls = document.querySelectorAll('.tab');
   tabs.forEach((t, i) => { if (t === id && tabEls[i]) tabEls[i].classList.add('active'); });
   if (id !== 'system' && typeof stopSyslogPoll === 'function') stopSyslogPoll();
   if (id === 'live') { loadDspState(); startLivePoll(); } else { stopLivePoll(); }
   if (id === 'wifi') { loadWifiStatus(); checkWifiTestResult(); }
   if (id === 'system') { loadSystemInfo(); loadBranches(); loadSysLog(); startSyslogPoll(); }
-  if (id === 'options') { loadEncoderMap(); }
+  if (id === 'encoders') { loadEncoderMap(); loadSensitivity(); }
+  if (id === 'options') { }
 }
 
 // Toast
@@ -743,6 +832,17 @@ async function resetDefaults() {
     const r = await fetch('/api/dsp/reset', {method:'POST'});
     if (r.ok) { toast('Reset to defaults'); loadDspState(); loadOptions(); }
     else toast('Reset failed', true);
+  } catch(e) { toast('Error: '+e, true); }
+}
+
+async function doLiveSave() {
+  const bank = document.getElementById('live-save-bank').value;
+  const slot = document.getElementById('live-save-slot').value;
+  const name = document.getElementById('live-save-name').value || 'Preset';
+  try {
+    const r = await fetch('/api/presets/bank/save', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'bank='+bank+'&slot='+slot+'&name='+encodeURIComponent(name)});
+    if (r.ok) { toast('Saved to '+bank+' slot '+(parseInt(slot)+1)); loadPresets(); }
+    else toast('Save failed', true);
   } catch(e) { toast('Error: '+e, true); }
 }
 
@@ -942,6 +1042,17 @@ async function applyOptions() {
 }
 
 // Encoder mapping
+function updateDeviceDiagram() {
+  for (let i = 0; i < 5; i++) {
+    const aEl = document.getElementById('enc-a'+i);
+    const bEl = document.getElementById('enc-b'+i);
+    const aLabel = document.getElementById('enc-label-a'+i);
+    const bLabel = document.getElementById('enc-label-b'+i);
+    if (aEl && aLabel && encoderParams[aEl.value]) aLabel.textContent = encoderParams[aEl.value].label;
+    if (bEl && bLabel && encoderParams[bEl.value]) bLabel.textContent = encoderParams[bEl.value].label;
+  }
+}
+
 async function loadEncoderMap() {
   try {
     const r = await fetch('/api/encoders/map');
@@ -954,14 +1065,15 @@ async function loadEncoderMap() {
       const opts = encoderParams.map((p,pi) =>
         '<option value="'+pi+'">'+esc(p.label)+'</option>').join('');
       html += '<tr><td style="color:var(--text-hi);font-weight:700">Enc '+(i+1)+'</td>'+
-        '<td><select id="enc-a'+i+'">'+opts+'</select></td>'+
-        '<td><select id="enc-b'+i+'">'+opts+'</select></td></tr>';
+        '<td><select id="enc-a'+i+'" onchange="updateDeviceDiagram()">'+opts+'</select></td>'+
+        '<td><select id="enc-b'+i+'" onchange="updateDeviceDiagram()">'+opts+'</select></td></tr>';
     }
     document.getElementById('enc-table').innerHTML = html;
     for (let i = 0; i < 5; i++) {
       document.getElementById('enc-a'+i).value = ba[i];
       document.getElementById('enc-b'+i).value = bb[i];
     }
+    updateDeviceDiagram();
   } catch(e) { console.error(e); }
 }
 
@@ -984,6 +1096,55 @@ function resetEncoderMap() {
     document.getElementById('enc-b'+i).value = i+5;
   }
   saveEncoderMap();
+  updateDeviceDiagram();
+}
+
+// Sensitivity
+let sensitivityData = [];
+async function loadSensitivity() {
+  try {
+    const r = await fetch('/api/encoders/sensitivity');
+    const d = await r.json();
+    sensitivityData = d.params || [];
+    let html = '';
+    sensitivityData.forEach((p, i) => {
+      const pct = Math.round(((p.sensitivity - 0.25) / 3.75) * 100);
+      html += '<div class="dsp-slider"><label style="min-width:90px">'+esc(p.label)+'</label>'+
+        '<input type="range" min="0" max="100" value="'+pct+'" id="sens-'+i+'" oninput="updateSensVal('+i+')">'+
+        '<span class="dsp-val" id="sens-val-'+i+'">'+(p.sensitivity).toFixed(2)+'x</span></div>';
+    });
+    document.getElementById('sensitivity-list').innerHTML = html;
+  } catch(e) { document.getElementById('sensitivity-list').textContent = 'Failed to load'; }
+}
+
+function updateSensVal(i) {
+  const pct = parseInt(document.getElementById('sens-'+i).value);
+  const val = 0.25 + (pct / 100) * 3.75;
+  document.getElementById('sens-val-'+i).textContent = val.toFixed(2)+'x';
+}
+
+async function saveSensitivity() {
+  let body = '';
+  for (let i = 0; i < sensitivityData.length; i++) {
+    const pct = parseInt(document.getElementById('sens-'+i).value);
+    const val = 0.25 + (pct / 100) * 3.75;
+    if (i > 0) body += '&';
+    body += 's'+i+'='+val.toFixed(6);
+  }
+  try {
+    const r = await fetch('/api/encoders/sensitivity', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
+    if (r.ok) toast('Sensitivity saved'); else toast('Save failed',true);
+  } catch(e) { toast('Error: '+e,true); }
+}
+
+function resetSensitivity() {
+  sensitivityData.forEach((p, i) => {
+    const def = (i === 0) ? 0.5 : 1.0;
+    const pct = Math.round(((def - 0.25) / 3.75) * 100);
+    document.getElementById('sens-'+i).value = pct;
+    document.getElementById('sens-val-'+i).textContent = def.toFixed(2)+'x';
+  });
+  saveSensitivity();
 }
 
 // WiFi

@@ -194,6 +194,16 @@ static int g_encoder_map_a[5] = {0, 1, 2, 3, 4};  // freq, lfo_rate, cutoff, del
 static int g_encoder_map_b[5] = {5, 6, 7, 8, 9};  // lfo_depth, release, reso, delay_mix, reverb_mix
 static std::mutex g_encoder_map_mutex;
 
+// Per-parameter sensitivity multipliers (scales acceleration curve)
+// Default: 0.5 for frequency (finer pitch control), 1.0 for everything else
+static float g_param_sensitivity[17] = {
+    0.5f, 1.0f, 1.0f, 1.0f, 1.0f,   // freq, lfo_rate, cutoff, delay_time, delay_fb
+    1.0f, 1.0f, 1.0f, 1.0f, 1.0f,   // lfo_depth, release, reso, delay_mix, reverb_mix
+    1.0f, 1.0f, 1.0f, 1.0f, 1.0f,   // phaser, chorus, flanger, sat_mix, sat_drive
+    1.0f, 1.0f                        // tape_wobble, tape_flutter
+};
+static std::mutex g_sensitivity_mutex;
+
 static std::atomic<float>* param_atomic_for(const char* name) {
     static const std::map<std::string, std::atomic<float>*> param_map = {
         {"freq", &g_freq}, {"lfo_rate", &g_lfo_rate},
@@ -1050,6 +1060,13 @@ static void save_siren_config()
             fprintf(f, "enc_b%d=%d\n", i, g_encoder_map_b[i]);
     }
 
+    // Parameter sensitivity
+    {
+        std::lock_guard<std::mutex> lk(g_sensitivity_mutex);
+        for (int i = 0; i < NUM_PARAMS; i++)
+            fprintf(f, "sens_%d=%.6f\n", i, g_param_sensitivity[i]);
+    }
+
     fflush(f);
     fsync(fileno(f));
     fclose(f);
@@ -1170,6 +1187,16 @@ static void load_siren_config()
             int idx = key[5] - '0';
             int v = atoi(val);
             if (v >= 0 && v < NUM_PARAMS) g_encoder_map_b[idx] = v;
+        }
+        else if (strncmp(key, "sens_", 5) == 0) {
+            int idx = atoi(key + 5);
+            if (idx >= 0 && idx < NUM_PARAMS) {
+                float v = static_cast<float>(atof(val));
+                if (v >= 0.25f && v <= 4.0f) {
+                    std::lock_guard<std::mutex> lk(g_sensitivity_mutex);
+                    g_param_sensitivity[idx] = v;
+                }
+            }
         }
     }
 
@@ -1891,22 +1918,34 @@ static float encoder_accel(int id)
 {
     using clock = std::chrono::steady_clock;
     static clock::time_point prev[gpio::NUM_ENCODERS] = {};
+    static float smoothed[gpio::NUM_ENCODERS] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 
     auto now   = clock::now();
     auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(
                      now - prev[id]).count();
     prev[id] = now;
 
-    if (delta > 200) return 1.0f;           // first event or long pause
+    float raw;
+    if (delta > 200) {
+        raw = 1.0f;           // first event or long pause
+    } else {
+        constexpr long  SLOW_MS  = 120;         // threshold for 1× (deliberate)
+        constexpr long  FAST_MS  = 25;          // threshold for max (fast spin)
+        constexpr float MAX_MULT = 4.0f;
 
-    constexpr long  SLOW_MS  = 120;         // threshold for 1× (deliberate)
-    constexpr long  FAST_MS  = 25;          // threshold for max (fast spin)
-    constexpr float MAX_MULT = 4.0f;
+        float t = static_cast<float>(SLOW_MS - delta)
+                / static_cast<float>(SLOW_MS - FAST_MS);
+        t = std::clamp(t, 0.0f, 1.0f);
+        raw = 1.0f + t * (MAX_MULT - 1.0f);
+    }
 
-    float t = static_cast<float>(SLOW_MS - delta)
-            / static_cast<float>(SLOW_MS - FAST_MS);
-    t = std::clamp(t, 0.0f, 1.0f);
-    return 1.0f + t * (MAX_MULT - 1.0f);
+    // Exponential smoothing: fast attack, slow decay
+    constexpr float SMOOTH_UP   = 0.6f;   // ramp up quickly (responsive)
+    constexpr float SMOOTH_DOWN = 0.15f;   // ramp down gently (no jarring drop)
+    float alpha = (raw > smoothed[id]) ? SMOOTH_UP : SMOOTH_DOWN;
+    smoothed[id] += alpha * (raw - smoothed[id]);
+
+    return smoothed[id];
 }
 
 // ─── Multi-click detector ────────────────────────────────────────────
@@ -3346,6 +3385,42 @@ static web_server::Callbacks build_web_callbacks()
         return true;
     };
 
+    // ── Encoder sensitivity ────────────────────────────────────────
+    cb.get_encoder_sensitivity = []() -> std::string {
+        std::lock_guard<std::mutex> lk(g_sensitivity_mutex);
+        std::string json = "{\"params\":[";
+        for (int i = 0; i < NUM_PARAMS; i++) {
+            if (i > 0) json += ",";
+            char buf[64];
+            snprintf(buf, sizeof(buf), "{\"name\":\"%s\",\"label\":\"%s\",\"sensitivity\":%.6f}",
+                     PARAM_TABLE[i].name, PARAM_TABLE[i].label, g_param_sensitivity[i]);
+            json += buf;
+        }
+        json += "]}";
+        return json;
+    };
+
+    cb.set_encoder_sensitivity = [](const std::string& body) -> bool {
+        auto get_val = [&](const std::string& key) -> float {
+            auto pos = body.find(key + "=");
+            if (pos == std::string::npos) return -1.0f;
+            auto start = pos + key.size() + 1;
+            auto end = body.find('&', start);
+            if (end == std::string::npos) end = body.size();
+            return static_cast<float>(atof(body.substr(start, end - start).c_str()));
+        };
+        {
+            std::lock_guard<std::mutex> lk(g_sensitivity_mutex);
+            for (int i = 0; i < NUM_PARAMS; i++) {
+                float v = get_val("s" + std::to_string(i));
+                if (v >= 0.25f && v <= 4.0f) g_param_sensitivity[i] = v;
+            }
+        }
+        save_siren_config();
+        slog("WEB: Encoder sensitivity updated");
+        return true;
+    };
+
     cb.get_system_log = []() -> std::string {
         return siren_log::to_json();
     };
@@ -3777,14 +3852,17 @@ int main(int argc, char *argv[])
         if (!atom) return;
 
         float val = atom->load();
+        float sens;
+        {
+            std::lock_guard<std::mutex> lk(g_sensitivity_mutex);
+            sens = g_param_sensitivity[param_idx];
+        }
+        float eff_accel = 1.0f + (accel - 1.0f) * sens;
         if (p.is_log) {
-            // Freq gets halved acceleration for cleaner sweeps
-            float eff_accel = (param_idx == 0)
-                ? 1.0f + (accel - 1.0f) * 0.5f : accel;
             float step = std::pow(p.step, eff_accel);
             val *= (dir > 0) ? step : (1.0f / step);
         } else {
-            val += dir * p.step * accel;
+            val += dir * p.step * eff_accel;
         }
         val = std::clamp(val, p.min_val, p.max_val);
         atom->store(val);
