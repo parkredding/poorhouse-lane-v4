@@ -6,10 +6,10 @@
 // ─── APA106 / WS2811 LED driver ─────────────────────────────────────
 //
 // Drives a single addressable LED to communicate device state:
-//   - Waveform shape → jewel-tone color
-//   - LFO output → brightness pulse (user sees the rate)
-//   - Frequency → saturation (low=vivid, high=pastel)
-//   - Gate → brightness boost
+//   - Waveform shape → pure color (R/G/B/O/C/Y/M/W, diffusion-friendly)
+//   - LFO output → brightness pulse (depth=1 → full on/off blink)
+//   - Frequency → saturation (low=vivid, high=slightly washed, smoothed)
+//   - Gate → brightness boost (LFO frozen during release tail)
 //   - AP mode → white Doppler fly-by animation
 //   - Preset save → triple white blink
 //

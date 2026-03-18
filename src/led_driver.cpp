@@ -1,6 +1,6 @@
 // led_driver.cpp — APA106 / WS2811 LED driver
 //
-// Jewel-tone waveform colors with LFO-driven brightness pulse.
+// Pure single-channel waveform colors with LFO-driven brightness pulse.
 // AP mode: Andúril-inspired Doppler fly-by in white.
 // Desktop: compiles as no-op stubs when HAS_WS2811 is not defined.
 
@@ -22,25 +22,29 @@ struct RGB {
     uint8_t r, g, b;
 };
 
-// ─── Jewel-tone waveform palette ────────────────────────────────────
+// ─── Pure waveform palette ──────────────────────────────────────────
 //
-// One rich color per LFO waveform shape. Ordered to match LfoWave enum.
+// Clean single/dual-channel colors that diffuse well through the APA106
+// dome. Avoids RGB mixing that looks muddy through diffusion.
+// Ordered to match LfoWave enum.
 
 static constexpr RGB WAVEFORM_COLORS[] = {
-    {180,   8,  30},    // Sine       → Ruby
-    {  8, 160,  50},    // Triangle   → Emerald
-    { 15,  40, 180},    // Square     → Sapphire
-    {200, 140,  10},    // RampUp     → Topaz
-    {128,  20, 160},    // RampDown   → Amethyst
-    {220, 180,  10},    // SampleHold → Citrine
-    {160,  15,  40},    // ExpRise    → Garnet
-    { 40,  20, 160},    // ExpFall    → Tanzanite
+    {255,   0,   0},    // Sine       → Red
+    {  0, 255,   0},    // Triangle   → Green
+    {  0,   0, 255},    // Square     → Blue
+    {255, 160,   0},    // RampUp     → Orange  (R+slight G, no blue)
+    {  0, 255, 255},    // RampDown   → Cyan
+    {255, 255,   0},    // SampleHold → Yellow
+    {255,   0, 255},    // ExpRise    → Magenta
+    {255, 255, 255},    // ExpFall    → White
 };
 static constexpr int NUM_COLORS = static_cast<int>(std::size(WAVEFORM_COLORS));
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
-// Desaturate an RGB color toward white by factor t (0=original, 1=white)
+// Desaturate an RGB color toward white by factor t (0=original, 1=white).
+// For pure colors this effectively raises the off-channels, so minimize
+// usage to avoid muddy diffusion.
 static RGB desaturate(RGB c, float t)
 {
     t = std::clamp(t, 0.0f, 1.0f);
@@ -83,6 +87,17 @@ struct LedDriver::Impl {
 #endif
     bool     ap_idle = false;
     float    ap_idle_phase = 0.0f;   // breathing animation phase
+
+    // Smoothed pitch→saturation to avoid steppy LED jumps
+    float    smooth_desat = 0.0f;
+
+    // Frozen LFO value for LED — only updates while gate held or idle,
+    // NOT during release tail (so pitch-envelope acceleration doesn't
+    // show on the LED).
+    float    led_lfo = 0.0f;
+    bool     prev_gate = false;
+    bool     releasing = false;
+    int      release_frames = 0;    // frames since release began
 
     int render_err_count = 0;
 
@@ -172,34 +187,70 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
         if (pimpl_->ap_idle_phase >= 1.0f)
             pimpl_->ap_idle_phase -= 1.0f;
 
-        // Sine breathing: 10–40% brightness
         float breath = 0.25f + 0.15f * std::sin(2.0f * 3.14159265f * pimpl_->ap_idle_phase);
         pimpl_->setLed(scale({255, 255, 255}, breath));
         return;
     }
 
-    // Waveform color
+    // ── Gate edge detection for LFO freeze ─────────────────────────
+    // Track LFO only while idle or gate-held. On release, freeze the
+    // LED's LFO value so the pitch-envelope acceleration doesn't bleed
+    // into the visual. This lets the user preview the LFO before pressing.
+    if (gate && !pimpl_->prev_gate) {
+        pimpl_->releasing = false;          // new press
+        pimpl_->release_frames = 0;
+    }
+    if (!gate && pimpl_->prev_gate) {
+        pimpl_->releasing = true;           // just released
+        pimpl_->release_frames = 0;
+    }
+    pimpl_->prev_gate = gate;
+
+    // Count release frames; after ~500ms (10 frames at 20 Hz) resume
+    // LFO tracking so the idle preview works again.
+    if (pimpl_->releasing) {
+        if (++pimpl_->release_frames > 10)
+            pimpl_->releasing = false;
+    }
+
+    // Update LED's LFO only when NOT in release tail
+    if (!pimpl_->releasing)
+        pimpl_->led_lfo = lfo_out;
+
+    // ── Waveform color ─────────────────────────────────────────────
     int idx = static_cast<int>(wave);
     if (idx < 0 || idx >= NUM_COLORS) idx = 0;
     RGB color = WAVEFORM_COLORS[idx];
 
-    // Pitch → saturation: low freq = vivid jewel, high freq = pastel
+    // ── Pitch → saturation (smoothed) ──────────────────────────────
+    // Low freq = vivid pure color, high freq = slightly washed out.
+    // Reduced max desaturation (30%) to keep colors clean through diffusion.
     float freq_clamped = std::clamp(freq, FREQ_LO, FREQ_HI);
-    float desat_t = std::log2(freq_clamped / FREQ_LO) / LOG_FREQ_RANGE;
-    desat_t *= 0.6f;  // max 60% desaturation at highest pitch
-    color = desaturate(color, desat_t);
+    float desat_target = std::log2(freq_clamped / FREQ_LO) / LOG_FREQ_RANGE;
+    desat_target *= 0.30f;  // max 30% desaturation (was 60%)
 
-    // LFO → brightness modulation
-    // Map lfo_out [-1,+1] to [0,1] for brightness modulation
-    float lfo_norm = (lfo_out + 1.0f) * 0.5f;  // 0–1
+    // Exponential smoothing: ~150ms time constant at 20 Hz update rate
+    constexpr float SMOOTH_ALPHA = 0.12f;
+    pimpl_->smooth_desat += SMOOTH_ALPHA * (desat_target - pimpl_->smooth_desat);
+    color = desaturate(color, pimpl_->smooth_desat);
 
+    // ── LFO → brightness modulation ───────────────────────────────
+    // Use frozen LFO value. Map [-1,+1] to [0,1].
+    float lfo_norm = (pimpl_->led_lfo + 1.0f) * 0.5f;
+
+    // At full depth the LFO fully controls brightness (on/off blink for
+    // square wave). At zero depth, steady brightness with no modulation.
     float brightness;
     if (gate) {
-        // Gate held: brighter base (25%), modulated by LFO × depth
-        brightness = 0.25f + 0.20f * lfo_norm * lfo_depth;
+        // Gate held: base 30%, LFO sweeps full range [0, 0.45] scaled by depth
+        float base = 0.30f * (1.0f - lfo_depth) + 0.02f * lfo_depth;
+        float peak = 0.30f * (1.0f - lfo_depth) + 0.45f * lfo_depth;
+        brightness = base + (peak - base) * lfo_norm;
     } else {
-        // Idle: dim base (8%), gentle LFO modulation
-        brightness = 0.08f + 0.07f * lfo_norm * lfo_depth;
+        // Idle: base 8%, LFO sweeps [0, 0.15] scaled by depth
+        float base = 0.08f * (1.0f - lfo_depth) + 0.01f * lfo_depth;
+        float peak = 0.08f * (1.0f - lfo_depth) + 0.15f * lfo_depth;
+        brightness = base + (peak - base) * lfo_norm;
     }
 
     pimpl_->setLed(scale(color, brightness));
