@@ -2684,15 +2684,13 @@ static web_server::Callbacks build_web_callbacks()
             }
         }
         slog("UPDATE: repo_root = %s", repo_root.c_str());
-
-        // Ensure git safe.directory is set — required when running as root
-        // with a repo owned by a non-root user (e.g. systemd User=root).
-        std::string safe_cmd = "git config --global --get safe.directory '" +
-            repo_root + "' >/dev/null 2>&1 || "
-            "git config --global --add safe.directory '" + repo_root + "'";
-        if (system(safe_cmd.c_str()) == 0)
-            slog("UPDATE: git safe.directory configured for %s", repo_root.c_str());
     }
+
+    // Git command prefix — passes safe.directory on every invocation so it
+    // works regardless of HOME, gitconfig, or which user owns the repo.
+    // This avoids the "dubious ownership" error when running as root.
+    static const std::string git_cmd =
+        "git -c safe.directory='" + repo_root + "' ";
 
     // ── Update: progress tracking state ─────────────────────────────
     // Shared between the background update thread and the status endpoint.
@@ -2729,9 +2727,9 @@ static web_server::Callbacks build_web_callbacks()
 
     cb.update_branches = []() -> std::string {
         // Fetch all remotes first
-        system(("cd " + repo_root + " && git fetch --all 2>/dev/null").c_str());
-        FILE* pipe = popen(("cd " + repo_root + " && "
-                           "git branch -r --format='%(refname:lstrip=3)' 2>/dev/null").c_str(), "r");
+        system(("cd " + repo_root + " && " + git_cmd + " fetch --all 2>/dev/null").c_str());
+        FILE* pipe = popen(("cd " + repo_root + " && " +
+                           git_cmd + " branch -r --format='%(refname:lstrip=3)' 2>/dev/null").c_str(), "r");
         if (!pipe) return "{\"branches\":[\"main\"]}";
 
         std::string json = "{\"branches\":[";
@@ -2759,12 +2757,12 @@ static web_server::Callbacks build_web_callbacks()
 
         // Log current HEAD
         {
-            FILE* p = popen(("cd " + repo_root + " && git rev-parse --short HEAD 2>/dev/null").c_str(), "r");
+            FILE* p = popen(("cd " + repo_root + " && " + git_cmd + "rev-parse --short HEAD 2>/dev/null").c_str(), "r");
             char h[64] = {};
             if (p) { fgets(h, sizeof(h), p); pclose(p); }
             size_t hl = strlen(h); if (hl > 0 && h[hl-1] == '\n') h[hl-1] = '\0';
 
-            FILE* p2 = popen(("cd " + repo_root + " && git rev-parse --abbrev-ref HEAD 2>/dev/null").c_str(), "r");
+            FILE* p2 = popen(("cd " + repo_root + " && " + git_cmd + "rev-parse --abbrev-ref HEAD 2>/dev/null").c_str(), "r");
             char br[128] = {};
             if (p2) { fgets(br, sizeof(br), p2); pclose(p2); }
             size_t bl = strlen(br); if (bl > 0 && br[bl-1] == '\n') br[bl-1] = '\0';
@@ -2772,7 +2770,7 @@ static web_server::Callbacks build_web_callbacks()
             slog("UPDATE: Local HEAD = %s (%s)", h, br);
         }
 
-        std::string cmd = "cd " + repo_root + " && git fetch origin "
+        std::string cmd = "cd " + repo_root + " && " + git_cmd + "fetch origin "
                           + branch + " 2>&1";
         FILE* fp = popen(cmd.c_str(), "r");
         std::string fetch_out;
@@ -2785,7 +2783,7 @@ static web_server::Callbacks build_web_callbacks()
 
         // Log remote ref after fetch
         {
-            std::string rc = "cd " + repo_root + " && git rev-parse --short origin/" + branch + " 2>/dev/null";
+            std::string rc = "cd " + repo_root + " && " + git_cmd + "rev-parse --short origin/" + branch + " 2>/dev/null";
             FILE* p = popen(rc.c_str(), "r");
             char h[64] = {};
             if (p) { fgets(h, sizeof(h), p); pclose(p); }
@@ -2814,7 +2812,7 @@ static web_server::Callbacks build_web_callbacks()
         // Get date of latest commit on the remote branch
         std::string date_str;
         {
-            std::string dc = "cd " + repo_root + " && git log -1 --format=%ci origin/" + branch + " 2>/dev/null";
+            std::string dc = "cd " + repo_root + " && " + git_cmd + "log -1 --format=%ci origin/" + branch + " 2>/dev/null";
             FILE* dp = popen(dc.c_str(), "r");
             char dbuf[64] = {};
             if (dp) { fgets(dbuf, sizeof(dbuf), dp); pclose(dp); }
@@ -2870,7 +2868,7 @@ static web_server::Callbacks build_web_callbacks()
 
             // Stage 1: Fetch (15%)
             set_upd("fetch", 15);
-            if (run("cd " + repo_root + " && git fetch origin " + branch) != 0) {
+            if (run("cd " + repo_root + " && " + git_cmd + "fetch origin " + branch) != 0) {
                 set_upd("error", 0, "git fetch failed");
                 upd_running.store(false);
                 return;
@@ -2881,12 +2879,12 @@ static web_server::Callbacks build_web_callbacks()
             // local source changes on the Pi.  The data/ dir is bind-mounted
             // separately so it won't be affected by git operations.
             set_upd("pull", 25);
-            if (run("cd " + repo_root + " && git checkout " + branch) != 0) {
+            if (run("cd " + repo_root + " && " + git_cmd + "checkout " + branch) != 0) {
                 set_upd("error", 0, "git checkout failed");
                 upd_running.store(false);
                 return;
             }
-            if (run("cd " + repo_root + " && git reset --hard origin/" + branch) != 0) {
+            if (run("cd " + repo_root + " && " + git_cmd + "reset --hard origin/" + branch) != 0) {
                 set_upd("error", 0, "git reset failed");
                 upd_running.store(false);
                 return;
