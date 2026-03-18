@@ -231,11 +231,17 @@ build_rpi_ws281x() {
     make install
     ldconfig
 
-    # Ensure headers are installed (some cmake versions skip them)
+    # Ensure headers are findable at /usr/local/include/ (not just a subdirectory).
+    # Some cmake versions install to /usr/local/include/ws2811/ — copy them up.
     for hdr in ws2811.h rpihw.h pwm.h clk.h dma.h gpio.h pcm.h; do
-        if [[ -f "${build_dir}/rpi_ws281x/${hdr}" ]] && [[ ! -f "/usr/local/include/${hdr}" ]]; then
-            cp "${build_dir}/rpi_ws281x/${hdr}" /usr/local/include/
-            info "Installed missing header: ${hdr}"
+        if [[ ! -f "/usr/local/include/${hdr}" ]]; then
+            if [[ -f "/usr/local/include/ws2811/${hdr}" ]]; then
+                cp "/usr/local/include/ws2811/${hdr}" /usr/local/include/
+                info "Copied ${hdr} from ws2811/ subdirectory"
+            elif [[ -f "${build_dir}/rpi_ws281x/${hdr}" ]]; then
+                cp "${build_dir}/rpi_ws281x/${hdr}" /usr/local/include/
+                info "Installed missing header: ${hdr}"
+            fi
         fi
     done
 
