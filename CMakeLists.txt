@@ -32,6 +32,7 @@ set(SOURCES
     src/phaser.cpp
     src/chorus.cpp
     src/flanger.cpp
+    src/led_driver.cpp
     src/web_server.cpp
 )
 
@@ -91,7 +92,7 @@ else()
     message(STATUS "libgpiod not found — GPIO disabled, --simulate forced")
 endif()
 
-# ── Optional: ws2811 (LED — not used until a later milestone) ───────
+# ── Optional: ws2811 (APA106 LED driver) ──────────────────────────────
 find_library(WS2811_LIB ws2811)
 if(WS2811_LIB)
     target_compile_definitions(${PROJECT_NAME} PRIVATE HAS_WS2811=1)
