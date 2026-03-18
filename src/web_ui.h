@@ -562,12 +562,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
     </div>
   </div>
   <div class="card">
-    <h3>System Log</h3>
-    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
-      <label style="font-size:0.7rem;color:var(--text-lo);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="syslog-auto" checked onchange="toggleSyslogAuto()"> Auto-refresh</label>
-      <button class="btn btn-secondary btn-sm" onclick="loadSysLog()" style="font-size:0.6rem;padding:3px 8px;margin-left:auto">Refresh</button>
+    <div style="display:flex;align-items:center;cursor:pointer" onclick="var b=document.getElementById('syslog-body');var a=document.getElementById('syslog-arrow');if(b.style.display==='none'){b.style.display='block';a.textContent='\\u25BC'}else{b.style.display='none';a.textContent='\\u25B6'}">
+      <h3 style="margin:0">System Log <span id="syslog-arrow" style="font-size:0.6rem">&#9654;</span></h3>
     </div>
-    <pre id="syslog-content" style="background:var(--bg);border:1px solid var(--border);padding:10px;max-height:250px;overflow:auto;font-family:var(--font);font-size:0.6rem;line-height:1.6;color:var(--text);white-space:pre-wrap;word-break:break-all"></pre>
+    <div id="syslog-body" style="display:none;margin-top:10px">
+      <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+        <label style="font-size:0.7rem;color:var(--text-lo);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="syslog-auto" checked onchange="toggleSyslogAuto()"> Auto-refresh</label>
+        <button class="btn btn-secondary btn-sm" onclick="loadSysLog()" style="font-size:0.6rem;padding:3px 8px;margin-left:auto">Refresh</button>
+      </div>
+      <pre id="syslog-content" style="background:var(--bg);border:1px solid var(--border);padding:10px;max-height:250px;overflow:auto;font-family:var(--font);font-size:0.6rem;line-height:1.6;color:var(--text);white-space:pre-wrap;word-break:break-all"></pre>
+    </div>
   </div>
   <div class="card">
     <h3>Shell</h3>
