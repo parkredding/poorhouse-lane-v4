@@ -599,6 +599,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       <select id="update-branch" style="width:100%;padding:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem">
         <option value="main">main</option>
       </select>
+      <div id="branch-warn-toggle" style="margin-top:6px">
+        <span onclick="document.getElementById('branch-warn-toggle').style.display='none';document.getElementById('branch-warn-confirm').style.display='block'" style="font-size:0.6rem;color:var(--text-lo);cursor:pointer;text-decoration:underline">Show experimental branches</span>
+      </div>
+      <div id="branch-warn-confirm" style="display:none;margin-top:6px">
+        <p style="color:var(--danger);font-size:0.7rem;margin-bottom:8px">Experimental branches are untested and may cause unexpected behavior or require a full reflash to recover.</p>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('branch-warn-confirm').style.display='none';loadBranches()" style="color:var(--danger);border-color:var(--danger);font-size:0.55rem">I understand, show all branches</button>
+      </div>
     </div>
     <button class="btn btn-secondary" onclick="checkUpdate()" id="btn-check">Check for Updates</button>
     <div id="update-result" style="margin-top:12px"></div>
@@ -721,7 +728,7 @@ function showTab(id) {
   if (id !== 'system' && typeof stopSyslogPoll === 'function') stopSyslogPoll();
   if (id === 'live') { loadDspState(); startLivePoll(); } else { stopLivePoll(); }
   if (id === 'wifi') { loadWifiStatus(); checkWifiTestResult(); }
-  if (id === 'system') { loadSystemInfo(); loadBranches(); loadSysLog(); startSyslogPoll(); }
+  if (id === 'system') { loadSystemInfo(); loadSysLog(); startSyslogPoll(); }
   if (id === 'encoders') { loadEncoderMap(); loadSensitivity(); }
   if (id === 'options') { }
 }
