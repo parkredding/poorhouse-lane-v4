@@ -19,6 +19,8 @@
 #include <ws2811.h>
 #endif
 
+static constexpr float PI = 3.14159265f;
+
 // ─── RGB color type (float for smooth interpolation) ────────────────
 
 struct RGB {
@@ -132,7 +134,7 @@ struct LedDriver::Impl {
     bool     color_initialized = false;      // first frame flag
 
     // Frozen LFO value for LED — only updates while gate held or idle,
-    // NOT during release tail.
+    // NOT during release tail (~200ms freeze at ~20Hz update rate).
     float    led_lfo = 0.0f;
     bool     prev_gate = false;
     bool     releasing = false;
@@ -237,7 +239,7 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
             pimpl_->ap_idle_phase -= 1.0f;
 
         // Sinusoidal breathing with slight ease-in-out (sin² shaping)
-        float phase = std::sin(2.0f * 3.14159265f * pimpl_->ap_idle_phase);
+        float phase = std::sin(2.0f * PI * pimpl_->ap_idle_phase);
         float breath = 0.06f + 0.20f * (phase * phase) * (phase > 0 ? 1.0f : -0.3f);
         breath = std::clamp(breath, 0.04f, 0.26f);
 
@@ -259,7 +261,7 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
     pimpl_->prev_gate = gate;
 
     if (pimpl_->releasing) {
-        if (++pimpl_->release_frames > 10)
+        if (++pimpl_->release_frames > 4)
             pimpl_->releasing = false;
     }
 
