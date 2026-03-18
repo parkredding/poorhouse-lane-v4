@@ -277,9 +277,9 @@ void GpioHw::poll()
 #ifdef HAS_GPIOD
     auto *d = pimpl_.get();
 
-    // Block up to 50 ms waiting for an edge event
+    // Block up to 16 ms (~60 Hz loop rate) for smoother LED animation
     int ret = gpiod_line_request_wait_edge_events(d->request,
-                                                  50000000LL);  // ns
+                                                  16000000LL);  // ns
     if (ret <= 0) return;   // timeout (0) or error (<0)
 
     int n = gpiod_line_request_read_edge_events(d->request, d->ev_buf, 64);
