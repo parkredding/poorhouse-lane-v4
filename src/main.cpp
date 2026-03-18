@@ -2901,15 +2901,21 @@ static web_server::Callbacks build_web_callbacks()
             }
             set_upd("build", 85);
 
-            // Stage 4: Deploy to persistent storage (90%)
+            // Stage 4: Deploy to persistent storage (88%)
             // deploy-to-persist.sh copies binary + syncs git repo to real disk
             // so updates survive reboot on kiosk/overlay FS devices.
-            set_upd("deploy", 90);
+            set_upd("deploy", 88);
             if (run("cd " + repo_root + " && sudo ./scripts/deploy-to-persist.sh") != 0) {
                 set_upd("error", 0, "deploy failed");
                 upd_running.store(false);
                 return;
             }
+
+            // Stage 4b: Update systemd service file (92%)
+            // Ensures fixes to User=, paths, capabilities are applied
+            // without needing a full reinstall from setup.sh.
+            set_upd("deploy", 92);
+            run("cd " + repo_root + " && sudo ./scripts/update-service.sh " + repo_root);
 
             // Stage 5: Restore user data if needed (95%)
             // If the data dir lost its bind mount or files were overwritten,

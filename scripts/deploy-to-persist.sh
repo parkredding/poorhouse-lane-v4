@@ -78,12 +78,23 @@ mkdir -p "$DEST"
 cp "${SCRIPT_DIR}/build/dubsiren" "$DEST/dubsiren"
 echo "Deployed binary → ${DEST}/dubsiren"
 
-# --- Copy ensure-persist.sh -------------------------------------------------
+# --- Copy helper scripts ----------------------------------------------------
 SCRIPT_DEST="${PERSIST_MNT}/usr/local/lib/dubsiren"
 mkdir -p "$SCRIPT_DEST"
 cp "${SCRIPT_DIR}/scripts/ensure-persist.sh" "$SCRIPT_DEST/ensure-persist.sh"
 chmod 755 "$SCRIPT_DEST/ensure-persist.sh"
 echo "Deployed ensure-persist.sh → ${SCRIPT_DEST}/"
+
+# Also deploy update-service.sh to the persistent repo so OTA can call it
+PERSIST_SCRIPTS="${PERSIST_MNT}${SCRIPT_DIR}/scripts"
+mkdir -p "$PERSIST_SCRIPTS"
+for s in update-service.sh deploy-to-persist.sh ensure-persist.sh; do
+    if [[ -f "${SCRIPT_DIR}/scripts/${s}" ]]; then
+        cp "${SCRIPT_DIR}/scripts/${s}" "${PERSIST_SCRIPTS}/${s}"
+        chmod 755 "${PERSIST_SCRIPTS}/${s}"
+    fi
+done
+echo "Deployed scripts → ${PERSIST_SCRIPTS}/"
 
 # --- Sync source tree to persistent disk ------------------------------------
 # Update the git repo on the real disk so that after reboot the overlay
