@@ -440,7 +440,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       <div class="dsp-slider">
         <label>FX Order</label>
         <select id="fx-chain" style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
-          <option value="0">Filter &rarr; Delay &rarr; Reverb</option>
+          <option value="0">Filter &rarr; Delay &rarr; Reverb (Default)</option>
           <option value="1">Filter &rarr; Reverb &rarr; Delay</option>
           <option value="2">Delay &rarr; Filter &rarr; Reverb</option>
           <option value="3">Delay &rarr; Reverb &rarr; Filter</option>
