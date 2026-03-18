@@ -2792,7 +2792,7 @@ static web_server::Callbacks build_web_callbacks()
         }
 
         std::string log_cmd = "cd " + repo_root + " && "
-                              "git log HEAD..origin/" + branch +
+                              + git_cmd + "log HEAD..origin/" + branch +
                               " --oneline 2>/dev/null";
         FILE* pipe = popen(log_cmd.c_str(), "r");
         if (!pipe)
