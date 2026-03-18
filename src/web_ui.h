@@ -749,6 +749,26 @@ function toast(msg, err, duration) {
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+function syncPresetHighlight(newBank, newPreset) {
+  if (newBank !== undefined && newPreset !== undefined &&
+      (newBank !== activeBank || newPreset !== activePreset)) {
+    document.querySelectorAll('.slot.active-slot').forEach(function(el){el.classList.remove('active-slot')});
+    document.querySelectorAll('.led.active').forEach(function(el){el.classList.remove('active')});
+    document.querySelectorAll('.slot-btn.active').forEach(function(el){el.classList.remove('active')});
+    activeBank = newBank; activePreset = newPreset;
+    var newBankName = BANK_NAMES[activeBank];
+    var sl = document.getElementById('slot-'+newBankName+'-'+activePreset);
+    if (sl) {
+      sl.classList.add('active-slot');
+      var led = sl.querySelector('.led'); if (led) led.classList.add('active');
+      var btn = sl.querySelector('.slot-btn'); if (btn) btn.classList.add('active');
+    }
+    document.querySelectorAll('.slot.target-slot').forEach(function(el){el.classList.remove('target-slot')});
+    targetBank = newBankName; targetSlot = activePreset;
+    if (sl) sl.classList.add('target-slot');
+  }
+}
+
 // Live DSP Controls
 function applyDspState(d, force) {
   if (force || !activeDragging.has('freq')) {
@@ -801,25 +821,7 @@ function applyDspState(d, force) {
     updatePitchEnvUI(d.pitch_env || 0);
   }
   // Sync preset highlight with hardware button presses
-  var newBank = d.active_bank;
-  var newPreset = d.active_preset;
-  if (newBank !== undefined && newPreset !== undefined &&
-      (newBank !== activeBank || newPreset !== activePreset)) {
-    document.querySelectorAll('.slot.active-slot').forEach(function(el){el.classList.remove('active-slot')});
-    document.querySelectorAll('.led.active').forEach(function(el){el.classList.remove('active')});
-    document.querySelectorAll('.slot-btn.active').forEach(function(el){el.classList.remove('active')});
-    activeBank = newBank; activePreset = newPreset;
-    var newBankName = BANK_NAMES[activeBank];
-    var sl = document.getElementById('slot-'+newBankName+'-'+activePreset);
-    if (sl) {
-      sl.classList.add('active-slot');
-      var led = sl.querySelector('.led'); if (led) led.classList.add('active');
-      var btn = sl.querySelector('.slot-btn'); if (btn) btn.classList.add('active');
-    }
-    document.querySelectorAll('.slot.target-slot').forEach(function(el){el.classList.remove('target-slot')});
-    targetBank = newBankName; targetSlot = activePreset;
-    if (sl) sl.classList.add('target-slot');
-  }
+  syncPresetHighlight(d.active_bank, d.active_preset);
 }
 
 async function loadDspState() {
@@ -851,24 +853,7 @@ async function pollPresetState() {
     const r = await fetch('/api/dsp/state', {signal: AbortSignal.timeout(2000)});
     if (!r.ok) return;
     const d = await r.json();
-    var newBank = d.active_bank, newPreset = d.active_preset;
-    if (newBank !== undefined && newPreset !== undefined &&
-        (newBank !== activeBank || newPreset !== activePreset)) {
-      document.querySelectorAll('.slot.active-slot').forEach(function(el){el.classList.remove('active-slot')});
-      document.querySelectorAll('.led.active').forEach(function(el){el.classList.remove('active')});
-      document.querySelectorAll('.slot-btn.active').forEach(function(el){el.classList.remove('active')});
-      activeBank = newBank; activePreset = newPreset;
-      var newBankName = BANK_NAMES[activeBank];
-      var sl = document.getElementById('slot-'+newBankName+'-'+activePreset);
-      if (sl) {
-        sl.classList.add('active-slot');
-        var led = sl.querySelector('.led'); if (led) led.classList.add('active');
-        var btn = sl.querySelector('.slot-btn'); if (btn) btn.classList.add('active');
-      }
-      document.querySelectorAll('.slot.target-slot').forEach(function(el){el.classList.remove('target-slot')});
-      targetBank = newBankName; targetSlot = activePreset;
-      if (sl) sl.classList.add('target-slot');
-    }
+    syncPresetHighlight(d.active_bank, d.active_preset);
   } catch(e) {}
 }
 
@@ -1245,8 +1230,9 @@ async function saveSensitivity() {
 }
 
 function resetSensitivity() {
+  const defaults = [1.00, 0.55, 0.51, 1.00, 0.25, 0.78, 1.00, 1.00, 0.44, 0.44, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
   sensitivityData.forEach((p, i) => {
-    const def = (i === 0) ? 0.5 : 1.0;
+    const def = defaults[i] !== undefined ? defaults[i] : 1.0;
     const pct = Math.round(((def - 0.25) / 3.75) * 100);
     document.getElementById('sens-'+i).value = pct;
     document.getElementById('sens-val-'+i).textContent = def.toFixed(2)+'x';

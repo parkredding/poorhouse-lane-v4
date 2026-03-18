@@ -47,6 +47,7 @@
 #include <chrono>
 #include <mutex>
 #include <string>
+#include <sstream>
 #include <thread>
 #include <map>
 
@@ -2704,6 +2705,15 @@ static web_server::Callbacks build_web_callbacks()
 
     set_upd("idle", 0);
 
+    // Sanitize branch names to prevent command injection via popen/system
+    auto sanitize_branch = [](const std::string& branch) -> std::string {
+        std::string safe;
+        for (char c : branch) {
+            if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '/') safe += c;
+        }
+        return safe;
+    };
+
     cb.update_branches = []() -> std::string {
         // Fetch all remotes first
         system(("cd " + repo_root + " && git fetch --all 2>/dev/null").c_str());
@@ -2730,7 +2740,8 @@ static web_server::Callbacks build_web_callbacks()
         return json;
     };
 
-    cb.update_check = [](const std::string& branch) -> std::string {
+    cb.update_check = [sanitize_branch](const std::string& raw_branch) -> std::string {
+        std::string branch = sanitize_branch(raw_branch);
         slog("UPDATE: Checking branch '%s' in %s", branch.c_str(), repo_root.c_str());
 
         // Log current HEAD
@@ -2803,7 +2814,8 @@ static web_server::Callbacks build_web_callbacks()
                ",\"latest_date\":\"" + date_str + "\"}";
     };
 
-    cb.update_install = [set_upd, log_append](const std::string& branch) -> bool {
+    cb.update_install = [set_upd, log_append, sanitize_branch](const std::string& raw_branch) -> bool {
+        std::string branch = sanitize_branch(raw_branch);
         // Reject if already running
         bool expected = false;
         if (!upd_running.compare_exchange_strong(expected, true))
@@ -3413,13 +3425,19 @@ static web_server::Callbacks build_web_callbacks()
     };
 
     cb.set_encoder_sensitivity = [](const std::string& body) -> bool {
+        // Parse form body into key=value map
+        std::map<std::string, std::string> params;
+        std::istringstream stream(body);
+        std::string pair;
+        while (std::getline(stream, pair, '&')) {
+            auto eq = pair.find('=');
+            if (eq != std::string::npos)
+                params[pair.substr(0, eq)] = pair.substr(eq + 1);
+        }
         auto get_val = [&](const std::string& key) -> float {
-            auto pos = body.find(key + "=");
-            if (pos == std::string::npos) return -1.0f;
-            auto start = pos + key.size() + 1;
-            auto end = body.find('&', start);
-            if (end == std::string::npos) end = body.size();
-            return static_cast<float>(atof(body.substr(start, end - start).c_str()));
+            auto it = params.find(key);
+            if (it == params.end()) return -1.0f;
+            return static_cast<float>(atof(it->second.c_str()));
         };
         {
             std::lock_guard<std::mutex> lk(g_sensitivity_mutex);
