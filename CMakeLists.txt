@@ -37,31 +37,20 @@ set(SOURCES
 )
 
 # ── Git build info (branch + short commit hash) ───────────────────
-execute_process(
-    COMMAND git rev-parse --abbrev-ref HEAD
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_BRANCH
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
+# Runs at BUILD time (not configure time) so `make` always picks up
+# the current branch/commit without needing to re-run cmake.
+add_custom_target(git_version ALL
+    ${CMAKE_COMMAND}
+        -DSRC=${CMAKE_SOURCE_DIR}
+        -DOUT=${CMAKE_BINARY_DIR}
+        -P ${CMAKE_SOURCE_DIR}/cmake/git_version.cmake
+    COMMENT "Refreshing git version info"
 )
-execute_process(
-    COMMAND git rev-parse --short HEAD
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_COMMIT
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-)
-if(NOT GIT_BRANCH)
-    set(GIT_BRANCH "unknown")
-endif()
-if(NOT GIT_COMMIT)
-    set(GIT_COMMIT "unknown")
-endif()
 
 add_executable(${PROJECT_NAME} ${SOURCES})
-target_compile_definitions(${PROJECT_NAME} PRIVATE
-    GIT_BRANCH="${GIT_BRANCH}"
-    GIT_COMMIT="${GIT_COMMIT}"
+add_dependencies(${PROJECT_NAME} git_version)
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_BINARY_DIR}  # for git_version.h
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
