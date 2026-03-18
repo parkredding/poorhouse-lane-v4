@@ -434,72 +434,89 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 <!-- OPTIONS TAB -->
 <div id="options" class="panel">
   <div class="card">
-    <h3>Reverb Type</h3>
-    <div class="form-group">
-      <select id="reverb-type" onchange="onReverbTypeChange()">
-        <option value="0">Spring</option><option value="1">Plate</option>
-        <option value="2">Hall</option><option value="3">Schroeder</option>
-      </select>
+    <h3>Signal Chain</h3>
+    <div class="dsp-group">
+      <h4>Routing</h4>
+      <div class="dsp-slider">
+        <label>FX Order</label>
+        <select id="fx-chain" style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+          <option value="0">Filter &rarr; Delay &rarr; Reverb</option>
+          <option value="1">Filter &rarr; Reverb &rarr; Delay</option>
+          <option value="2">Delay &rarr; Filter &rarr; Reverb</option>
+          <option value="3">Delay &rarr; Reverb &rarr; Filter</option>
+          <option value="4">Reverb &rarr; Filter &rarr; Delay</option>
+          <option value="5">Reverb &rarr; Delay &rarr; Filter</option>
+        </select>
+      </div>
+      <div class="dsp-slider">
+        <label>Reverb</label>
+        <select id="reverb-type" onchange="onReverbTypeChange()" style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+          <option value="0">Spring</option><option value="1">Plate</option>
+          <option value="2">Hall</option><option value="3">Schroeder</option>
+        </select>
+      </div>
+      <div class="dsp-slider">
+        <label>Delay</label>
+        <select id="delay-type" onchange="onDelayTypeChange()" style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+          <option value="0">Tape</option><option value="1">Digital</option>
+        </select>
+      </div>
+    </div>
+    <div class="dsp-group" id="tape-params">
+      <h4>Tape Delay</h4>
+      <div class="dsp-slider">
+        <label>Wobble</label>
+        <input type="range" id="wobble" min="0" max="100" value="100" oninput="updateRange('wobble')">
+        <span class="dsp-val" id="wobble-val">100%</span>
+      </div>
+      <div class="dsp-slider">
+        <label>Flutter</label>
+        <input type="range" id="flutter" min="0" max="100" value="100" oninput="updateRange('flutter')">
+        <span class="dsp-val" id="flutter-val">100%</span>
+      </div>
+    </div>
+    <div class="dsp-group">
+      <h4>Tape Saturator</h4>
+      <div class="dsp-slider">
+        <label>Mix</label>
+        <input type="range" id="saturator-mix" min="0" max="100" value="0" oninput="updateRange('saturator-mix')">
+        <span class="dsp-val" id="saturator-mix-val">0%</span>
+      </div>
+      <div class="dsp-slider">
+        <label>Drive</label>
+        <input type="range" id="saturator-drive" min="0" max="100" value="50" oninput="updateRange('saturator-drive')">
+        <span class="dsp-val" id="saturator-drive-val">50%</span>
+      </div>
+    </div>
+    <div class="dsp-group">
+      <h4>Modulation FX</h4>
+      <div class="dsp-slider">
+        <label>Phaser</label>
+        <input type="range" id="phaser-mix" min="0" max="100" value="0" oninput="updateRange('phaser-mix')">
+        <span class="dsp-val" id="phaser-mix-val">0%</span>
+      </div>
+      <div class="dsp-slider">
+        <label>Chorus</label>
+        <input type="range" id="chorus-mix" min="0" max="100" value="0" oninput="updateRange('chorus-mix')">
+        <span class="dsp-val" id="chorus-mix-val">0%</span>
+      </div>
+      <div class="dsp-slider">
+        <label>Flanger</label>
+        <input type="range" id="flanger-mix" min="0" max="100" value="0" oninput="updateRange('flanger-mix')">
+        <span class="dsp-val" id="flanger-mix-val">0%</span>
+      </div>
     </div>
   </div>
   <div class="card">
-    <h3>Delay Type</h3>
-    <div class="form-group">
-      <select id="delay-type" onchange="onDelayTypeChange()">
-        <option value="0">Tape</option><option value="1">Digital</option>
-      </select>
-    </div>
-  </div>
-  <div class="card" id="tape-params">
-    <h3>Tape Parameters</h3>
-    <div class="form-group">
-      <label>Wobble <span class="range-val" id="wobble-val">100%</span></label>
-      <input type="range" id="wobble" min="0" max="100" value="100" oninput="updateRange('wobble')">
-    </div>
-    <div class="form-group">
-      <label>Flutter <span class="range-val" id="flutter-val">100%</span></label>
-      <input type="range" id="flutter" min="0" max="100" value="100" oninput="updateRange('flutter')">
-    </div>
-  </div>
-  <div class="card">
-    <h3>Effects Chain</h3>
-    <div class="form-group">
-      <select id="fx-chain">
-        <option value="0">Filter &rarr; Delay &rarr; Reverb</option>
-        <option value="1">Filter &rarr; Reverb &rarr; Delay</option>
-        <option value="2">Delay &rarr; Filter &rarr; Reverb</option>
-        <option value="3">Delay &rarr; Reverb &rarr; Filter</option>
-        <option value="4">Reverb &rarr; Filter &rarr; Delay</option>
-        <option value="5">Reverb &rarr; Delay &rarr; Filter</option>
-      </select>
-    </div>
-  </div>
-  <div class="card">
-    <h3>Settings</h3>
+    <h3>Behavior</h3>
     <div class="toggle-row"><span>Linked Pitch / LFO</span><label class="toggle"><input type="checkbox" id="lfo-link" checked><span class="slider"></span></label></div>
     <div class="toggle-row"><span>Super Drip Reverb</span><label class="toggle"><input type="checkbox" id="super-drip" checked><span class="slider"></span></label></div>
-    <div class="toggle-row"><span>Filter Sweep</span>
+    <div class="dsp-slider" style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <label style="min-width:auto;flex:1">Filter Sweep</label>
       <select id="sweep-dir" style="width:auto;padding:6px;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border)">
         <option value="-1">Down (Dub)</option><option value="0">Flat</option><option value="1">Up (Bright)</option>
       </select>
     </div>
-  </div>
-  <div class="card">
-    <h3>Tape Saturator</h3>
-    <div class="form-group">
-      <label>Mix <span class="range-val" id="saturator-mix-val">0%</span></label>
-      <input type="range" id="saturator-mix" min="0" max="100" value="0" oninput="updateRange('saturator-mix')">
-    </div>
-    <div class="form-group">
-      <label>Drive <span class="range-val" id="saturator-drive-val">50%</span></label>
-      <input type="range" id="saturator-drive" min="0" max="100" value="50" oninput="updateRange('saturator-drive')">
-    </div>
-  </div>
-  <div class="card">
-    <h3>Modulation FX</h3>
-    <div class="form-group"><label>Phaser <span class="range-val" id="phaser-mix-val">0%</span></label><input type="range" id="phaser-mix" min="0" max="100" value="0" oninput="updateRange('phaser-mix')"></div>
-    <div class="form-group"><label>Chorus <span class="range-val" id="chorus-mix-val">0%</span></label><input type="range" id="chorus-mix" min="0" max="100" value="0" oninput="updateRange('chorus-mix')"></div>
-    <div class="form-group"><label>Flanger <span class="range-val" id="flanger-mix-val">0%</span></label><input type="range" id="flanger-mix" min="0" max="100" value="0" oninput="updateRange('flanger-mix')"></div>
   </div>
   <button class="btn btn-primary btn-block" onclick="applyOptions()" style="margin-top:8px">Apply Options</button>
 </div>
