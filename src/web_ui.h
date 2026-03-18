@@ -774,6 +774,26 @@ function applyDspState(d, force) {
   if (force || !activeDragging.has('pitch_env')) {
     updatePitchEnvUI(d.pitch_env || 0);
   }
+  // Sync preset highlight with hardware button presses
+  var newBank = d.active_bank;
+  var newPreset = d.active_preset;
+  if (newBank !== undefined && newPreset !== undefined &&
+      (newBank !== activeBank || newPreset !== activePreset)) {
+    document.querySelectorAll('.slot.active-slot').forEach(function(el){el.classList.remove('active-slot')});
+    document.querySelectorAll('.led.active').forEach(function(el){el.classList.remove('active')});
+    document.querySelectorAll('.slot-btn.active').forEach(function(el){el.classList.remove('active')});
+    activeBank = newBank; activePreset = newPreset;
+    var newBankName = BANK_NAMES[activeBank];
+    var sl = document.getElementById('slot-'+newBankName+'-'+activePreset);
+    if (sl) {
+      sl.classList.add('active-slot');
+      var led = sl.querySelector('.led'); if (led) led.classList.add('active');
+      var btn = sl.querySelector('.slot-btn'); if (btn) btn.classList.add('active');
+    }
+    document.querySelectorAll('.slot.target-slot').forEach(function(el){el.classList.remove('target-slot')});
+    targetBank = newBankName; targetSlot = activePreset;
+    if (sl) sl.classList.add('target-slot');
+  }
 }
 
 async function loadDspState() {
