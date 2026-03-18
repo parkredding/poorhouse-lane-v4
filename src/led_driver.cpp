@@ -124,7 +124,7 @@ bool LedDriver::init(int gpio_pin)
     s.freq   = WS2811_TARGET_FREQ;
     s.dmanum = 10;                        // DMA channel (10 avoids conflicts)
 
-    s.channel[0].gpionum    = gpio_pin;   // GPIO 12 (PWM0) — GPIO 18 taken by PCM5102
+    s.channel[0].gpionum    = gpio_pin;   // GPIO 12 (PWM0)
     s.channel[0].count      = 1;          // single LED
     s.channel[0].invert     = 0;
     s.channel[0].brightness = 255;        // we control brightness in software

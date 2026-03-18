@@ -203,7 +203,11 @@ install_deps() {
 
 # --- build_rpi_ws281x() ------------------------------------------------------
 build_rpi_ws281x() {
-    if [[ -f /usr/local/lib/libws2811.so ]] || [[ -f /usr/local/lib/libws2811.a ]]; then
+    local have_lib=false have_hdr=false
+    [[ -f /usr/local/lib/libws2811.so ]] || [[ -f /usr/local/lib/libws2811.a ]] && have_lib=true
+    [[ -f /usr/local/include/ws2811.h ]] && have_hdr=true
+
+    if $have_lib && $have_hdr; then
         success "rpi_ws281x already installed."
         return 0
     fi
@@ -226,6 +230,14 @@ build_rpi_ws281x() {
 
     make install
     ldconfig
+
+    # Ensure headers are installed (some cmake versions skip them)
+    for hdr in ws2811.h rpihw.h pwm.h clk.h dma.h gpio.h pcm.h; do
+        if [[ -f "${build_dir}/rpi_ws281x/${hdr}" ]] && [[ ! -f "/usr/local/include/${hdr}" ]]; then
+            cp "${build_dir}/rpi_ws281x/${hdr}" /usr/local/include/
+            info "Installed missing header: ${hdr}"
+        fi
+    done
 
     # Clean up
     rm -rf "${build_dir}"
