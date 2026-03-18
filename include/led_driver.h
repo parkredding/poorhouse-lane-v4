@@ -23,6 +23,9 @@ public:
     // Initialise the LED hardware. Returns false on failure (non-fatal).
     bool init(int gpio_pin = 12);
 
+    // Set master brightness multiplier (0.0–1.0). Applied to all output.
+    void setBrightness(float level);
+
     // Call from main loop at ~20 Hz with current siren state.
     // lfo_out: raw LFO output in [-1, +1]
     void update(LfoWave wave, float lfo_out, float lfo_depth,

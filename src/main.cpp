@@ -142,6 +142,10 @@ static std::atomic<float> g_saturator_drive{0.5f};  // 0–1 drive amount
 // AP mode flag
 static std::atomic<bool>  g_ap_mode{false};
 
+// LED settings (persisted to config)
+static std::atomic<float> g_led_brightness{1.0f};  // 0–1 master brightness
+static std::atomic<bool>  g_led_night_mode{false};  // caps brightness for dark rooms
+
 // LED driver instance (global so callbacks can access it)
 static LedDriver g_led;
 
@@ -1057,6 +1061,8 @@ static void save_siren_config()
     fprintf(f, "active_bank=%d\n",    g_bank_mode.load());
     fprintf(f, "active_preset=%d\n",  g_preset.load());
     fprintf(f, "theme=%s\n",          THEME_IDS[std::clamp(g_theme.load(), 0, NUM_THEMES - 1)]);
+    fprintf(f, "led_brightness=%.6f\n", g_led_brightness.load());
+    fprintf(f, "led_night_mode=%d\n",   g_led_night_mode.load() ? 1 : 0);
 
     // Encoder mapping
     {
@@ -1184,6 +1190,10 @@ static void load_siren_config()
                 if (t >= 0 && t < NUM_THEMES) g_theme.store(t);
             }
         }
+        else if (strcmp(key, "led_brightness") == 0)
+            g_led_brightness.store(std::clamp(static_cast<float>(atof(val)), 0.0f, 1.0f));
+        else if (strcmp(key, "led_night_mode") == 0)
+            g_led_night_mode.store(atoi(val) != 0);
         // Encoder mapping
         else if (strncmp(key, "enc_a", 5) == 0 && key[5] >= '0' && key[5] <= '4') {
             int idx = key[5] - '0';
@@ -2314,6 +2324,8 @@ static web_server::Callbacks build_web_callbacks()
             ",\"flanger_mix\":" + std::to_string(g_flanger_mix.load()) +
             ",\"saturator_mix\":" + std::to_string(g_saturator_mix.load()) +
             ",\"saturator_drive\":" + std::to_string(g_saturator_drive.load()) +
+            ",\"led_brightness\":" + std::to_string(g_led_brightness.load()) +
+            ",\"led_night_mode\":" + (g_led_night_mode.load() ? "true" : "false") +
             ",\"theme\":\"" + THEME_IDS[theme_idx] + "\"}";
     };
 
@@ -2354,6 +2366,10 @@ static web_server::Callbacks build_web_callbacks()
         if (!sm.empty()) g_saturator_mix.store(std::stof(sm));
         auto sdr = get_val("saturator_drive");
         if (!sdr.empty()) g_saturator_drive.store(std::stof(sdr));
+        auto lb = get_val("led_brightness");
+        if (!lb.empty()) g_led_brightness.store(std::clamp(std::stof(lb), 0.0f, 1.0f));
+        auto lnm = get_val("led_night_mode");
+        if (!lnm.empty()) g_led_night_mode.store(lnm == "1" || lnm == "true");
         auto th = get_val("theme");
         if (!th.empty()) {
             for (int i = 0; i < NUM_THEMES; i++) {
@@ -4131,6 +4147,11 @@ int main(int argc, char *argv[])
         check_ap_combo(audio);
 
         // LED update (~20 Hz — main loop runs at ~20 Hz from hw.poll())
+        {
+            float bright = g_led_brightness.load();
+            if (g_led_night_mode.load()) bright = std::min(bright, 0.15f);
+            g_led.setBrightness(bright);
+        }
         g_led.update(
             static_cast<LfoWave>(g_lfo_waveform.load()),
             g_lfo_out.load(std::memory_order_relaxed),

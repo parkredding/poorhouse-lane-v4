@@ -106,6 +106,7 @@ struct LedDriver::Impl {
     bool     ap_idle = false;
     float    ap_idle_phase = 0.0f;
     float    ap_breath = 0.08f;         // smoothed AP breathing brightness
+    float    master_brightness = 1.0f;  // user-configurable brightness cap
     int      render_err_count = 0;
 
     void setLed(RGB c)
@@ -144,6 +145,11 @@ struct LedDriver::Impl {
 
 LedDriver::LedDriver() : pimpl_(std::make_unique<Impl>()) {}
 LedDriver::~LedDriver() { shutdown(); }
+
+void LedDriver::setBrightness(float level)
+{
+    pimpl_->master_brightness = std::clamp(level, 0.0f, 1.0f);
+}
 
 bool LedDriver::init(int gpio_pin)
 {
@@ -215,7 +221,7 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
         breath = std::clamp(breath, 0.04f, 0.26f);
 
         pimpl_->ap_breath = smooth(pimpl_->ap_breath, breath, 0.050f);
-        pimpl_->setLed(scale({255, 255, 255}, pimpl_->ap_breath));
+        pimpl_->setLed(scale({255, 255, 255}, pimpl_->ap_breath * pimpl_->master_brightness));
         return;
     }
 
@@ -237,7 +243,7 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
         brightness = 0.40f + lfo_depth * 0.35f * lfo_norm;
     }
 
-    pimpl_->setLed(scale(color, brightness));
+    pimpl_->setLed(scale(color, brightness * pimpl_->master_brightness));
     (void)freq; (void)lfo_rate;
 }
 

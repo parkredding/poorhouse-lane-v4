@@ -518,6 +518,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       </select>
     </div>
   </div>
+  <div class="card">
+    <h3>LED</h3>
+    <div class="dsp-slider">
+      <label>Brightness</label>
+      <input type="range" id="led-brightness" min="5" max="100" value="100" oninput="updateRange('led-brightness')">
+      <span class="dsp-val" id="led-brightness-val">100%</span>
+    </div>
+    <div class="toggle-row"><span>Night Mode</span><label class="toggle"><input type="checkbox" id="led-night-mode"><span class="slider"></span></label></div>
+    <p style="font-size:0.6rem;color:var(--text-lo);margin-top:6px">Night mode caps brightness at 15% for dark rooms.</p>
+  </div>
   <button class="btn btn-primary btn-block" onclick="applyOptions()" style="margin-top:8px">Apply Options</button>
 </div>
 
@@ -1099,6 +1109,9 @@ async function loadOptions() {
     document.getElementById('chorus-mix').value = Math.round((d.chorus_mix||0)*100);
     document.getElementById('flanger-mix').value = Math.round((d.flanger_mix||0)*100);
     updateRange('phaser-mix'); updateRange('chorus-mix'); updateRange('flanger-mix');
+    document.getElementById('led-brightness').value = Math.round((d.led_brightness!=null?d.led_brightness:1)*100);
+    updateRange('led-brightness');
+    document.getElementById('led-night-mode').checked = d.led_night_mode === true;
     // Sync theme from server
     if (d.theme) {
       savedTheme = d.theme;
@@ -1124,6 +1137,8 @@ async function applyOptions() {
     'phaser_mix='+(document.getElementById('phaser-mix').value/100),
     'chorus_mix='+(document.getElementById('chorus-mix').value/100),
     'flanger_mix='+(document.getElementById('flanger-mix').value/100),
+    'led_brightness='+(document.getElementById('led-brightness').value/100),
+    'led_night_mode='+(document.getElementById('led-night-mode').checked?'1':'0'),
     'theme='+(savedTheme||'midnight')
   ].join('&');
   try {
