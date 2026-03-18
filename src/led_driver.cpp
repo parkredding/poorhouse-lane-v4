@@ -65,14 +65,14 @@ static RGBf smooth_rgb(RGBf current, RGBf target, float alpha)
 // ─── Pure waveform palette ──────────────────────────────────────────
 
 static constexpr RGB WAVEFORM_COLORS[] = {
-    {255,   0,   0},    // Sine       → Red
-    {  0, 255,   0},    // Triangle   → Green
-    {  0,   0, 255},    // Square     → Blue
-    {255, 160,   0},    // RampUp     → Orange
-    {  0, 255, 255},    // RampDown   → Cyan
-    {255, 255,   0},    // SampleHold → Yellow
-    {255,   0, 255},    // ExpRise    → Magenta
-    {255, 255, 255},    // ExpFall    → White
+    {255, 140,  20},    // Sine       → Warm amber (smooth, organic)
+    { 15, 220, 140},    // Triangle   → Soft teal (mellow)
+    { 20,  80, 255},    // Square     → Electric blue (sharp, digital)
+    {255,  80,   0},    // RampUp     → Deep orange (rising energy)
+    {  0, 200, 255},    // RampDown   → Cool cyan (falling)
+    {255, 220,   0},    // SampleHold → Bright yellow (chaotic)
+    {220,   0, 180},    // ExpRise    → Magenta (exotic)
+    {255, 200, 220},    // ExpFall    → Soft pink-white (ethereal)
 };
 static constexpr int NUM_COLORS = static_cast<int>(std::size(WAVEFORM_COLORS));
 
@@ -95,25 +95,51 @@ static uint32_t pack(RGB c)
          |  static_cast<uint32_t>(c.b);
 }
 
-// Frequency constants for pitch→saturation mapping
-static constexpr float FREQ_LO = 30.0f;
-static constexpr float FREQ_HI = 8000.0f;
-static const float LOG_FREQ_RANGE = std::log2(FREQ_HI / FREQ_LO);
+// ─── Gamma correction ────────────────────────────────────────────────
+//
+// WS2811/APA106 LEDs use PWM at the driver IC level. At very low duty
+// cycles the on-time becomes so short that individual PWM cycles are
+// perceptible as flicker. Gamma 2.2 correction + a minimum brightness
+// floor ensures smooth, flicker-free output at all brightness levels.
 
-// ─── Smoothing time constants (alpha per frame at ~20 Hz) ───────────
+static uint8_t gamma_lut[256];
+static bool    gamma_lut_ready = false;
+
+static void init_gamma_lut()
+{
+    if (gamma_lut_ready) return;
+    for (int i = 0; i < 256; i++) {
+        float norm = static_cast<float>(i) / 255.0f;
+        gamma_lut[i] = static_cast<uint8_t>(std::round(std::pow(norm, 2.2f) * 255.0f));
+    }
+    gamma_lut_ready = true;
+}
+
+// Apply minimum brightness floor + gamma correction.
+// Any nonzero channel below 3 is bumped to 3 so the WS2811 PWM
+// on-time is always long enough to avoid visible flicker.
+static RGB apply_gamma(RGB c)
+{
+    auto floor_ch = [](uint8_t v) -> uint8_t {
+        return (v > 0 && v < 3) ? 3 : v;
+    };
+    c = {floor_ch(c.r), floor_ch(c.g), floor_ch(c.b)};
+    return {gamma_lut[c.r], gamma_lut[c.g], gamma_lut[c.b]};
+}
+
+// ─── Smoothing time constants (alpha per frame at ~60 Hz) ───────────
 //
 // These define how "liquid" each parameter feels. Lower = smoother.
-// At 20 Hz update rate:
-//   alpha 0.06 ≈ 800ms to 95%  (very smooth, Microcosm-like)
-//   alpha 0.10 ≈ 500ms to 95%  (responsive but smooth)
-//   alpha 0.15 ≈ 330ms to 95%  (snappy)
-//   alpha 0.25 ≈ 200ms to 95%  (quick)
+// At 60 Hz update rate (16ms poll):
+//   alpha 0.020 ≈ 800ms to 95%  (very smooth, Microcosm-like)
+//   alpha 0.033 ≈ 500ms to 95%  (responsive but smooth)
+//   alpha 0.050 ≈ 330ms to 95%  (snappy)
+//   alpha 0.083 ≈ 200ms to 95%  (quick)
 
-static constexpr float COLOR_ALPHA      = 0.08f;  // color crossfade (~600ms)
-static constexpr float BRIGHTNESS_ALPHA = 0.10f;  // brightness envelope (~500ms)
-static constexpr float GATE_ALPHA       = 0.06f;  // gate on/off ramp (~800ms)
-static constexpr float DESAT_ALPHA      = 0.08f;  // pitch→saturation (~600ms)
-static constexpr float LFO_SMOOTH_ALPHA = 0.15f;  // LFO brightness (~330ms)
+static constexpr float COLOR_ALPHA      = 0.027f;  // color crossfade (~600ms)
+static constexpr float BRIGHTNESS_ALPHA = 0.033f;  // brightness envelope (~500ms)
+static constexpr float GATE_ALPHA       = 0.020f;  // gate on/off ramp (~800ms)
+static constexpr float LFO_SMOOTH_ALPHA = 0.050f;  // LFO brightness (~330ms)
 
 // ─── Implementation ─────────────────────────────────────────────────
 
@@ -129,12 +155,11 @@ struct LedDriver::Impl {
     RGBf     smooth_color = {0, 0, 0};      // current displayed color (pre-brightness)
     float    smooth_brightness = 0.08f;      // current brightness
     float    smooth_gate = 0.0f;             // 0=idle, 1=gate held (smoothed)
-    float    smooth_desat = 0.0f;            // pitch→desaturation
     float    smooth_lfo = 0.0f;              // smoothed LFO output
     bool     color_initialized = false;      // first frame flag
 
     // Frozen LFO value for LED — only updates while gate held or idle,
-    // NOT during release tail (~200ms freeze at ~20Hz update rate).
+    // NOT during release tail (~200ms freeze at ~60Hz update rate).
     float    led_lfo = 0.0f;
     bool     prev_gate = false;
     bool     releasing = false;
@@ -146,12 +171,18 @@ struct LedDriver::Impl {
     {
 #ifdef HAS_WS2811
         if (!hw_init) return;
-        strip.channel[0].leds[0] = pack(c);
+        RGB corrected = apply_gamma(c);
+        strip.channel[0].leds[0] = pack(corrected);
         ws2811_return_t ret = ws2811_render(&strip);
         if (ret != WS2811_SUCCESS) {
             if (render_err_count++ < 10)
                 slog("LED: render failed: %s", ws2811_get_return_t_str(ret));
+            return;
         }
+        // Double-render: second write ensures correct state even if
+        // encoder ground noise corrupted the first DMA transfer.
+        // Cost: ~30μs for a single LED (24 bits), negligible.
+        ws2811_render(&strip);
 #else
         (void)c;
 #endif
@@ -175,6 +206,8 @@ LedDriver::~LedDriver() { shutdown(); }
 
 bool LedDriver::init(int gpio_pin)
 {
+    init_gamma_lut();
+
 #ifdef HAS_WS2811
     auto& s = pimpl_->strip;
     s.freq   = WS2811_TARGET_FREQ;
@@ -234,7 +267,7 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
 {
     // AP idle mode: gentle white breathing
     if (pimpl_->ap_idle) {
-        pimpl_->ap_idle_phase += 0.015f;  // ~0.3 Hz — slower, more meditative
+        pimpl_->ap_idle_phase += 0.005f;  // ~0.3 Hz at 60 Hz update rate
         if (pimpl_->ap_idle_phase >= 1.0f)
             pimpl_->ap_idle_phase -= 1.0f;
 
@@ -243,8 +276,8 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
         float breath = 0.06f + 0.20f * (phase * phase) * (phase > 0 ? 1.0f : -0.3f);
         breath = std::clamp(breath, 0.04f, 0.26f);
 
-        // Smooth even the breathing output
-        pimpl_->smooth_brightness = smooth(pimpl_->smooth_brightness, breath, 0.15f);
+        // Smooth even the breathing output (alpha scaled for ~60 Hz)
+        pimpl_->smooth_brightness = smooth(pimpl_->smooth_brightness, breath, 0.050f);
         pimpl_->setLed(scale({255, 255, 255}, pimpl_->smooth_brightness));
         return;
     }
@@ -261,7 +294,7 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
     pimpl_->prev_gate = gate;
 
     if (pimpl_->releasing) {
-        if (++pimpl_->release_frames > 4)
+        if (++pimpl_->release_frames > 12)   // ~200ms at 60 Hz
             pimpl_->releasing = false;
     }
 
@@ -272,18 +305,6 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
     int idx = static_cast<int>(wave);
     if (idx < 0 || idx >= NUM_COLORS) idx = 0;
     RGBf target_color = RGBf::from(WAVEFORM_COLORS[idx]);
-
-    // ── Pitch → desaturation (smoothed) ────────────────────────────
-    float freq_clamped = std::clamp(freq, FREQ_LO, FREQ_HI);
-    float desat_target = std::log2(freq_clamped / FREQ_LO) / LOG_FREQ_RANGE;
-    desat_target *= 0.30f;
-    pimpl_->smooth_desat = smooth(pimpl_->smooth_desat, desat_target, DESAT_ALPHA);
-
-    // Apply desaturation toward white
-    float d = std::clamp(pimpl_->smooth_desat, 0.0f, 1.0f);
-    target_color.r = target_color.r + (255.0f - target_color.r) * d;
-    target_color.g = target_color.g + (255.0f - target_color.g) * d;
-    target_color.b = target_color.b + (255.0f - target_color.b) * d;
 
     // ── Smooth color crossfade ─────────────────────────────────────
     // On first frame, snap to target so we don't fade up from black
@@ -304,8 +325,9 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
     // At fast rates (>10 Hz): lighter smoothing so the LED can track.
     // The smoothing alpha scales with rate so the filter's cutoff
     // frequency rises proportionally with the LFO speed.
+    // (Values scaled for ~60 Hz update rate)
     float rate_factor = std::clamp(lfo_rate / 8.0f, 0.0f, 1.0f);  // 0→8 Hz maps to 0→1
-    float lfo_alpha = LFO_SMOOTH_ALPHA + (0.55f - LFO_SMOOTH_ALPHA) * rate_factor;
+    float lfo_alpha = LFO_SMOOTH_ALPHA + (0.183f - LFO_SMOOTH_ALPHA) * rate_factor;
 
     float lfo_target = (pimpl_->led_lfo + 1.0f) * 0.5f;  // map [-1,+1] → [0,1]
     pimpl_->smooth_lfo = smooth(pimpl_->smooth_lfo, lfo_target, lfo_alpha);
@@ -318,15 +340,16 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
     // rate_boost: 0 at slow rates, ramps to 1.0 above ~10 Hz.
     float rate_boost = std::clamp((lfo_rate - 5.0f) / 10.0f, 0.0f, 1.0f);
 
-    // Idle:   base 8%, LFO adds up to 15% at full depth
-    // Active: base 30%, LFO adds up to 45% at full depth
-    // At high rates: idle base → 12%, active base → 35%
-    float idle_base = (0.08f + 0.04f * rate_boost) * (1.0f - lfo_depth) + 0.01f * lfo_depth;
-    float idle_peak = 0.08f * (1.0f - lfo_depth) + 0.15f * lfo_depth;
+    // Idle:   base 10%, LFO adds up to 20% at full depth
+    // Active: base 35%, LFO adds up to 55% at full depth
+    // At high rates: idle base → 14%, active base → 40%
+    // (Raised vs previous values to compensate for gamma 2.2 compression)
+    float idle_base = (0.10f + 0.04f * rate_boost) * (1.0f - lfo_depth) + 0.02f * lfo_depth;
+    float idle_peak = 0.10f * (1.0f - lfo_depth) + 0.20f * lfo_depth;
     float idle_bright = idle_base + (idle_peak - idle_base) * pimpl_->smooth_lfo;
 
-    float gate_base = (0.30f + 0.05f * rate_boost) * (1.0f - lfo_depth) + 0.02f * lfo_depth;
-    float gate_peak = 0.30f * (1.0f - lfo_depth) + 0.45f * lfo_depth;
+    float gate_base = (0.35f + 0.05f * rate_boost) * (1.0f - lfo_depth) + 0.04f * lfo_depth;
+    float gate_peak = 0.35f * (1.0f - lfo_depth) + 0.55f * lfo_depth;
     float gate_bright = gate_base + (gate_peak - gate_base) * pimpl_->smooth_lfo;
 
     // Crossfade between idle and active brightness
