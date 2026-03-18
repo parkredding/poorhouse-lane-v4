@@ -128,7 +128,7 @@ bool LedDriver::init(int gpio_pin)
     s.channel[0].count      = 1;          // single LED
     s.channel[0].invert     = 0;
     s.channel[0].brightness = 255;        // we control brightness in software
-    s.channel[0].strip_type = WS2811_STRIP_RGB;
+    s.channel[0].strip_type = WS2811_STRIP_GRB;
 
     // Channel 1 unused
     s.channel[1].gpionum = 0;
