@@ -197,6 +197,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
 <div class="tabs">
   <div class="tab" onclick="showTab('live')">Live</div>
   <div class="tab active" onclick="showTab('presets')">Presets</div>
+  <div class="tab" onclick="showTab('encoders')">Encoders</div>
   <div class="tab" onclick="showTab('options')">Options</div>
   <div class="tab" onclick="showTab('wifi')">WiFi</div>
   <div class="tab" onclick="showTab('system')">System</div>
@@ -234,7 +235,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       </div>
       <div class="dsp-slider">
         <label>Rate</label>
-        <input type="range" id="dsp-lfo_rate" min="1" max="200" value="35" oninput="onDspSliderLog('lfo_rate',this.value,0.1,20)">
+        <input type="range" id="dsp-lfo_rate" min="0" max="1000" value="35" oninput="onDspSliderLog('lfo_rate',this.value,0.1,20)">
         <span class="dsp-val" id="dsp-lfo_rate-val">0.35 Hz</span>
       </div>
       <div class="dsp-slider">
@@ -252,7 +253,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       </div>
       <div class="dsp-slider">
         <label>Resonance</label>
-        <input type="range" id="dsp-filter_reso" min="0" max="95" value="0" oninput="onDspSliderPct('filter_reso',this.value,0.95)">
+        <input type="range" id="dsp-filter_reso" min="0" max="100" value="0" oninput="onDspSliderPct('filter_reso',this.value,0.95)">
         <span class="dsp-val" id="dsp-filter_reso-val">0%</span>
       </div>
     </div>
@@ -265,7 +266,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       </div>
       <div class="dsp-slider">
         <label>Feedback</label>
-        <input type="range" id="dsp-delay_feedback" min="0" max="95" value="55" oninput="onDspSliderPct('delay_feedback',this.value,0.95)">
+        <input type="range" id="dsp-delay_feedback" min="0" max="100" value="55" oninput="onDspSliderPct('delay_feedback',this.value,0.95)">
         <span class="dsp-val" id="dsp-delay_feedback-val">55%</span>
       </div>
       <div class="dsp-slider">
@@ -302,6 +303,30 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       <button class="btn btn-secondary" onclick="loadDspState()" style="flex:1">Refresh</button>
       <button class="btn btn-danger" onclick="confirmAction('Reset all parameters to factory defaults?',resetDefaults)" style="flex:1">Reset Defaults</button>
     </div>
+    <div class="dsp-group" style="margin-top:16px">
+      <h4>Save to Preset</h4>
+      <div class="dsp-slider">
+        <label>Bank</label>
+        <select id="live-save-bank" style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+          <option value="user">User</option>
+          <option value="standard">Standard</option>
+          <option value="experimental">Experimental</option>
+        </select>
+      </div>
+      <div class="dsp-slider">
+        <label>Slot</label>
+        <select id="live-save-slot" style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+          <option value="0">1</option><option value="1">2</option>
+          <option value="2">3</option><option value="3">4</option>
+        </select>
+      </div>
+      <div class="dsp-slider">
+        <label>Name</label>
+        <input type="text" id="live-save-name" placeholder="Preset name"
+               style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+      </div>
+      <button class="btn btn-primary" onclick="doLiveSave()" style="width:100%;margin-top:4px">Save Preset</button>
+    </div>
   </div>
 </div>
 
@@ -328,75 +353,64 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
   </div>
 </div>
 
-<!-- OPTIONS TAB -->
-<div id="options" class="panel">
+<!-- ENCODERS TAB -->
+<div id="encoders" class="panel">
   <div class="card">
-    <h3>Reverb Type</h3>
-    <div class="form-group">
-      <select id="reverb-type" onchange="onReverbTypeChange()">
-        <option value="0">Spring</option><option value="1">Plate</option>
-        <option value="2">Hall</option><option value="3">Schroeder</option>
-      </select>
+    <h3>Device Layout</h3>
+    <div id="enc-device" style="padding:12px 0;max-width:340px;margin:0 auto">
+      <div style="display:flex;justify-content:space-between;margin-bottom:16px">
+        <div style="flex:1;text-align:center">
+          <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">1</div>
+          <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a0">Frequency</div>
+          <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b0">LFO Depth</div>
+        </div>
+        <div style="flex:1;text-align:center">
+          <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">2</div>
+          <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a1">LFO Rate</div>
+          <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b1">Release</div>
+        </div>
+        <div style="flex:1;text-align:center">
+          <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">3</div>
+          <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a2">Filter</div>
+          <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b2">Resonance</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:16px">
+        <div style="flex:1;text-align:center">
+          <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">4</div>
+          <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a3">Delay Time</div>
+          <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b3">Delay Mix</div>
+        </div>
+        <div style="flex:1;text-align:center">
+          <div style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:var(--accent)">5</div>
+          <div style="font-size:0.55rem;color:var(--text-hi);font-weight:700" id="enc-label-a4">Delay FB</div>
+          <div style="font-size:0.5rem;color:var(--text-lo)" id="enc-label-b4">Reverb Mix</div>
+        </div>
+        <div style="flex:1;text-align:center">
+          <div style="display:inline-flex;flex-direction:column;border:2px solid var(--border);border-radius:4px;overflow:hidden;margin:0 auto 4px">
+            <div style="padding:4px 10px;font-size:0.45rem;font-weight:700;color:var(--text-lo);border-bottom:1px solid var(--border)">RISE</div>
+            <div style="padding:4px 10px;font-size:0.45rem;font-weight:700;color:var(--text-hi);background:var(--border)">OFF</div>
+            <div style="padding:4px 10px;font-size:0.45rem;font-weight:700;color:var(--text-lo);border-top:1px solid var(--border)">FALL</div>
+          </div>
+          <div style="font-size:0.5rem;color:var(--text-lo)">Pitch Env</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+        <div style="flex:1;text-align:center">
+          <div style="width:44px;height:28px;border:2px solid var(--text-lo);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:700;color:var(--text-lo)">PRESET</div>
+        </div>
+        <div style="flex:1;text-align:center">
+          <div style="width:44px;height:28px;border:2px solid var(--text-lo);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:700;color:var(--text-lo)">SHIFT</div>
+        </div>
+        <div style="flex:1;text-align:center">
+          <div style="width:44px;height:28px;border:2px solid var(--danger);border-radius:4px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:700;color:var(--danger)">TRIG</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:center;gap:16px;font-size:0.5rem;color:var(--text-lo)">
+        <span style="color:var(--text-hi)">A = Bank A</span>
+        <span>B = Bank B (Shift)</span>
+      </div>
     </div>
-  </div>
-  <div class="card">
-    <h3>Delay Type</h3>
-    <div class="form-group">
-      <select id="delay-type" onchange="onDelayTypeChange()">
-        <option value="0">Tape</option><option value="1">Digital</option>
-      </select>
-    </div>
-  </div>
-  <div class="card" id="tape-params">
-    <h3>Tape Parameters</h3>
-    <div class="form-group">
-      <label>Wobble <span class="range-val" id="wobble-val">100%</span></label>
-      <input type="range" id="wobble" min="0" max="100" value="100" oninput="updateRange('wobble')">
-    </div>
-    <div class="form-group">
-      <label>Flutter <span class="range-val" id="flutter-val">100%</span></label>
-      <input type="range" id="flutter" min="0" max="100" value="100" oninput="updateRange('flutter')">
-    </div>
-  </div>
-  <div class="card">
-    <h3>Effects Chain</h3>
-    <div class="form-group">
-      <select id="fx-chain">
-        <option value="0">Filter &rarr; Delay &rarr; Reverb</option>
-        <option value="1">Filter &rarr; Reverb &rarr; Delay</option>
-        <option value="2">Delay &rarr; Filter &rarr; Reverb</option>
-        <option value="3">Delay &rarr; Reverb &rarr; Filter</option>
-        <option value="4">Reverb &rarr; Filter &rarr; Delay</option>
-        <option value="5">Reverb &rarr; Delay &rarr; Filter</option>
-      </select>
-    </div>
-  </div>
-  <div class="card">
-    <h3>Settings</h3>
-    <div class="toggle-row"><span>Linked Pitch / LFO</span><label class="toggle"><input type="checkbox" id="lfo-link" checked><span class="slider"></span></label></div>
-    <div class="toggle-row"><span>Super Drip Reverb</span><label class="toggle"><input type="checkbox" id="super-drip" checked><span class="slider"></span></label></div>
-    <div class="toggle-row"><span>Filter Sweep</span>
-      <select id="sweep-dir" style="width:auto;padding:6px;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border)">
-        <option value="-1">Down (Dub)</option><option value="0">Flat</option><option value="1">Up (Bright)</option>
-      </select>
-    </div>
-  </div>
-  <div class="card">
-    <h3>Tape Saturator</h3>
-    <div class="form-group">
-      <label>Mix <span class="range-val" id="saturator-mix-val">0%</span></label>
-      <input type="range" id="saturator-mix" min="0" max="100" value="0" oninput="updateRange('saturator-mix')">
-    </div>
-    <div class="form-group">
-      <label>Drive <span class="range-val" id="saturator-drive-val">50%</span></label>
-      <input type="range" id="saturator-drive" min="0" max="100" value="50" oninput="updateRange('saturator-drive')">
-    </div>
-  </div>
-  <div class="card">
-    <h3>Modulation FX</h3>
-    <div class="form-group"><label>Phaser <span class="range-val" id="phaser-mix-val">0%</span></label><input type="range" id="phaser-mix" min="0" max="100" value="0" oninput="updateRange('phaser-mix')"></div>
-    <div class="form-group"><label>Chorus <span class="range-val" id="chorus-mix-val">0%</span></label><input type="range" id="chorus-mix" min="0" max="100" value="0" oninput="updateRange('chorus-mix')"></div>
-    <div class="form-group"><label>Flanger <span class="range-val" id="flanger-mix-val">0%</span></label><input type="range" id="flanger-mix" min="0" max="100" value="0" oninput="updateRange('flanger-mix')"></div>
   </div>
   <div class="card">
     <h3>Encoder Mapping</h3>
@@ -404,6 +418,104 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
     <div style="display:flex;gap:8px;margin-top:8px">
       <button class="btn btn-primary btn-sm" onclick="saveEncoderMap()">Save Mapping</button>
       <button class="btn btn-secondary btn-sm" onclick="resetEncoderMap()">Reset Default</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Parameter Sensitivity</h3>
+    <p style="font-size:0.6rem;color:var(--text-lo);margin-bottom:8px">Adjust how fast each parameter responds to encoder turns. Lower = finer control, higher = faster sweeps.</p>
+    <div id="sensitivity-list">Loading...</div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary btn-sm" onclick="saveSensitivity()">Save Sensitivity</button>
+      <button class="btn btn-secondary btn-sm" onclick="resetSensitivity()">Reset Default</button>
+    </div>
+  </div>
+</div>
+
+<!-- OPTIONS TAB -->
+<div id="options" class="panel">
+  <div class="card">
+    <h3>Signal Chain</h3>
+    <div class="dsp-group">
+      <h4>Routing</h4>
+      <div class="dsp-slider">
+        <label>FX Order</label>
+        <select id="fx-chain" style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+          <option value="0">Filter &rarr; Delay &rarr; Reverb (Default)</option>
+          <option value="1">Filter &rarr; Reverb &rarr; Delay</option>
+          <option value="2">Delay &rarr; Filter &rarr; Reverb</option>
+          <option value="3">Delay &rarr; Reverb &rarr; Filter</option>
+          <option value="4">Reverb &rarr; Filter &rarr; Delay</option>
+          <option value="5">Reverb &rarr; Delay &rarr; Filter</option>
+        </select>
+      </div>
+      <div class="dsp-slider">
+        <label>Reverb</label>
+        <select id="reverb-type" onchange="onReverbTypeChange()" style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+          <option value="0">Spring</option><option value="1">Plate</option>
+          <option value="2">Hall</option><option value="3">Schroeder</option>
+        </select>
+      </div>
+      <div class="dsp-slider">
+        <label>Delay</label>
+        <select id="delay-type" onchange="onDelayTypeChange()" style="flex:1;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border);padding:4px">
+          <option value="0">Tape</option><option value="1">Digital</option>
+        </select>
+      </div>
+    </div>
+    <div class="dsp-group" id="tape-params">
+      <h4>Tape Delay</h4>
+      <div class="dsp-slider">
+        <label>Wobble</label>
+        <input type="range" id="wobble" min="0" max="100" value="100" oninput="updateRange('wobble')">
+        <span class="dsp-val" id="wobble-val">100%</span>
+      </div>
+      <div class="dsp-slider">
+        <label>Flutter</label>
+        <input type="range" id="flutter" min="0" max="100" value="100" oninput="updateRange('flutter')">
+        <span class="dsp-val" id="flutter-val">100%</span>
+      </div>
+    </div>
+    <div class="dsp-group">
+      <h4>Tape Saturator</h4>
+      <div class="dsp-slider">
+        <label>Mix</label>
+        <input type="range" id="saturator-mix" min="0" max="100" value="0" oninput="updateRange('saturator-mix')">
+        <span class="dsp-val" id="saturator-mix-val">0%</span>
+      </div>
+      <div class="dsp-slider">
+        <label>Drive</label>
+        <input type="range" id="saturator-drive" min="0" max="100" value="50" oninput="updateRange('saturator-drive')">
+        <span class="dsp-val" id="saturator-drive-val">50%</span>
+      </div>
+    </div>
+    <div class="dsp-group">
+      <h4>Modulation FX</h4>
+      <div class="dsp-slider">
+        <label>Phaser</label>
+        <input type="range" id="phaser-mix" min="0" max="100" value="0" oninput="updateRange('phaser-mix')">
+        <span class="dsp-val" id="phaser-mix-val">0%</span>
+      </div>
+      <div class="dsp-slider">
+        <label>Chorus</label>
+        <input type="range" id="chorus-mix" min="0" max="100" value="0" oninput="updateRange('chorus-mix')">
+        <span class="dsp-val" id="chorus-mix-val">0%</span>
+      </div>
+      <div class="dsp-slider">
+        <label>Flanger</label>
+        <input type="range" id="flanger-mix" min="0" max="100" value="0" oninput="updateRange('flanger-mix')">
+        <span class="dsp-val" id="flanger-mix-val">0%</span>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Behavior</h3>
+    <div class="toggle-row"><span>Linked Pitch / LFO</span><label class="toggle"><input type="checkbox" id="lfo-link" checked><span class="slider"></span></label></div>
+    <div class="toggle-row"><span>Super Drip Reverb</span><label class="toggle"><input type="checkbox" id="super-drip" checked><span class="slider"></span></label></div>
+    <div class="dsp-slider" style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <label style="min-width:auto;flex:1">Filter Sweep</label>
+      <select id="sweep-dir" style="width:auto;padding:6px;font-family:var(--font);font-size:0.75rem;background:var(--bg);color:var(--text-hi);border:1px solid var(--border)">
+        <option value="-1">Down (Dub)</option><option value="0">Flat</option><option value="1">Up (Bright)</option>
+      </select>
     </div>
   </div>
   <button class="btn btn-primary btn-block" onclick="applyOptions()" style="margin-top:8px">Apply Options</button>
@@ -450,29 +562,36 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
     </div>
   </div>
   <div class="card">
-    <h3>System Log</h3>
-    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
-      <label style="font-size:0.7rem;color:var(--text-lo);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="syslog-auto" checked onchange="toggleSyslogAuto()"> Auto-refresh</label>
-      <button class="btn btn-secondary btn-sm" onclick="loadSysLog()" style="font-size:0.6rem;padding:3px 8px;margin-left:auto">Refresh</button>
+    <div style="display:flex;align-items:center;cursor:pointer" onclick="var b=document.getElementById('syslog-body');var a=document.getElementById('syslog-arrow');if(b.style.display==='none'){b.style.display='block';a.textContent='\\u25BC'}else{b.style.display='none';a.textContent='\\u25B6'}">
+      <h3 style="margin:0">System Log <span id="syslog-arrow" style="font-size:0.6rem">&#9654;</span></h3>
     </div>
-    <pre id="syslog-content" style="background:var(--bg);border:1px solid var(--border);padding:10px;max-height:250px;overflow:auto;font-family:var(--font);font-size:0.6rem;line-height:1.6;color:var(--text);white-space:pre-wrap;word-break:break-all"></pre>
-  </div>
-  <div class="card">
-    <h3>Shell</h3>
-    <pre id="shell-output" style="background:#111;border:1px solid var(--border);padding:10px;max-height:300px;min-height:80px;overflow:auto;font-family:monospace;font-size:0.65rem;line-height:1.5;color:#0f0;white-space:pre-wrap;word-break:break-all"></pre>
-    <div style="display:flex;gap:6px;margin-top:8px">
-      <input type="text" id="shell-cmd" placeholder="Enter command..." style="flex:1;padding:8px;font-family:monospace;font-size:0.8rem;background:var(--bg);border:1px solid var(--border);color:var(--text)" onkeydown="if(event.key==='Enter')runShell()" autocomplete="off" autocorrect="off" spellcheck="false">
-      <button class="btn btn-primary btn-sm" onclick="runShell()" id="btn-shell-run">Run</button>
+    <div id="syslog-body" style="display:none;margin-top:10px">
+      <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+        <label style="font-size:0.7rem;color:var(--text-lo);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="syslog-auto" checked onchange="toggleSyslogAuto()"> Auto-refresh</label>
+        <button class="btn btn-secondary btn-sm" onclick="loadSysLog()" style="font-size:0.6rem;padding:3px 8px;margin-left:auto">Refresh</button>
+      </div>
+      <pre id="syslog-content" style="background:var(--bg);border:1px solid var(--border);padding:10px;max-height:250px;overflow:auto;font-family:var(--font);font-size:0.6rem;line-height:1.6;color:var(--text);white-space:pre-wrap;word-break:break-all"></pre>
     </div>
   </div>
   <div class="card">
     <h3>Updates</h3>
     <p id="version-info" style="color:var(--text-lo);margin-bottom:8px;font-size:0.75rem">--</p>
+    <div id="main-update-notice" style="display:none;background:var(--bg);border:1px solid var(--accent);padding:10px;margin-bottom:12px">
+      <p id="main-update-text" style="color:var(--accent);font-size:0.75rem;font-weight:700;margin-bottom:8px"></p>
+      <button class="btn btn-primary btn-sm" onclick="revertToMain()">Revert to main</button>
+    </div>
     <div class="form-group">
       <label>Branch</label>
       <select id="update-branch" style="width:100%;padding:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem">
         <option value="main">main</option>
       </select>
+      <div id="branch-warn-toggle" style="margin-top:6px">
+        <span onclick="document.getElementById('branch-warn-toggle').style.display='none';document.getElementById('branch-warn-confirm').style.display='block'" style="font-size:0.6rem;color:var(--text-lo);cursor:pointer;text-decoration:underline">Show experimental branches</span>
+      </div>
+      <div id="branch-warn-confirm" style="display:none;margin-top:6px">
+        <p style="color:var(--danger);font-size:0.7rem;margin-bottom:8px">Experimental branches are untested and may cause unexpected behavior or require a full reflash to recover.</p>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('branch-warn-confirm').style.display='none';loadBranches()" style="color:var(--danger);border-color:var(--danger);font-size:0.55rem">I understand, show all branches</button>
+      </div>
     </div>
     <button class="btn btn-secondary" onclick="checkUpdate()" id="btn-check">Check for Updates</button>
     <div id="update-result" style="margin-top:12px"></div>
@@ -510,6 +629,24 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       <input type="file" id="restore-file" accept=".json" style="font-size:0.75rem">
     </div>
     <button class="btn btn-secondary" onclick="confirmAction('Restore will overwrite all presets. Continue?',restoreBackup)">Restore</button>
+  </div>
+  <div class="card">
+    <h3>Shell</h3>
+    <div id="shell-warn1">
+      <p style="color:var(--danger);font-size:0.75rem;margin-bottom:10px">Running shell commands can permanently damage your device.</p>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('shell-warn1').style.display='none';document.getElementById('shell-warn2').style.display='block'" style="color:var(--danger);border-color:var(--danger)">I understand, continue</button>
+    </div>
+    <div id="shell-warn2" style="display:none">
+      <p style="color:var(--danger);font-size:0.75rem;font-weight:700;margin-bottom:10px">WARNING: Incorrect commands can brick this device and require a full reflash. Are you sure you want to proceed?</p>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('shell-warn2').style.display='none';document.getElementById('shell-actual').style.display='block'" style="color:var(--danger);border-color:var(--danger)">Yes, open shell</button>
+    </div>
+    <div id="shell-actual" style="display:none">
+      <pre id="shell-output" style="background:#111;border:1px solid var(--border);padding:10px;max-height:300px;min-height:80px;overflow:auto;font-family:monospace;font-size:0.65rem;line-height:1.5;color:#0f0;white-space:pre-wrap;word-break:break-all"></pre>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <input type="text" id="shell-cmd" placeholder="Enter command..." style="flex:1;padding:8px;font-family:monospace;font-size:0.8rem;background:var(--bg);border:1px solid var(--border);color:var(--text)" onkeydown="if(event.key==='Enter')runShell()" autocomplete="off" autocorrect="off" spellcheck="false">
+        <button class="btn btn-primary btn-sm" onclick="runShell()" id="btn-shell-run">Run</button>
+      </div>
+    </div>
   </div>
   <div class="card">
     <button class="btn btn-danger btn-block" onclick="exitAP()">Return to Siren Mode</button>
@@ -589,14 +726,16 @@ function showTab(id) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById(id).classList.add('active');
-  const tabs = ['live','presets','options','wifi','system'];
+  const tabs = ['live','presets','encoders','options','wifi','system'];
   const tabEls = document.querySelectorAll('.tab');
   tabs.forEach((t, i) => { if (t === id && tabEls[i]) tabEls[i].classList.add('active'); });
   if (id !== 'system' && typeof stopSyslogPoll === 'function') stopSyslogPoll();
   if (id === 'live') { loadDspState(); startLivePoll(); } else { stopLivePoll(); }
+  if (id === 'presets') { loadPresets(); startPresetPoll(); } else { stopPresetPoll(); }
   if (id === 'wifi') { loadWifiStatus(); checkWifiTestResult(); }
-  if (id === 'system') { loadSystemInfo(); loadBranches(); loadSysLog(); startSyslogPoll(); }
-  if (id === 'options') { loadEncoderMap(); }
+  if (id === 'system') { loadSystemInfo(); loadSysLog(); startSyslogPoll(); }
+  if (id === 'encoders') { loadEncoderMap(); loadSensitivity(); }
+  if (id === 'options') { }
 }
 
 // Toast
@@ -609,6 +748,26 @@ function toast(msg, err, duration) {
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function syncPresetHighlight(newBank, newPreset) {
+  if (newBank !== undefined && newPreset !== undefined &&
+      (newBank !== activeBank || newPreset !== activePreset)) {
+    document.querySelectorAll('.slot.active-slot').forEach(function(el){el.classList.remove('active-slot')});
+    document.querySelectorAll('.led.active').forEach(function(el){el.classList.remove('active')});
+    document.querySelectorAll('.slot-btn.active').forEach(function(el){el.classList.remove('active')});
+    activeBank = newBank; activePreset = newPreset;
+    var newBankName = BANK_NAMES[activeBank];
+    var sl = document.getElementById('slot-'+newBankName+'-'+activePreset);
+    if (sl) {
+      sl.classList.add('active-slot');
+      var led = sl.querySelector('.led'); if (led) led.classList.add('active');
+      var btn = sl.querySelector('.slot-btn'); if (btn) btn.classList.add('active');
+    }
+    document.querySelectorAll('.slot.target-slot').forEach(function(el){el.classList.remove('target-slot')});
+    targetBank = newBankName; targetSlot = activePreset;
+    if (sl) sl.classList.add('target-slot');
+  }
+}
 
 // Live DSP Controls
 function applyDspState(d, force) {
@@ -661,6 +820,8 @@ function applyDspState(d, force) {
   if (force || !activeDragging.has('pitch_env')) {
     updatePitchEnvUI(d.pitch_env || 0);
   }
+  // Sync preset highlight with hardware button presses
+  syncPresetHighlight(d.active_bank, d.active_preset);
 }
 
 async function loadDspState() {
@@ -683,6 +844,18 @@ async function pollDspState() {
 }
 function startLivePoll() { if (!livePollTimer) livePollTimer = setInterval(pollDspState, 200); }
 function stopLivePoll() { if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; } }
+
+let presetPollTimer = null;
+function startPresetPoll() { if (!presetPollTimer) presetPollTimer = setInterval(pollPresetState, 500); }
+function stopPresetPoll() { if (presetPollTimer) { clearInterval(presetPollTimer); presetPollTimer = null; } }
+async function pollPresetState() {
+  try {
+    const r = await fetch('/api/dsp/state', {signal: AbortSignal.timeout(2000)});
+    if (!r.ok) return;
+    const d = await r.json();
+    syncPresetHighlight(d.active_bank, d.active_preset);
+  } catch(e) {}
+}
 
 function setLogSlider(name, value, min, max) {
   // Map log value to 0-1000 slider position
@@ -746,6 +919,17 @@ async function resetDefaults() {
   } catch(e) { toast('Error: '+e, true); }
 }
 
+async function doLiveSave() {
+  const bank = document.getElementById('live-save-bank').value;
+  const slot = document.getElementById('live-save-slot').value;
+  const name = document.getElementById('live-save-name').value || 'Preset';
+  try {
+    const r = await fetch('/api/presets/bank/save', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'bank='+bank+'&slot='+slot+'&name='+encodeURIComponent(name)});
+    if (r.ok) { toast('Saved to '+bank+' slot '+(parseInt(slot)+1)); loadPresets(); }
+    else toast('Save failed', true);
+  } catch(e) { toast('Error: '+e, true); }
+}
+
 // Options
 function onReverbTypeChange() {}
 function onDelayTypeChange() {
@@ -759,8 +943,10 @@ function updateRange(id) {
 // Presets
 function selectTargetSlot(bank, slot) {
   if (targetBank === bank && targetSlot === slot) {
-    targetBank = null; targetSlot = null;
     document.querySelectorAll('.slot.target-slot').forEach(el => el.classList.remove('target-slot'));
+    targetBank = BANK_NAMES[activeBank]; targetSlot = activePreset;
+    const ae = document.getElementById('slot-'+targetBank+'-'+targetSlot);
+    if (ae) ae.classList.add('target-slot');
     document.getElementById('library-browser').style.display = 'none';
     document.getElementById('target-hint').textContent = 'Tap a slot to select it, then pick a preset below';
     return;
@@ -883,6 +1069,11 @@ async function loadPresets() {
     renderBankSlots('user', d.user||[], 'slot-grid-user');
     renderBankSlots('standard', d.standard||[], 'slot-grid-standard');
     renderBankSlots('experimental', d.experimental||[], 'slot-grid-experimental');
+    if (targetBank === null) {
+      targetBank = BANK_NAMES[activeBank]; targetSlot = activePreset;
+      const ae = document.getElementById('slot-'+targetBank+'-'+targetSlot);
+      if (ae) ae.classList.add('target-slot');
+    }
     buildCategoryDropdown(d);
   } catch(e) { console.error(e); }
 }
@@ -942,6 +1133,17 @@ async function applyOptions() {
 }
 
 // Encoder mapping
+function updateDeviceDiagram() {
+  for (let i = 0; i < 5; i++) {
+    const aEl = document.getElementById('enc-a'+i);
+    const bEl = document.getElementById('enc-b'+i);
+    const aLabel = document.getElementById('enc-label-a'+i);
+    const bLabel = document.getElementById('enc-label-b'+i);
+    if (aEl && aLabel && encoderParams[aEl.value]) aLabel.textContent = encoderParams[aEl.value].label;
+    if (bEl && bLabel && encoderParams[bEl.value]) bLabel.textContent = encoderParams[bEl.value].label;
+  }
+}
+
 async function loadEncoderMap() {
   try {
     const r = await fetch('/api/encoders/map');
@@ -954,14 +1156,15 @@ async function loadEncoderMap() {
       const opts = encoderParams.map((p,pi) =>
         '<option value="'+pi+'">'+esc(p.label)+'</option>').join('');
       html += '<tr><td style="color:var(--text-hi);font-weight:700">Enc '+(i+1)+'</td>'+
-        '<td><select id="enc-a'+i+'">'+opts+'</select></td>'+
-        '<td><select id="enc-b'+i+'">'+opts+'</select></td></tr>';
+        '<td><select id="enc-a'+i+'" onchange="updateDeviceDiagram()">'+opts+'</select></td>'+
+        '<td><select id="enc-b'+i+'" onchange="updateDeviceDiagram()">'+opts+'</select></td></tr>';
     }
     document.getElementById('enc-table').innerHTML = html;
     for (let i = 0; i < 5; i++) {
       document.getElementById('enc-a'+i).value = ba[i];
       document.getElementById('enc-b'+i).value = bb[i];
     }
+    updateDeviceDiagram();
   } catch(e) { console.error(e); }
 }
 
@@ -984,6 +1187,57 @@ function resetEncoderMap() {
     document.getElementById('enc-b'+i).value = i+5;
   }
   saveEncoderMap();
+  updateDeviceDiagram();
+}
+
+// Sensitivity
+let sensitivityData = [];
+async function loadSensitivity() {
+  try {
+    const r = await fetch('/api/encoders/sensitivity');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    sensitivityData = d.params || [];
+    let html = '';
+    sensitivityData.forEach((p, i) => {
+      const pct = Math.round(((p.sensitivity - 0.25) / 3.75) * 100);
+      html += '<div class="dsp-slider"><label style="min-width:120px">'+esc(p.label)+'</label>'+
+        '<input type="range" min="0" max="100" value="'+pct+'" id="sens-'+i+'" oninput="updateSensVal('+i+')">'+
+        '<span class="dsp-val" id="sens-val-'+i+'">'+(p.sensitivity).toFixed(2)+'x</span></div>';
+    });
+    document.getElementById('sensitivity-list').innerHTML = html;
+  } catch(e) { document.getElementById('sensitivity-list').textContent = 'Failed to load'; }
+}
+
+function updateSensVal(i) {
+  const pct = parseInt(document.getElementById('sens-'+i).value);
+  const val = 0.25 + (pct / 100) * 3.75;
+  document.getElementById('sens-val-'+i).textContent = val.toFixed(2)+'x';
+}
+
+async function saveSensitivity() {
+  let body = '';
+  for (let i = 0; i < sensitivityData.length; i++) {
+    const pct = parseInt(document.getElementById('sens-'+i).value);
+    const val = 0.25 + (pct / 100) * 3.75;
+    if (i > 0) body += '&';
+    body += 's'+i+'='+val.toFixed(6);
+  }
+  try {
+    const r = await fetch('/api/encoders/sensitivity', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
+    if (r.ok) toast('Sensitivity saved'); else toast('Save failed',true);
+  } catch(e) { toast('Error: '+e,true); }
+}
+
+function resetSensitivity() {
+  const defaults = [1.00, 0.55, 0.51, 1.00, 0.25, 0.78, 1.00, 1.00, 0.44, 0.44, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+  sensitivityData.forEach((p, i) => {
+    const def = defaults[i] !== undefined ? defaults[i] : 1.0;
+    const pct = Math.round(((def - 0.25) / 3.75) * 100);
+    document.getElementById('sens-'+i).value = pct;
+    document.getElementById('sens-val-'+i).textContent = def.toFixed(2)+'x';
+  });
+  saveSensitivity();
 }
 
 // WiFi
@@ -1087,9 +1341,34 @@ async function loadSystemInfo() {
     // Update version line in Updates card
     const verEl = document.getElementById('version-info');
     if (verEl && sys.git_branch) verEl.textContent = sys.git_branch + ' @ ' + sys.git_commit;
+    // Auto-check if main is ahead when on a non-main branch
+    if (sys.git_branch && sys.git_branch !== 'main') checkMainUpdate();
   } catch(e) {
     document.getElementById('sys-cpu').textContent = 'Error';
   }
+}
+
+async function checkMainUpdate() {
+  try {
+    const r = await fetch('/api/update/check', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'branch=main'});
+    const d = await r.json();
+    const notice = document.getElementById('main-update-notice');
+    if (d.available && d.count > 0) {
+      var dateStr = '';
+      if (d.latest_date) { var dt = new Date(d.latest_date); if (!isNaN(dt)) dateStr = ' (merged '+dt.toLocaleDateString()+')'; }
+      document.getElementById('main-update-text').textContent = 'Device update available: '+d.count+' new commit(s) on main'+dateStr;
+      notice.style.display = 'block';
+    } else {
+      notice.style.display = 'none';
+    }
+  } catch(e) {}
+}
+
+function revertToMain() {
+  confirmAction('Revert to main branch? This will replace the current firmware with the latest stable release.', function() {
+    document.getElementById('update-branch').value = 'main';
+    installUpdate();
+  });
 }
 
 // System Log
@@ -1383,8 +1662,9 @@ document.querySelectorAll('#live input[type=range]').forEach(el => {
 
 // Pause live poll when browser tab is hidden
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopLivePoll();
+  if (document.hidden) { stopLivePoll(); stopPresetPoll(); }
   else if (document.getElementById('live').classList.contains('active')) startLivePoll();
+  else if (document.getElementById('presets').classList.contains('active')) startPresetPoll();
 });
 </script>
 </body>

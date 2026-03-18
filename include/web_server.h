@@ -61,6 +61,10 @@ struct Callbacks {
     std::function<std::string()> get_encoder_map;
     std::function<bool(const std::string& json)> set_encoder_map;
 
+    // Encoder sensitivity
+    std::function<std::string()> get_encoder_sensitivity;
+    std::function<bool(const std::string& body)> set_encoder_sensitivity;
+
     // WiFi operations
     std::function<std::string()> wifi_scan;
     std::function<bool(const std::string& ssid, const std::string& password)> wifi_connect;

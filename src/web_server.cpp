@@ -478,6 +478,23 @@ static void setup_api(httplib::Server& svr)
         }
     });
 
+    svr.Get("/api/encoders/sensitivity", [](const httplib::Request&, httplib::Response& res) {
+        if (g_callbacks.get_encoder_sensitivity) {
+            json_response(res, g_callbacks.get_encoder_sensitivity());
+        } else {
+            json_error(res, "not implemented", 501);
+        }
+    });
+
+    svr.Post("/api/encoders/sensitivity", [](const httplib::Request& req, httplib::Response& res) {
+        if (!g_callbacks.set_encoder_sensitivity) { json_error(res, "not implemented", 501); return; }
+        if (g_callbacks.set_encoder_sensitivity(req.body)) {
+            json_ok(res, "saved");
+        } else {
+            json_error(res, "failed to save sensitivity");
+        }
+    });
+
     // ── WiFi operations ─────────────────────────────────────────────
 
     svr.Get("/api/wifi/scan", [](const httplib::Request&, httplib::Response& res) {

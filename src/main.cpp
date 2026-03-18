@@ -47,6 +47,7 @@
 #include <chrono>
 #include <mutex>
 #include <string>
+#include <sstream>
 #include <thread>
 #include <map>
 
@@ -193,6 +194,16 @@ static constexpr int NUM_PARAMS = sizeof(PARAM_TABLE) / sizeof(PARAM_TABLE[0]);
 static int g_encoder_map_a[5] = {0, 1, 2, 3, 4};  // freq, lfo_rate, cutoff, delay_time, delay_fb
 static int g_encoder_map_b[5] = {5, 6, 7, 8, 9};  // lfo_depth, release, reso, delay_mix, reverb_mix
 static std::mutex g_encoder_map_mutex;
+
+// Per-parameter sensitivity multipliers (scales acceleration curve)
+// Tuned defaults: lower values for fine control (pitch, feedback), higher for broad sweeps
+static float g_param_sensitivity[17] = {
+    1.00f, 0.55f, 0.51f, 1.00f, 0.25f,   // freq, lfo_rate, cutoff, delay_time, delay_fb
+    0.78f, 1.00f, 1.00f, 0.44f, 0.44f,   // lfo_depth, release, reso, delay_mix, reverb_mix
+    1.0f, 1.0f, 1.0f, 1.0f, 1.0f,        // phaser, chorus, flanger, sat_mix, sat_drive
+    1.0f, 1.0f                             // tape_wobble, tape_flutter
+};
+static std::mutex g_sensitivity_mutex;
 
 static std::atomic<float>* param_atomic_for(const char* name) {
     static const std::map<std::string, std::atomic<float>*> param_map = {
@@ -1050,6 +1061,13 @@ static void save_siren_config()
             fprintf(f, "enc_b%d=%d\n", i, g_encoder_map_b[i]);
     }
 
+    // Parameter sensitivity
+    {
+        std::lock_guard<std::mutex> lk(g_sensitivity_mutex);
+        for (int i = 0; i < NUM_PARAMS; i++)
+            fprintf(f, "sens_%d=%.6f\n", i, g_param_sensitivity[i]);
+    }
+
     fflush(f);
     fsync(fileno(f));
     fclose(f);
@@ -1170,6 +1188,16 @@ static void load_siren_config()
             int idx = key[5] - '0';
             int v = atoi(val);
             if (v >= 0 && v < NUM_PARAMS) g_encoder_map_b[idx] = v;
+        }
+        else if (strncmp(key, "sens_", 5) == 0) {
+            int idx = atoi(key + 5);
+            if (idx >= 0 && idx < NUM_PARAMS) {
+                float v = static_cast<float>(atof(val));
+                if (v >= 0.25f && v <= 4.0f) {
+                    std::lock_guard<std::mutex> lk(g_sensitivity_mutex);
+                    g_param_sensitivity[idx] = v;
+                }
+            }
         }
     }
 
@@ -1891,22 +1919,34 @@ static float encoder_accel(int id)
 {
     using clock = std::chrono::steady_clock;
     static clock::time_point prev[gpio::NUM_ENCODERS] = {};
+    static float smoothed[gpio::NUM_ENCODERS] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 
     auto now   = clock::now();
     auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(
                      now - prev[id]).count();
     prev[id] = now;
 
-    if (delta > 200) return 1.0f;           // first event or long pause
+    float raw;
+    if (delta > 200) {
+        raw = 1.0f;           // first event or long pause
+    } else {
+        constexpr long  SLOW_MS  = 120;         // threshold for 1× (deliberate)
+        constexpr long  FAST_MS  = 25;          // threshold for max (fast spin)
+        constexpr float MAX_MULT = 4.0f;
 
-    constexpr long  SLOW_MS  = 120;         // threshold for 1× (deliberate)
-    constexpr long  FAST_MS  = 25;          // threshold for max (fast spin)
-    constexpr float MAX_MULT = 4.0f;
+        float t = static_cast<float>(SLOW_MS - delta)
+                / static_cast<float>(SLOW_MS - FAST_MS);
+        t = std::clamp(t, 0.0f, 1.0f);
+        raw = 1.0f + t * (MAX_MULT - 1.0f);
+    }
 
-    float t = static_cast<float>(SLOW_MS - delta)
-            / static_cast<float>(SLOW_MS - FAST_MS);
-    t = std::clamp(t, 0.0f, 1.0f);
-    return 1.0f + t * (MAX_MULT - 1.0f);
+    // Exponential smoothing: fast attack, slow decay
+    constexpr float SMOOTH_UP   = 0.6f;   // ramp up quickly (responsive)
+    constexpr float SMOOTH_DOWN = 0.15f;   // ramp down gently (no jarring drop)
+    float alpha = (raw > smoothed[id]) ? SMOOTH_UP : SMOOTH_DOWN;
+    smoothed[id] += alpha * (raw - smoothed[id]);
+
+    return smoothed[id];
 }
 
 // ─── Multi-click detector ────────────────────────────────────────────
@@ -2665,6 +2705,15 @@ static web_server::Callbacks build_web_callbacks()
 
     set_upd("idle", 0);
 
+    // Sanitize branch names to prevent command injection via popen/system
+    auto sanitize_branch = [](const std::string& branch) -> std::string {
+        std::string safe;
+        for (char c : branch) {
+            if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '/') safe += c;
+        }
+        return safe;
+    };
+
     cb.update_branches = []() -> std::string {
         // Fetch all remotes first
         system(("cd " + repo_root + " && git fetch --all 2>/dev/null").c_str());
@@ -2691,7 +2740,8 @@ static web_server::Callbacks build_web_callbacks()
         return json;
     };
 
-    cb.update_check = [](const std::string& branch) -> std::string {
+    cb.update_check = [sanitize_branch](const std::string& raw_branch) -> std::string {
+        std::string branch = sanitize_branch(raw_branch);
         slog("UPDATE: Checking branch '%s' in %s", branch.c_str(), repo_root.c_str());
 
         // Log current HEAD
@@ -2748,11 +2798,24 @@ static web_server::Callbacks build_web_callbacks()
 
         slog("UPDATE: %d new commit(s) on origin/%s", count, branch.c_str());
 
+        // Get date of latest commit on the remote branch
+        std::string date_str;
+        {
+            std::string dc = "cd " + repo_root + " && git log -1 --format=%ci origin/" + branch + " 2>/dev/null";
+            FILE* dp = popen(dc.c_str(), "r");
+            char dbuf[64] = {};
+            if (dp) { fgets(dbuf, sizeof(dbuf), dp); pclose(dp); }
+            size_t dl = strlen(dbuf); if (dl > 0 && dbuf[dl-1] == '\n') dbuf[dl-1] = '\0';
+            date_str = dbuf;
+        }
+
         return "{\"available\":" + std::string(count > 0 ? "true" : "false") +
-               ",\"count\":" + std::to_string(count) + "}";
+               ",\"count\":" + std::to_string(count) +
+               ",\"latest_date\":\"" + date_str + "\"}";
     };
 
-    cb.update_install = [set_upd, log_append](const std::string& branch) -> bool {
+    cb.update_install = [set_upd, log_append, sanitize_branch](const std::string& raw_branch) -> bool {
+        std::string branch = sanitize_branch(raw_branch);
         // Reject if already running
         bool expected = false;
         if (!upd_running.compare_exchange_strong(expected, true))
@@ -3346,6 +3409,48 @@ static web_server::Callbacks build_web_callbacks()
         return true;
     };
 
+    // ── Encoder sensitivity ────────────────────────────────────────
+    cb.get_encoder_sensitivity = []() -> std::string {
+        std::lock_guard<std::mutex> lk(g_sensitivity_mutex);
+        std::string json = "{\"params\":[";
+        for (int i = 0; i < NUM_PARAMS; i++) {
+            if (i > 0) json += ",";
+            char buf[128];
+            snprintf(buf, sizeof(buf), "{\"name\":\"%s\",\"label\":\"%s\",\"sensitivity\":%.6f}",
+                     PARAM_TABLE[i].name, PARAM_TABLE[i].label, g_param_sensitivity[i]);
+            json += buf;
+        }
+        json += "]}";
+        return json;
+    };
+
+    cb.set_encoder_sensitivity = [](const std::string& body) -> bool {
+        // Parse form body into key=value map
+        std::map<std::string, std::string> params;
+        std::istringstream stream(body);
+        std::string pair;
+        while (std::getline(stream, pair, '&')) {
+            auto eq = pair.find('=');
+            if (eq != std::string::npos)
+                params[pair.substr(0, eq)] = pair.substr(eq + 1);
+        }
+        auto get_val = [&](const std::string& key) -> float {
+            auto it = params.find(key);
+            if (it == params.end()) return -1.0f;
+            return static_cast<float>(atof(it->second.c_str()));
+        };
+        {
+            std::lock_guard<std::mutex> lk(g_sensitivity_mutex);
+            for (int i = 0; i < NUM_PARAMS; i++) {
+                float v = get_val("s" + std::to_string(i));
+                if (v >= 0.25f && v <= 4.0f) g_param_sensitivity[i] = v;
+            }
+        }
+        save_siren_config();
+        slog("WEB: Encoder sensitivity updated");
+        return true;
+    };
+
     cb.get_system_log = []() -> std::string {
         return siren_log::to_json();
     };
@@ -3777,14 +3882,17 @@ int main(int argc, char *argv[])
         if (!atom) return;
 
         float val = atom->load();
+        float sens;
+        {
+            std::lock_guard<std::mutex> lk(g_sensitivity_mutex);
+            sens = g_param_sensitivity[param_idx];
+        }
+        float eff_accel = 1.0f + (accel - 1.0f) * sens;
         if (p.is_log) {
-            // Freq gets halved acceleration for cleaner sweeps
-            float eff_accel = (param_idx == 0)
-                ? 1.0f + (accel - 1.0f) * 0.5f : accel;
             float step = std::pow(p.step, eff_accel);
             val *= (dir > 0) ? step : (1.0f / step);
         } else {
-            val += dir * p.step * accel;
+            val += dir * p.step * eff_accel;
         }
         val = std::clamp(val, p.min_val, p.max_val);
         atom->store(val);
