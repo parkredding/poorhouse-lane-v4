@@ -375,9 +375,8 @@ CPUSchedulingPriority=80
 Nice=-20
 LimitRTPRIO=99
 LimitMEMLOCK=infinity
-User=${REAL_USER}
+User=root
 Environment=HOME=${REAL_HOME}
-AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_SYS_RAWIO CAP_DAC_OVERRIDE
 
 [Install]
 WantedBy=multi-user.target
