@@ -78,6 +78,7 @@
 #include "web_server.h"
 #include "led_driver.h"
 #include "siren_log.h"
+#include "git_version.h"
 
 static volatile sig_atomic_t g_running = 1;
 
