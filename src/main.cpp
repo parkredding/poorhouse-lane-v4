@@ -2891,8 +2891,11 @@ static web_server::Callbacks build_web_callbacks()
             }
 
             // Stage 3: Build — cmake (40%)
+            // Clear CMakeCache to avoid stale NOTFOUND entries (e.g. ws2811
+            // headers found in a new location after library reinstall).
             set_upd("build", 40);
-            if (run("cd " + repo_root + "/build && cmake ..") != 0) {
+            run("rm -f " + repo_root + "/build/CMakeCache.txt");
+            if (run("mkdir -p " + repo_root + "/build && cd " + repo_root + "/build && cmake ..") != 0) {
                 set_upd("error", 0, "cmake failed");
                 upd_running.store(false);
                 return;
