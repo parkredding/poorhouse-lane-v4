@@ -32,6 +32,7 @@ set(SOURCES
     src/phaser.cpp
     src/chorus.cpp
     src/flanger.cpp
+    src/led_driver.cpp
     src/web_server.cpp
 )
 
@@ -91,10 +92,14 @@ else()
     message(STATUS "libgpiod not found — GPIO disabled, --simulate forced")
 endif()
 
-# ── Optional: ws2811 (LED — not used until a later milestone) ───────
+# ── Optional: ws2811 (APA106 LED driver) ──────────────────────────────
 find_library(WS2811_LIB ws2811)
-if(WS2811_LIB)
+find_path(WS2811_INCLUDE_DIR ws2811.h
+    PATHS /usr/local/include /usr/include
+    PATH_SUFFIXES ws2811)
+if(WS2811_LIB AND WS2811_INCLUDE_DIR)
     target_compile_definitions(${PROJECT_NAME} PRIVATE HAS_WS2811=1)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${WS2811_INCLUDE_DIR})
     target_link_libraries(${PROJECT_NAME} PRIVATE ${WS2811_LIB})
 else()
     message(STATUS "libws2811 not found — LED support disabled")

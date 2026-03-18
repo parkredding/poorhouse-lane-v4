@@ -203,7 +203,11 @@ install_deps() {
 
 # --- build_rpi_ws281x() ------------------------------------------------------
 build_rpi_ws281x() {
-    if [[ -f /usr/local/lib/libws2811.so ]] || [[ -f /usr/local/lib/libws2811.a ]]; then
+    local have_lib=false have_hdr=false
+    [[ -f /usr/local/lib/libws2811.so ]] || [[ -f /usr/local/lib/libws2811.a ]] && have_lib=true
+    [[ -f /usr/local/include/ws2811.h ]] && have_hdr=true
+
+    if $have_lib && $have_hdr; then
         success "rpi_ws281x already installed."
         return 0
     fi
@@ -226,6 +230,20 @@ build_rpi_ws281x() {
 
     make install
     ldconfig
+
+    # Ensure headers are findable at /usr/local/include/ (not just a subdirectory).
+    # Some cmake versions install to /usr/local/include/ws2811/ — copy them up.
+    for hdr in ws2811.h rpihw.h pwm.h clk.h dma.h gpio.h pcm.h; do
+        if [[ ! -f "/usr/local/include/${hdr}" ]]; then
+            if [[ -f "/usr/local/include/ws2811/${hdr}" ]]; then
+                cp "/usr/local/include/ws2811/${hdr}" /usr/local/include/
+                info "Copied ${hdr} from ws2811/ subdirectory"
+            elif [[ -f "${build_dir}/rpi_ws281x/${hdr}" ]]; then
+                cp "${build_dir}/rpi_ws281x/${hdr}" /usr/local/include/
+                info "Installed missing header: ${hdr}"
+            fi
+        fi
+    done
 
     # Clean up
     rm -rf "${build_dir}"
@@ -363,15 +381,20 @@ CPUSchedulingPriority=80
 Nice=-20
 LimitRTPRIO=99
 LimitMEMLOCK=infinity
-User=${REAL_USER}
+User=root
 Environment=HOME=${REAL_HOME}
-AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
+
+    # Service runs as root but repo is owned by the install user — git's
+    # safe.directory check would block all git operations (OTA updates).
+    git config --global --get safe.directory "${INSTALL_DIR}" >/dev/null 2>&1 || \
+        git config --global --add safe.directory "${INSTALL_DIR}"
+    success "git safe.directory configured for root"
 
     if [[ "$ENABLE_AUTOSTART" == true ]]; then
         systemctl enable dubsiren.service

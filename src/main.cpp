@@ -76,6 +76,7 @@
 #include "tape_saturator.h"
 #include "ap_mode.h"
 #include "web_server.h"
+#include "led_driver.h"
 #include "siren_log.h"
 
 static volatile sig_atomic_t g_running = 1;
@@ -105,6 +106,7 @@ static constexpr float REVERB_SIZE = 0.65f;
 // Controls
 static std::atomic<int>   g_waveform{0};
 static std::atomic<int>   g_lfo_waveform{0};  // LfoWave index
+static std::atomic<float> g_lfo_out{0.0f};   // last LFO output for LED driver
 static std::atomic<bool>  g_gate{false};
 static std::atomic<bool>  g_shift{false};
 static std::atomic<int>   g_pitch_env{0};     // –1 fall, 0 off, +1 rise
@@ -138,6 +140,9 @@ static std::atomic<float> g_saturator_drive{0.5f};  // 0–1 drive amount
 
 // AP mode flag
 static std::atomic<bool>  g_ap_mode{false};
+
+// LED driver instance (global so callbacks can access it)
+static LedDriver g_led;
 
 // Theme (server-side, persisted to config)
 static std::atomic<int>   g_theme{0};  // index into theme list
@@ -1817,6 +1822,9 @@ static void save_current_to_user_bank()
          idx + 1, g_freq.load(),
          waveform_name(g_waveform.load()),
          lfo_wave_name(g_lfo_waveform.load()));
+
+    // Visual feedback: triple white blink
+    g_led.blinkSave();
 }
 
 // ─── Cycle to next preset in current bank ────────────────────────────
@@ -2110,9 +2118,6 @@ static void check_ap_combo(AudioEngine& audio)
 
 // Flag set by web UI "exit AP" button, checked in main loop
 static std::atomic<bool> g_ap_exit_requested{false};
-
-// AP mode sound effect: 0=off, 1=wind-up (entering), 2=wind-down (exiting)
-static std::atomic<int>  g_ap_sound{0};
 
 static web_server::Callbacks build_web_callbacks()
 {
@@ -2681,6 +2686,12 @@ static web_server::Callbacks build_web_callbacks()
         slog("UPDATE: repo_root = %s", repo_root.c_str());
     }
 
+    // Git command prefix — passes safe.directory on every invocation so it
+    // works regardless of HOME, gitconfig, or which user owns the repo.
+    // This avoids the "dubious ownership" error when running as root.
+    static const std::string git_cmd =
+        "git -c safe.directory='" + repo_root + "' ";
+
     // ── Update: progress tracking state ─────────────────────────────
     // Shared between the background update thread and the status endpoint.
     static std::mutex              upd_mtx;
@@ -2716,9 +2727,9 @@ static web_server::Callbacks build_web_callbacks()
 
     cb.update_branches = []() -> std::string {
         // Fetch all remotes first
-        system(("cd " + repo_root + " && git fetch --all 2>/dev/null").c_str());
-        FILE* pipe = popen(("cd " + repo_root + " && "
-                           "git branch -r --format='%(refname:lstrip=3)' 2>/dev/null").c_str(), "r");
+        system(("cd " + repo_root + " && " + git_cmd + " fetch --all 2>/dev/null").c_str());
+        FILE* pipe = popen(("cd " + repo_root + " && " +
+                           git_cmd + " branch -r --format='%(refname:lstrip=3)' 2>/dev/null").c_str(), "r");
         if (!pipe) return "{\"branches\":[\"main\"]}";
 
         std::string json = "{\"branches\":[";
@@ -2746,12 +2757,12 @@ static web_server::Callbacks build_web_callbacks()
 
         // Log current HEAD
         {
-            FILE* p = popen(("cd " + repo_root + " && git rev-parse --short HEAD 2>/dev/null").c_str(), "r");
+            FILE* p = popen(("cd " + repo_root + " && " + git_cmd + "rev-parse --short HEAD 2>/dev/null").c_str(), "r");
             char h[64] = {};
             if (p) { fgets(h, sizeof(h), p); pclose(p); }
             size_t hl = strlen(h); if (hl > 0 && h[hl-1] == '\n') h[hl-1] = '\0';
 
-            FILE* p2 = popen(("cd " + repo_root + " && git rev-parse --abbrev-ref HEAD 2>/dev/null").c_str(), "r");
+            FILE* p2 = popen(("cd " + repo_root + " && " + git_cmd + "rev-parse --abbrev-ref HEAD 2>/dev/null").c_str(), "r");
             char br[128] = {};
             if (p2) { fgets(br, sizeof(br), p2); pclose(p2); }
             size_t bl = strlen(br); if (bl > 0 && br[bl-1] == '\n') br[bl-1] = '\0';
@@ -2759,7 +2770,7 @@ static web_server::Callbacks build_web_callbacks()
             slog("UPDATE: Local HEAD = %s (%s)", h, br);
         }
 
-        std::string cmd = "cd " + repo_root + " && git fetch origin "
+        std::string cmd = "cd " + repo_root + " && " + git_cmd + "fetch origin "
                           + branch + " 2>&1";
         FILE* fp = popen(cmd.c_str(), "r");
         std::string fetch_out;
@@ -2772,7 +2783,7 @@ static web_server::Callbacks build_web_callbacks()
 
         // Log remote ref after fetch
         {
-            std::string rc = "cd " + repo_root + " && git rev-parse --short origin/" + branch + " 2>/dev/null";
+            std::string rc = "cd " + repo_root + " && " + git_cmd + "rev-parse --short origin/" + branch + " 2>/dev/null";
             FILE* p = popen(rc.c_str(), "r");
             char h[64] = {};
             if (p) { fgets(h, sizeof(h), p); pclose(p); }
@@ -2801,7 +2812,7 @@ static web_server::Callbacks build_web_callbacks()
         // Get date of latest commit on the remote branch
         std::string date_str;
         {
-            std::string dc = "cd " + repo_root + " && git log -1 --format=%ci origin/" + branch + " 2>/dev/null";
+            std::string dc = "cd " + repo_root + " && " + git_cmd + "log -1 --format=%ci origin/" + branch + " 2>/dev/null";
             FILE* dp = popen(dc.c_str(), "r");
             char dbuf[64] = {};
             if (dp) { fgets(dbuf, sizeof(dbuf), dp); pclose(dp); }
@@ -2857,7 +2868,7 @@ static web_server::Callbacks build_web_callbacks()
 
             // Stage 1: Fetch (15%)
             set_upd("fetch", 15);
-            if (run("cd " + repo_root + " && git fetch origin " + branch) != 0) {
+            if (run("cd " + repo_root + " && " + git_cmd + "fetch origin " + branch) != 0) {
                 set_upd("error", 0, "git fetch failed");
                 upd_running.store(false);
                 return;
@@ -2868,20 +2879,23 @@ static web_server::Callbacks build_web_callbacks()
             // local source changes on the Pi.  The data/ dir is bind-mounted
             // separately so it won't be affected by git operations.
             set_upd("pull", 25);
-            if (run("cd " + repo_root + " && git checkout " + branch) != 0) {
+            if (run("cd " + repo_root + " && " + git_cmd + "checkout " + branch) != 0) {
                 set_upd("error", 0, "git checkout failed");
                 upd_running.store(false);
                 return;
             }
-            if (run("cd " + repo_root + " && git reset --hard origin/" + branch) != 0) {
+            if (run("cd " + repo_root + " && " + git_cmd + "reset --hard origin/" + branch) != 0) {
                 set_upd("error", 0, "git reset failed");
                 upd_running.store(false);
                 return;
             }
 
             // Stage 3: Build — cmake (40%)
+            // Clear CMakeCache to avoid stale NOTFOUND entries (e.g. ws2811
+            // headers found in a new location after library reinstall).
             set_upd("build", 40);
-            if (run("cd " + repo_root + "/build && cmake ..") != 0) {
+            run("rm -f " + repo_root + "/build/CMakeCache.txt");
+            if (run("mkdir -p " + repo_root + "/build && cd " + repo_root + "/build && cmake ..") != 0) {
                 set_upd("error", 0, "cmake failed");
                 upd_running.store(false);
                 return;
@@ -2896,15 +2910,21 @@ static web_server::Callbacks build_web_callbacks()
             }
             set_upd("build", 85);
 
-            // Stage 4: Deploy to persistent storage (90%)
+            // Stage 4: Deploy to persistent storage (88%)
             // deploy-to-persist.sh copies binary + syncs git repo to real disk
             // so updates survive reboot on kiosk/overlay FS devices.
-            set_upd("deploy", 90);
+            set_upd("deploy", 88);
             if (run("cd " + repo_root + " && sudo ./scripts/deploy-to-persist.sh") != 0) {
                 set_upd("error", 0, "deploy failed");
                 upd_running.store(false);
                 return;
             }
+
+            // Stage 4b: Update systemd service file (92%)
+            // Ensures fixes to User=, paths, capabilities are applied
+            // without needing a full reinstall from setup.sh.
+            set_upd("deploy", 92);
+            run("cd " + repo_root + " && sudo ./scripts/update-service.sh " + repo_root);
 
             // Stage 5: Restore user data if needed (95%)
             // If the data dir lost its bind mount or files were overwritten,
@@ -3476,8 +3496,8 @@ static void enter_ap_mode()
     // Clear gate stuck from 3-button combo hold
     g_gate.store(false);
 
-    // Wind-up sound effect
-    g_ap_sound.store(1);
+    // Doppler fly-by LED animation (replaces audio wind-up cue)
+    g_led.playApEnter();
 
     // Audio keeps running so users can preview presets via trigger button
     g_ap_mode.store(true);
@@ -3486,8 +3506,12 @@ static void enter_ap_mode()
     if (!ap_mode::start_ap()) {
         slog("!!! Failed to start AP mode");
         g_ap_mode.store(false);
+        g_led.setApIdle(false);
         return;
     }
+
+    // Gentle white breathing while AP is active
+    g_led.setApIdle(true);
 
     // Web server is already running (started at boot) — no need to start it here
     slog("AP MODE ACTIVE — Connect to '%s' at %s",
@@ -3500,8 +3524,9 @@ static void exit_ap_mode()
 
     slog("EXITING AP CONFIG MODE");
 
-    // Wind-down sound effect
-    g_ap_sound.store(2);
+    // Stop AP idle breathing, play exit Doppler
+    g_led.setApIdle(false);
+    g_led.playApExit();
 
     // Only stop the AP infrastructure — web server keeps running
     ap_mode::stop_ap();
@@ -3575,10 +3600,6 @@ int main(int argc, char *argv[])
     float release_rate   = 0.0f;
     float sr_f           = 48000.0f;    // set after init, read in callback
 
-    // AP mode wind-up / wind-down sound state
-    float ap_snd_phase   = 0.0f;       // oscillator phase [0,1)
-    float ap_snd_progress = 0.0f;      // 0→1 over duration
-    int   ap_snd_active  = 0;          // local copy: 1=up, 2=down
     float pitch_env_mult  = 1.0f;
     float sweep_phase     = 0.0f;   // 0→1 linear ramp during release
     bool  prev_gate       = false;
@@ -3672,15 +3693,6 @@ int main(int argc, char *argv[])
             reverb_schroeder.setSize(REVERB_SIZE);
             reverb_schroeder.setMix(rev_mix);
             break;
-        }
-
-        // AP sound effect — check for new trigger (once per frame)
-        int ap_trigger = g_ap_sound.load(rlx);
-        if (ap_trigger != 0) {
-            g_ap_sound.store(0, rlx);
-            ap_snd_active   = ap_trigger;
-            ap_snd_phase    = 0.0f;
-            ap_snd_progress = 0.0f;
         }
 
         // Gate edge — envelopes start on release, reset on press
@@ -3787,47 +3799,15 @@ int main(int argc, char *argv[])
                 s = flanger.process(s);
             }
 
-            // AP mode wind-up / wind-down sound
-            if (ap_snd_active != 0 && ap_snd_progress < 1.0f) {
-                // Duration: 1.5 seconds
-                constexpr float AP_SND_DURATION = 1.5f;
-                float ap_inc = 1.0f / (AP_SND_DURATION * sr_f);
-                ap_snd_progress += ap_inc;
-
-                float t = ap_snd_progress;
-
-                // Frequency sweep: wind-up 200→3000 Hz, wind-down 3000→200 Hz
-                float f_lo = 200.0f, f_hi = 3000.0f;
-                float freq_ap;
-                if (ap_snd_active == 1)  // wind up
-                    freq_ap = f_lo * std::pow(f_hi / f_lo, t);
-                else                     // wind down
-                    freq_ap = f_hi * std::pow(f_lo / f_hi, t);
-
-                // Phase accumulator
-                ap_snd_phase += freq_ap / sr_f;
-                if (ap_snd_phase >= 1.0f) ap_snd_phase -= 1.0f;
-
-                // Two detuned sines for richness
-                float ap_s = std::sin(2.0f * 3.14159265f * ap_snd_phase)
-                           + 0.3f * std::sin(2.0f * 3.14159265f * ap_snd_phase * 3.0f);
-
-                // Amplitude envelope: fade in/out at edges, louder in middle
-                float amp = 0.35f;
-                if (t < 0.1f)       amp *= t / 0.1f;          // fade in
-                else if (t > 0.85f) amp *= (1.0f - t) / 0.15f; // fade out
-                ap_s *= amp;
-
-                s += ap_s;
-            } else if (ap_snd_progress >= 1.0f) {
-                ap_snd_active = 0;  // done
-            }
-
             // Output soft limiter — transparent at normal levels,
             // warm saturation when pushed (resonance, feedback, etc.)
             s = dsp::fast_tanh(s * 1.2f) * (1.0f / 1.1f);
 
             buf[i] = s;
+
+            // Stash last LFO output for LED (overwritten each sample, cheap)
+            if (i == frames - 1)
+                g_lfo_out.store(lfo_out, std::memory_order_relaxed);
         }
     };
 
@@ -4079,6 +4059,11 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    // Initialise LED driver (non-fatal if ws2811 not available)
+    if (!g_led.init()) {
+        slog("LED: init failed — continuing without LED");
+    }
+
     // Load persistent siren configuration (reverb type, delay type, etc.)
     load_siren_config();
 
@@ -4144,6 +4129,13 @@ int main(int argc, char *argv[])
         // Check for 3-button AP mode combo
         check_ap_combo(audio);
 
+        // LED update (~20 Hz — main loop runs at ~20 Hz from hw.poll())
+        g_led.update(
+            static_cast<LfoWave>(g_lfo_waveform.load()),
+            g_lfo_out.load(std::memory_order_relaxed),
+            g_lfo_depth.load(), g_gate.load(),
+            g_freq.load(), g_lfo_rate.load());
+
         // Resolve pending shift double-click (fires 350 ms after
         // 2nd press if no 3rd click arrives for triple-click)
         if (!g_ap_mode.load() && g_shift_dblclick_pending.load()) {
@@ -4166,6 +4158,7 @@ int main(int argc, char *argv[])
     }
 
     printf("\nShutting down.\n");
+    g_led.shutdown();
     audio.shutdown();
     hw.shutdown();
     return 0;
