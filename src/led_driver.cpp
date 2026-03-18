@@ -43,6 +43,14 @@ static constexpr uint8_t GAMMA_LUT[256] = {
     234, 237, 239, 241, 243, 245, 248, 250, 252, 255, 255, 255, 255, 255, 255, 255,
 };
 
+// ─── Gamma correction helper ────────────────────────────────────────
+// Applies gamma LUT with min floor of 3 to prevent WS2811 PWM flicker.
+static constexpr auto gamma_correct = [](uint8_t v) -> uint8_t {
+    if (v == 0) return 0;
+    uint8_t g = GAMMA_LUT[v];
+    return g < 3 ? 3 : g;
+};
+
 // ─── RGB color type ─────────────────────────────────────────────────
 
 struct RGB {
@@ -105,13 +113,7 @@ struct LedDriver::Impl {
 #ifdef HAS_WS2811
         if (!hw_init) return;
 
-        // Gamma correction + min floor (prevents WS2811 PWM flicker at low brightness)
-        auto gamma = [](uint8_t v) -> uint8_t {
-            if (v == 0) return 0;
-            uint8_t g = GAMMA_LUT[v];
-            return g < 3 ? 3 : g;
-        };
-        RGB gc = { gamma(c.r), gamma(c.g), gamma(c.b) };
+        RGB gc = { gamma_correct(c.r), gamma_correct(c.g), gamma_correct(c.b) };
         strip.channel[0].leds[0] = pack(gc);
 
         // Double-render: second render overwrites any frame corrupted

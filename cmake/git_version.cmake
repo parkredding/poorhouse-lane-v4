@@ -23,8 +23,11 @@ if(NOT GIT_COMMIT)
     set(GIT_COMMIT "unknown")
 endif()
 
-file(WRITE "${OUT}/git_version.h"
+file(WRITE "${OUT}/git_version.h.tmp"
     "#pragma once\n"
     "#define GIT_BRANCH \"${GIT_BRANCH}\"\n"
     "#define GIT_COMMIT \"${GIT_COMMIT}\"\n"
 )
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${OUT}/git_version.h.tmp" "${OUT}/git_version.h")
+file(REMOVE "${OUT}/git_version.h.tmp")
