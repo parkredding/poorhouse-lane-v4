@@ -390,6 +390,12 @@ EOF
 
     systemctl daemon-reload
 
+    # Service runs as root but repo is owned by the install user — git's
+    # safe.directory check would block all git operations (OTA updates).
+    git config --global --get safe.directory "${INSTALL_DIR}" >/dev/null 2>&1 || \
+        git config --global --add safe.directory "${INSTALL_DIR}"
+    success "git safe.directory configured for root"
+
     if [[ "$ENABLE_AUTOSTART" == true ]]; then
         systemctl enable dubsiren.service
         success "dubsiren.service installed and enabled."

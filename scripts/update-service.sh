@@ -42,6 +42,15 @@ if ! grep -qF "$EXPECTED_WD" "$SERVICE"; then
     CHANGED=true
 fi
 
+# --- Ensure git safe.directory for root (service runs as root) ---------------
+# Without this, all git operations (OTA updates, branch listing) fail with
+# "detected dubious ownership" because the repo is owned by a non-root user.
+if ! git config --global --get safe.directory "$INSTALL_DIR" >/dev/null 2>&1; then
+    git config --global --add safe.directory "$INSTALL_DIR"
+    echo "Added git safe.directory for $INSTALL_DIR"
+    CHANGED=true
+fi
+
 # --- Reload systemd if anything changed -------------------------------------
 if $CHANGED; then
     systemctl daemon-reload

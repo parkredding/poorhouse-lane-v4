@@ -2684,6 +2684,14 @@ static web_server::Callbacks build_web_callbacks()
             }
         }
         slog("UPDATE: repo_root = %s", repo_root.c_str());
+
+        // Ensure git safe.directory is set — required when running as root
+        // with a repo owned by a non-root user (e.g. systemd User=root).
+        std::string safe_cmd = "git config --global --get safe.directory '" +
+            repo_root + "' >/dev/null 2>&1 || "
+            "git config --global --add safe.directory '" + repo_root + "'";
+        if (system(safe_cmd.c_str()) == 0)
+            slog("UPDATE: git safe.directory configured for %s", repo_root.c_str());
     }
 
     // ── Update: progress tracking state ─────────────────────────────
