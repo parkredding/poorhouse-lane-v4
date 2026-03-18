@@ -594,6 +594,10 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
   <div class="card">
     <h3>Updates</h3>
     <p id="version-info" style="color:var(--text-lo);margin-bottom:8px;font-size:0.75rem">--</p>
+    <div id="main-update-notice" style="display:none;background:var(--bg);border:1px solid var(--accent);padding:10px;margin-bottom:12px">
+      <p id="main-update-text" style="color:var(--accent);font-size:0.75rem;font-weight:700;margin-bottom:8px"></p>
+      <button class="btn btn-primary btn-sm" onclick="revertToMain()">Revert to main</button>
+    </div>
     <div class="form-group">
       <label>Branch</label>
       <select id="update-branch" style="width:100%;padding:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem">
@@ -1321,9 +1325,34 @@ async function loadSystemInfo() {
     // Update version line in Updates card
     const verEl = document.getElementById('version-info');
     if (verEl && sys.git_branch) verEl.textContent = sys.git_branch + ' @ ' + sys.git_commit;
+    // Auto-check if main is ahead when on a non-main branch
+    if (sys.git_branch && sys.git_branch !== 'main') checkMainUpdate();
   } catch(e) {
     document.getElementById('sys-cpu').textContent = 'Error';
   }
+}
+
+async function checkMainUpdate() {
+  try {
+    const r = await fetch('/api/update/check', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'branch=main'});
+    const d = await r.json();
+    const notice = document.getElementById('main-update-notice');
+    if (d.available && d.count > 0) {
+      var dateStr = '';
+      if (d.latest_date) { var dt = new Date(d.latest_date); if (!isNaN(dt)) dateStr = ' (merged '+dt.toLocaleDateString()+')'; }
+      document.getElementById('main-update-text').textContent = 'Device update available: '+d.count+' new commit(s) on main'+dateStr;
+      notice.style.display = 'block';
+    } else {
+      notice.style.display = 'none';
+    }
+  } catch(e) {}
+}
+
+function revertToMain() {
+  confirmAction('Revert to main branch? This will replace the current firmware with the latest stable release.', function() {
+    document.getElementById('update-branch').value = 'main';
+    installUpdate();
+  });
 }
 
 // System Log

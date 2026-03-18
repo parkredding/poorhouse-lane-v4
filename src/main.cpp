@@ -2787,8 +2787,20 @@ static web_server::Callbacks build_web_callbacks()
 
         slog("UPDATE: %d new commit(s) on origin/%s", count, branch.c_str());
 
+        // Get date of latest commit on the remote branch
+        std::string date_str;
+        {
+            std::string dc = "cd " + repo_root + " && git log -1 --format=%ci origin/" + branch + " 2>/dev/null";
+            FILE* dp = popen(dc.c_str(), "r");
+            char dbuf[64] = {};
+            if (dp) { fgets(dbuf, sizeof(dbuf), dp); pclose(dp); }
+            size_t dl = strlen(dbuf); if (dl > 0 && dbuf[dl-1] == '\n') dbuf[dl-1] = '\0';
+            date_str = dbuf;
+        }
+
         return "{\"available\":" + std::string(count > 0 ? "true" : "false") +
-               ",\"count\":" + std::to_string(count) + "}";
+               ",\"count\":" + std::to_string(count) +
+               ",\"latest_date\":\"" + date_str + "\"}";
     };
 
     cb.update_install = [set_upd, log_append](const std::string& branch) -> bool {
