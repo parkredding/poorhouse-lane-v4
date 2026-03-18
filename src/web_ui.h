@@ -731,6 +731,7 @@ function showTab(id) {
   tabs.forEach((t, i) => { if (t === id && tabEls[i]) tabEls[i].classList.add('active'); });
   if (id !== 'system' && typeof stopSyslogPoll === 'function') stopSyslogPoll();
   if (id === 'live') { loadDspState(); startLivePoll(); } else { stopLivePoll(); }
+  if (id === 'presets') { loadPresets(); startPresetPoll(); } else { stopPresetPoll(); }
   if (id === 'wifi') { loadWifiStatus(); checkWifiTestResult(); }
   if (id === 'system') { loadSystemInfo(); loadSysLog(); startSyslogPoll(); }
   if (id === 'encoders') { loadEncoderMap(); loadSensitivity(); }
@@ -841,6 +842,35 @@ async function pollDspState() {
 }
 function startLivePoll() { if (!livePollTimer) livePollTimer = setInterval(pollDspState, 200); }
 function stopLivePoll() { if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; } }
+
+let presetPollTimer = null;
+function startPresetPoll() { if (!presetPollTimer) presetPollTimer = setInterval(pollPresetState, 500); }
+function stopPresetPoll() { if (presetPollTimer) { clearInterval(presetPollTimer); presetPollTimer = null; } }
+async function pollPresetState() {
+  try {
+    const r = await fetch('/api/dsp/state', {signal: AbortSignal.timeout(2000)});
+    if (!r.ok) return;
+    const d = await r.json();
+    var newBank = d.active_bank, newPreset = d.active_preset;
+    if (newBank !== undefined && newPreset !== undefined &&
+        (newBank !== activeBank || newPreset !== activePreset)) {
+      document.querySelectorAll('.slot.active-slot').forEach(function(el){el.classList.remove('active-slot')});
+      document.querySelectorAll('.led.active').forEach(function(el){el.classList.remove('active')});
+      document.querySelectorAll('.slot-btn.active').forEach(function(el){el.classList.remove('active')});
+      activeBank = newBank; activePreset = newPreset;
+      var newBankName = BANK_NAMES[activeBank];
+      var sl = document.getElementById('slot-'+newBankName+'-'+activePreset);
+      if (sl) {
+        sl.classList.add('active-slot');
+        var led = sl.querySelector('.led'); if (led) led.classList.add('active');
+        var btn = sl.querySelector('.slot-btn'); if (btn) btn.classList.add('active');
+      }
+      document.querySelectorAll('.slot.target-slot').forEach(function(el){el.classList.remove('target-slot')});
+      targetBank = newBankName; targetSlot = activePreset;
+      if (sl) sl.classList.add('target-slot');
+    }
+  } catch(e) {}
+}
 
 function setLogSlider(name, value, min, max) {
   // Map log value to 0-1000 slider position
@@ -1646,8 +1676,9 @@ document.querySelectorAll('#live input[type=range]').forEach(el => {
 
 // Pause live poll when browser tab is hidden
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopLivePoll();
+  if (document.hidden) { stopLivePoll(); stopPresetPoll(); }
   else if (document.getElementById('live').classList.contains('active')) startLivePoll();
+  else if (document.getElementById('presets').classList.contains('active')) startPresetPoll();
 });
 </script>
 </body>
