@@ -228,7 +228,7 @@ bool LedDriver::init(int gpio_pin)
 }
 
 void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
-                        bool gate, float freq, float /*lfo_rate*/)
+                        bool gate, float freq, float lfo_rate)
 {
     // AP idle mode: gentle white breathing
     if (pimpl_->ap_idle) {
@@ -297,21 +297,33 @@ void LedDriver::update(LfoWave wave, float lfo_out, float lfo_depth,
     float gate_target = gate ? 1.0f : 0.0f;
     pimpl_->smooth_gate = smooth(pimpl_->smooth_gate, gate_target, GATE_ALPHA);
 
-    // ── Smooth LFO ─────────────────────────────────────────────────
-    // Smooth the raw LFO so even square wave LFO doesn't hard-blink.
+    // ── Rate-adaptive LFO smoothing ───────────────────────────────
+    // At slow rates (<3 Hz): heavy smoothing for liquid Microcosm feel.
+    // At fast rates (>10 Hz): lighter smoothing so the LED can track.
+    // The smoothing alpha scales with rate so the filter's cutoff
+    // frequency rises proportionally with the LFO speed.
+    float rate_factor = std::clamp(lfo_rate / 8.0f, 0.0f, 1.0f);  // 0→8 Hz maps to 0→1
+    float lfo_alpha = LFO_SMOOTH_ALPHA + (0.55f - LFO_SMOOTH_ALPHA) * rate_factor;
+
     float lfo_target = (pimpl_->led_lfo + 1.0f) * 0.5f;  // map [-1,+1] → [0,1]
-    pimpl_->smooth_lfo = smooth(pimpl_->smooth_lfo, lfo_target, LFO_SMOOTH_ALPHA);
+    pimpl_->smooth_lfo = smooth(pimpl_->smooth_lfo, lfo_target, lfo_alpha);
 
     // ── Compute brightness ─────────────────────────────────────────
     // Interpolate between idle and active brightness based on smoothed gate.
     //
+    // At high LFO rates the eye can't resolve individual pulses, so we
+    // boost the base brightness to compensate for perceptual averaging.
+    // rate_boost: 0 at slow rates, ramps to 1.0 above ~10 Hz.
+    float rate_boost = std::clamp((lfo_rate - 5.0f) / 10.0f, 0.0f, 1.0f);
+
     // Idle:   base 8%, LFO adds up to 15% at full depth
     // Active: base 30%, LFO adds up to 45% at full depth
-    float idle_base = 0.08f * (1.0f - lfo_depth) + 0.01f * lfo_depth;
+    // At high rates: idle base → 12%, active base → 35%
+    float idle_base = (0.08f + 0.04f * rate_boost) * (1.0f - lfo_depth) + 0.01f * lfo_depth;
     float idle_peak = 0.08f * (1.0f - lfo_depth) + 0.15f * lfo_depth;
     float idle_bright = idle_base + (idle_peak - idle_base) * pimpl_->smooth_lfo;
 
-    float gate_base = 0.30f * (1.0f - lfo_depth) + 0.02f * lfo_depth;
+    float gate_base = (0.30f + 0.05f * rate_boost) * (1.0f - lfo_depth) + 0.02f * lfo_depth;
     float gate_peak = 0.30f * (1.0f - lfo_depth) + 0.45f * lfo_depth;
     float gate_bright = gate_base + (gate_peak - gate_base) * pimpl_->smooth_lfo;
 
