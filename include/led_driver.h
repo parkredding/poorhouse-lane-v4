@@ -21,7 +21,7 @@ public:
     ~LedDriver();
 
     // Initialise the LED hardware. Returns false on failure (non-fatal).
-    bool init(int gpio_pin = 18);
+    bool init(int gpio_pin = 12);
 
     // Call from main loop at ~20 Hz with current siren state.
     // lfo_out: raw LFO output in [-1, +1]
