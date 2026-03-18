@@ -883,8 +883,10 @@ function updateRange(id) {
 // Presets
 function selectTargetSlot(bank, slot) {
   if (targetBank === bank && targetSlot === slot) {
-    targetBank = null; targetSlot = null;
     document.querySelectorAll('.slot.target-slot').forEach(el => el.classList.remove('target-slot'));
+    targetBank = BANK_NAMES[activeBank]; targetSlot = activePreset;
+    const ae = document.getElementById('slot-'+targetBank+'-'+targetSlot);
+    if (ae) ae.classList.add('target-slot');
     document.getElementById('library-browser').style.display = 'none';
     document.getElementById('target-hint').textContent = 'Tap a slot to select it, then pick a preset below';
     return;
@@ -1007,6 +1009,11 @@ async function loadPresets() {
     renderBankSlots('user', d.user||[], 'slot-grid-user');
     renderBankSlots('standard', d.standard||[], 'slot-grid-standard');
     renderBankSlots('experimental', d.experimental||[], 'slot-grid-experimental');
+    if (targetBank === null) {
+      targetBank = BANK_NAMES[activeBank]; targetSlot = activePreset;
+      const ae = document.getElementById('slot-'+targetBank+'-'+targetSlot);
+      if (ae) ae.classList.add('target-slot');
+    }
     buildCategoryDropdown(d);
   } catch(e) { console.error(e); }
 }
