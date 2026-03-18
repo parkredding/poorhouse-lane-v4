@@ -574,24 +574,6 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
     </div>
   </div>
   <div class="card">
-    <h3>Shell</h3>
-    <div id="shell-warn1">
-      <p style="color:var(--danger);font-size:0.75rem;margin-bottom:10px">Running shell commands can permanently damage your device.</p>
-      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('shell-warn1').style.display='none';document.getElementById('shell-warn2').style.display='block'" style="color:var(--danger);border-color:var(--danger)">I understand, continue</button>
-    </div>
-    <div id="shell-warn2" style="display:none">
-      <p style="color:var(--danger);font-size:0.75rem;font-weight:700;margin-bottom:10px">WARNING: Incorrect commands can brick this device and require a full reflash. Are you sure you want to proceed?</p>
-      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('shell-warn2').style.display='none';document.getElementById('shell-actual').style.display='block'" style="color:var(--danger);border-color:var(--danger)">Yes, open shell</button>
-    </div>
-    <div id="shell-actual" style="display:none">
-      <pre id="shell-output" style="background:#111;border:1px solid var(--border);padding:10px;max-height:300px;min-height:80px;overflow:auto;font-family:monospace;font-size:0.65rem;line-height:1.5;color:#0f0;white-space:pre-wrap;word-break:break-all"></pre>
-      <div style="display:flex;gap:6px;margin-top:8px">
-        <input type="text" id="shell-cmd" placeholder="Enter command..." style="flex:1;padding:8px;font-family:monospace;font-size:0.8rem;background:var(--bg);border:1px solid var(--border);color:var(--text)" onkeydown="if(event.key==='Enter')runShell()" autocomplete="off" autocorrect="off" spellcheck="false">
-        <button class="btn btn-primary btn-sm" onclick="runShell()" id="btn-shell-run">Run</button>
-      </div>
-    </div>
-  </div>
-  <div class="card">
     <h3>Updates</h3>
     <p id="version-info" style="color:var(--text-lo);margin-bottom:8px;font-size:0.75rem">--</p>
     <div id="main-update-notice" style="display:none;background:var(--bg);border:1px solid var(--accent);padding:10px;margin-bottom:12px">
@@ -647,6 +629,24 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--acce
       <input type="file" id="restore-file" accept=".json" style="font-size:0.75rem">
     </div>
     <button class="btn btn-secondary" onclick="confirmAction('Restore will overwrite all presets. Continue?',restoreBackup)">Restore</button>
+  </div>
+  <div class="card">
+    <h3>Shell</h3>
+    <div id="shell-warn1">
+      <p style="color:var(--danger);font-size:0.75rem;margin-bottom:10px">Running shell commands can permanently damage your device.</p>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('shell-warn1').style.display='none';document.getElementById('shell-warn2').style.display='block'" style="color:var(--danger);border-color:var(--danger)">I understand, continue</button>
+    </div>
+    <div id="shell-warn2" style="display:none">
+      <p style="color:var(--danger);font-size:0.75rem;font-weight:700;margin-bottom:10px">WARNING: Incorrect commands can brick this device and require a full reflash. Are you sure you want to proceed?</p>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('shell-warn2').style.display='none';document.getElementById('shell-actual').style.display='block'" style="color:var(--danger);border-color:var(--danger)">Yes, open shell</button>
+    </div>
+    <div id="shell-actual" style="display:none">
+      <pre id="shell-output" style="background:#111;border:1px solid var(--border);padding:10px;max-height:300px;min-height:80px;overflow:auto;font-family:monospace;font-size:0.65rem;line-height:1.5;color:#0f0;white-space:pre-wrap;word-break:break-all"></pre>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <input type="text" id="shell-cmd" placeholder="Enter command..." style="flex:1;padding:8px;font-family:monospace;font-size:0.8rem;background:var(--bg);border:1px solid var(--border);color:var(--text)" onkeydown="if(event.key==='Enter')runShell()" autocomplete="off" autocorrect="off" spellcheck="false">
+        <button class="btn btn-primary btn-sm" onclick="runShell()" id="btn-shell-run">Run</button>
+      </div>
+    </div>
   </div>
   <div class="card">
     <button class="btn btn-danger btn-block" onclick="exitAP()">Return to Siren Mode</button>
