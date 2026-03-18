@@ -84,12 +84,18 @@ struct LedDriver::Impl {
     bool     ap_idle = false;
     float    ap_idle_phase = 0.0f;   // breathing animation phase
 
+    int render_err_count = 0;
+
     void setLed(RGB c)
     {
 #ifdef HAS_WS2811
         if (!hw_init) return;
         strip.channel[0].leds[0] = pack(c);
-        ws2811_render(&strip);
+        ws2811_return_t ret = ws2811_render(&strip);
+        if (ret != WS2811_SUCCESS) {
+            if (render_err_count++ < 10)
+                slog("LED: render failed: %s", ws2811_get_return_t_str(ret));
+        }
 #else
         (void)c;
 #endif
@@ -134,10 +140,21 @@ bool LedDriver::init(int gpio_pin)
         return false;
     }
     pimpl_->hw_init = true;
-    slog("LED: Initialised on GPIO %d", gpio_pin);
+    slog("LED: Initialised on GPIO %d (DMA %d, freq %d)",
+         gpio_pin, s.dmanum, s.freq);
 
-    // Start dark
+    // Startup self-test: flash R → G → B so user can verify signal chain
+    RGB test_colors[] = {{255,0,0}, {0,255,0}, {0,0,255}};
+    const char* test_names[] = {"RED", "GREEN", "BLUE"};
+    for (int i = 0; i < 3; i++) {
+        pimpl_->setLed(scale(test_colors[i], 0.25f));
+        slog("LED: self-test %s (0x%06X → render)",
+             test_names[i], pimpl_->strip.channel[0].leds[0]);
+        pimpl_->sleepMs(400);
+    }
     pimpl_->setLedOff();
+    slog("LED: self-test complete");
+
     return true;
 #else
     (void)gpio_pin;
