@@ -2,14 +2,27 @@
 # Generates ${OUT}/git_version.h with #define GIT_BRANCH / GIT_COMMIT
 
 execute_process(
-    COMMAND git rev-parse --abbrev-ref HEAD
+    COMMAND git -c safe.directory=${SRC} rev-parse --abbrev-ref HEAD
     WORKING_DIRECTORY "${SRC}"
     OUTPUT_VARIABLE GIT_BRANCH
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET
 )
+# Detached HEAD returns literal "HEAD" — try tag name, else mark as detached
+if(GIT_BRANCH STREQUAL "HEAD")
+    execute_process(
+        COMMAND git -c safe.directory=${SRC} describe --tags --exact-match HEAD
+        WORKING_DIRECTORY "${SRC}"
+        OUTPUT_VARIABLE GIT_BRANCH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT GIT_BRANCH)
+        set(GIT_BRANCH "detached")
+    endif()
+endif()
 execute_process(
-    COMMAND git rev-parse --short HEAD
+    COMMAND git -c safe.directory=${SRC} rev-parse --short HEAD
     WORKING_DIRECTORY "${SRC}"
     OUTPUT_VARIABLE GIT_COMMIT
     OUTPUT_STRIP_TRAILING_WHITESPACE
